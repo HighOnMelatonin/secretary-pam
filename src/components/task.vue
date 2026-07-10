@@ -1,5 +1,5 @@
 <script setup>
-// Component for to store and display tasks
+// Component to get new tasks
 import { ref } from 'vue';
 const emptyTask = {
     "Name": "",
@@ -12,5 +12,10 @@ const emptyTask = {
 </script>
 
 <template>
-    <div ref="container" class="task-container"></div>
+    <div ref="container" class="task-container">
+        <div class="taskHeader">
+            <input v-model="text" placeholder="Task">
+            <button @click="fillTask">Add</button>
+        </div>
+    </div>
 </template>

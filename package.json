@@ -15,6 +15,7 @@
     "type-check": "vue-tsc --build"
   },
   "dependencies": {
+    "@picocss/pico": "^2.1.1",
     "pinia": "^3.0.4",
     "vue": "^3.5.38",
     "vue-router": "^5.1.0"
