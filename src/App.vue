@@ -1,14 +1,10 @@
 <script setup lang="ts">
-import Task from './components/task.vue';
-
-import
+import dashboard from './components/dashboard.vue';
+import task from './components/task.vue';
 </script>
 
 <template>
   <h1>Hi, its Pam</h1>
-  <p>
-    <task />
-  </p>
+  <dashboard />
+  <task />
 </template>
-
-<style scoped></style>
