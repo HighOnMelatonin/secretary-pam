@@ -1,134 +1,177 @@
-# secretary-pam
+# Pam
 
-## About secretary pam
-The name: Pam is derived from PM, for Project manager. As the name suggests, this program is meant to help me manage my projects, tracking the status, priority and deadlines for various ongoing/completed projects
+Pam (from **PM**, project manager) is my personal project manager. It tracks the status, priority and deadlines of my ongoing and completed projects and the tasks inside them.
 
-## Recommended IDE Setup
+It is a Vue app that runs on Cloudflare: a single Worker serves the app and a small API, and the data lives in a Cloudflare D1 (SQLite) database.
 
-[VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
+## Features
 
-## Recommended Browser Setup
+- **Dashboard** of live projects, sorted by delivery date. A project stays live until it has tasks and all of them are done.
+- **Project tiles** show priority, due date, an overdue tag and task progress. Click a tile to expand a preview of its tasks and reference links.
+- **Projects** have a name, description, delivery date, priority, tasks and reference links.
+- **Tasks** have a name, description, due date, priority, completed flag and relations to other tasks (blocks, blocked by, subtask of, parent of, related to). A task can be assigned to several projects, from either the project form or the task form.
 
-- Chromium-based browsers (Chrome, Edge, Brave, etc.):
-  - [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd)
-  - [Turn on Custom Object Formatter in Chrome DevTools](http://bit.ly/object-formatters)
-- Firefox:
-  - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
-  - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
+## Tech stack
 
-## Type Support for `.vue` Imports in TS
+| Part | Tools |
+|---|---|
+| Frontend | [Vue 3](https://vuejs.org/), [Pinia](https://pinia.vuejs.org/), [Pico CSS](https://picocss.com/), TypeScript |
+| Build | [Vite](https://vite.dev/) with the [Cloudflare Vite plugin](https://developers.cloudflare.com/workers/vite-plugin/) |
+| Backend | [Cloudflare Workers](https://developers.cloudflare.com/workers/) (`worker/index.ts`) |
+| Database | [Cloudflare D1](https://developers.cloudflare.com/d1/) |
+| Tests | [Vitest](https://vitest.dev/) and Vue Test Utils, [Cypress](https://www.cypress.io/) |
 
-TypeScript cannot handle type information for `.vue` imports by default, so we replace the `tsc` CLI with `vue-tsc` for type checking. In editors, we need [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) to make the TypeScript language service aware of `.vue` types.
+## Project structure
 
-## Customize configuration
+```
+src/
+  components/
+    dashboard.vue     main page: loads data, lists projects, opens the forms
+    projectTile.vue   one project on the dashboard; expands into a preview
+    project.vue       create/edit a project
+    task.vue          create/edit a task, including which projects it is in
+  stores/             Pinia stores for projects and tasks; they load and save through the API
+  types/              Project and Task models, shared by the app and the Worker
+  api.ts              client for the Worker API
+  __tests__/          unit tests
+worker/
+  index.ts            the /api routes, reading and writing D1
+migrations/           SQL that creates the database tables
+wrangler.jsonc        Worker and database configuration
+```
 
-See [Vite Configuration Reference](https://vite.dev/config/).
+## Getting started
 
-## Project Setup
+You need Node.js `^22.18.0` or `>=24.12.0` and pnpm 10.
 
 ```sh
 pnpm install
-pnpm db:migrate:local   # creates the tables in the local D1 database (.wrangler/)
-```
-
-### Compile and Hot-Reload for Development
-
-```sh
+pnpm db:migrate:local   # creates the tables in a local database under .wrangler/
 pnpm dev
 ```
 
-`pnpm dev` and `pnpm preview` run the API in [worker/index.ts](worker/index.ts) in the local Workers runtime, backed by a local D1 database.
+`pnpm dev` runs the app with hot reload, and runs the API in the real Workers runtime against the local database. Nothing touches Cloudflare until you deploy.
+
+### Scripts
+
+| Command | What it does |
+|---|---|
+| `pnpm dev` | Start the dev server with the API and local database |
+| `pnpm build` | Type-check and build the app and Worker into `dist/` |
+| `pnpm preview` | Serve the production build locally, with the API |
+| `pnpm test:unit` | Run the unit tests |
+| `pnpm type-check` | Type-check the app, Worker and config files |
+| `pnpm deploy` | Build and deploy to Cloudflare |
+| `pnpm db:migrate:local` | Apply new migrations to the local database |
+| `pnpm db:migrate:remote` | Apply new migrations to the production database |
+| `pnpm cf-typegen` | Regenerate `worker/worker-configuration.d.ts` after changing `wrangler.jsonc` |
+
+## Data storage
+
+The app never talks to the database directly. The Pinia stores call the Worker API through `src/api.ts`, and the Worker reads and writes D1.
+
+```
+Vue app (Pinia stores)  ──fetch──▶  Worker /api/*  ──SQL──▶  D1
+```
+
+### API
+
+| Request | Result |
+|---|---|
+| `GET /api/projects` | All projects |
+| `PUT /api/projects/:id` | Create or update the project in the body; returns it |
+| `DELETE /api/projects/:id` | Delete the project |
+| `GET /api/tasks` | All tasks |
+| `PUT /api/tasks/:id` | Create or update the task in the body; returns it |
+| `DELETE /api/tasks/:id` | Delete the task, removing it from projects and relations |
+
+Bodies are the `Project` and `Task` objects from `src/types`. The Worker checks every field and answers `400` with an error message if something is invalid, including a reference to a task that doesn't exist. Each save runs as one transaction, so a failed save changes nothing.
+
+### Schema
+
+Defined in `migrations/0001_create_projects_and_tasks.sql`. Each field has its own column, and each array is stored in its own table with a `position` column that keeps its order.
+
+| Table | Holds | Columns |
+|---|---|---|
+| `projects` | `Project` | `id`, `name`, `description`, `delivery_date`, `priority`, `created_at`, `updated_at` |
+| `tasks` | `Task` | `id`, `name`, `description`, `due_date`, `priority`, `completed`, `created_at`, `updated_at` |
+| `project_tasks` | `Project.taskIds` | `project_id` → `projects`, `task_id` → `tasks`, `position` |
+| `project_links` | `Project.links` | `project_id` → `projects`, `position`, `label`, `url` |
+| `task_relations` | `Task.relations` | `task_id` → `tasks`, `related_task_id` → `tasks`, `type`, `position` |
+
+- `project_tasks` links projects to tasks. A task can be in several projects.
+- All foreign keys cascade on delete. Deleting a task removes it from its projects and from other tasks' relations, and deleting a project removes its links.
+- `CHECK` constraints limit `priority` to `low`, `medium`, `high` or `urgent`; relation `type` to `blocks`, `blocked_by`, `subtask_of`, `parent_of` or `related_to`; and `completed` to `0` or `1`.
+- Dates are ISO 8601 strings such as `2026-10-25`. Timestamps are UTC, such as `2026-10-25T15:08:26.123Z`.
+
+### Changing the schema
+
+Add a new numbered file to `migrations/`, such as `0002_add_tags.sql`, instead of editing an applied one. Then apply it to every database:
+
+```sh
+pnpm db:migrate:local
+pnpm db:migrate:remote
+pnpm exec wrangler d1 execute secretary-pam-preview --remote --file migrations/0002_add_tags.sql
+```
+
+`wrangler d1 migrations apply` can't see the preview database, so new migrations are run on it with `d1 execute`.
 
 ## Deploying to Cloudflare
 
-The app is deployed as a single Cloudflare Worker: it serves the built Vue app as static assets and handles `/api/*`, which stores projects and tasks in a [D1](https://developers.cloudflare.com/d1/) database. Configuration is in [wrangler.jsonc](wrangler.jsonc).
+The app deploys as one Cloudflare Worker named `secretary-pam`. It serves the built app as static assets and handles `/api/*`. There are two databases:
 
-First deploy:
+| Database | Used by |
+|---|---|
+| `secretary-pam` | Production deploys, from the production branch |
+| `secretary-pam-preview` | Preview deploys, from every other branch, so testing never touches real data |
+
+### First-time setup
 
 ```sh
 pnpm exec wrangler login
-pnpm exec wrangler d1 create secretary-pam   # put the printed database_id in wrangler.jsonc
-pnpm db:migrate:remote                       # creates the tables in the remote database
-pnpm deploy
-```
 
-Pushes to branches other than the production branch build a Preview deployment, which uses a separate database so the real data is never touched. To set it up once:
+pnpm exec wrangler d1 create secretary-pam
+# Put the printed database_id in the top-level "d1_databases" in wrangler.jsonc
+pnpm db:migrate:remote
 
-```sh
-pnpm exec wrangler d1 create secretary-pam-preview   # put the printed database_id under "previews" in wrangler.jsonc
+pnpm exec wrangler d1 create secretary-pam-preview
+# Put the printed database_id under "previews" → "d1_databases" in wrangler.jsonc
 pnpm exec wrangler d1 execute secretary-pam-preview --remote --file migrations/0001_create_projects_and_tasks.sql
 ```
 
-`wrangler d1 migrations apply` only sees the production database, so new files in [migrations/](migrations/) are run on the preview database with `wrangler d1 execute` as above.
+Commit `wrangler.jsonc` after adding the ids.
 
-Later deploys only need `pnpm deploy`. After adding a file to [migrations/](migrations/), run `pnpm db:migrate:local` and `pnpm db:migrate:remote`. After changing bindings in `wrangler.jsonc`, run `pnpm cf-typegen`.
+### Deploying
 
-The API has no login of its own, so anyone with the URL can read and change the data. Put the Worker behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-public-app/) (Zero Trust → Access → Applications, allow only your email), or enable Access from the Worker's Settings → Domains & Routes in the dashboard.
+- **From your machine:** run `pnpm deploy`.
+- **From Git:** connect the repository under Workers & Pages → Create → Workers → Import a repository. Use a Worker, not a Pages project. Set the build command to `pnpm run build` and the deploy command to `pnpm exec wrangler deploy`. Pushes to the production branch deploy the live site. Pushes to other branches create Preview deployments with their own URLs.
 
-### Type-Check, Compile and Minify for Production
+The `packageManager` field in `package.json` makes Cloudflare's build use pnpm 10. pnpm 9 can't read this project's `pnpm-workspace.yaml`.
 
-```sh
-pnpm build
-```
+### Security
 
-### Run Unit Tests with [Vitest](https://vitest.dev/)
+The API has no login of its own, so anyone with the URL can read and change the data. Put the Worker behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-public-app/) and allow only your own email. You can enable it from the Worker's Settings → Domains & Routes in the dashboard.
 
-```sh
-pnpm test:unit
-```
-
-### Run End-to-End Tests with [Cypress](https://www.cypress.io/)
+## Testing
 
 ```sh
-pnpm test:e2e:dev
+pnpm test:unit    # Vitest: dashboard, project tile and task form
 ```
 
-This runs the end-to-end tests against the Vite development server.
-It is much faster than the production build.
+Unit tests replace the API with a stub, so they don't need a database.
 
-But it's still recommended to test the production build with `test:e2e` before deploying (e.g. in CI environments):
+Cypress is set up for end-to-end tests (`pnpm test:e2e:dev` against the dev server, `pnpm test:e2e` against a production build). `cypress/e2e/example.cy.ts` is still the starter template and fails until it's replaced with real tests.
 
-```sh
-pnpm build
-pnpm test:e2e
-```
+## Roadmap
 
-## Code Documentation
-### JSON Structure
-```
-{
-  project_name: { 
-    "Description": (String),
-    "tasks": {
-      task1: {
-        "deadline": (String),
-        "description": (String),
-        "Priority": (Integer),
-        "Weight": (Integer)
-        },
-      task2: {
-        "deadline": (String),
-        "description": (String),
-        "Priority": (Integer),
-        "Weight": (Integer)
-        }
-    },
-    "Deadline": (String),
-    "Affiliation": (String)
-  }
-}
-```
-The weight of the task refers to how much effort is required to complete the task
+Planned, not built yet:
 
-### Components
-1. Task
-2. Project
-3. Message
+- Open and edit existing tasks from the dashboard
+- Task list view
+- Project list view, including completed projects
+- Messages
+- Settings and profile
 
-### Views
-1. Project list
-2. Task list
-3. Main Page
-4. Settings/profile
-5. Add project
-6. Add task
+## Editor setup
+
+[VS Code](https://code.visualstudio.com/) with the [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) extension. Type-checking uses `vue-tsc` instead of `tsc`, so `.vue` files are checked too. The [Vue.js devtools](https://devtools.vuejs.org/) panel is built into `pnpm dev`.
