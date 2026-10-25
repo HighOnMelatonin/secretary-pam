@@ -1,6 +1,107 @@
+/* Pam theme: Pico's dark theme recoloured to the forest green / cream palette.
+   :root[data-theme=dark] outranks Pico's own [data-theme=dark] block. */
+:root[data-theme='dark'] {
+  --pam-green: #204030;
+  --pam-green-raised: #2a5040;
+  --pam-green-line: #3d6652;
+  --pam-cream: #faefe0;
+  --pam-cream-muted: rgba(250, 239, 224, 0.68);
+  --pam-cream-faint: rgba(250, 239, 224, 0.14);
 
-body{
-    background-color: #204030;
-    color: #faefe0;
-    font-family: serif;
+  --pico-font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+  --pico-border-radius: 0.5rem;
+
+  --pico-background-color: var(--pam-green);
+  --pico-color: var(--pam-cream);
+  --pico-h1-color: var(--pam-cream);
+  --pico-h2-color: var(--pam-cream);
+  --pico-h3-color: var(--pam-cream);
+  --pico-muted-color: var(--pam-cream-muted);
+  --pico-muted-border-color: var(--pam-green-line);
+  --pico-border-color: var(--pam-green-line);
+
+  --pico-primary: var(--pam-cream);
+  --pico-primary-background: var(--pam-cream);
+  --pico-primary-border: var(--pam-cream);
+  --pico-primary-underline: var(--pam-cream-muted);
+  --pico-primary-hover: #ffffff;
+  --pico-primary-hover-background: #ffffff;
+  --pico-primary-hover-border: #ffffff;
+  --pico-primary-hover-underline: var(--pam-cream);
+  --pico-primary-focus: var(--pam-cream-faint);
+  --pico-primary-inverse: var(--pam-green);
+
+  --pico-secondary: var(--pam-cream-muted);
+  --pico-secondary-background: var(--pam-green-line);
+  --pico-secondary-border: var(--pam-green-line);
+  --pico-secondary-hover: var(--pam-cream);
+  --pico-secondary-hover-background: #4a7560;
+  --pico-secondary-hover-border: #4a7560;
+  --pico-secondary-focus: var(--pam-cream-faint);
+  --pico-secondary-inverse: var(--pam-cream);
+
+  --pico-card-background-color: var(--pam-green-raised);
+  --pico-card-sectioning-background-color: var(--pam-green-raised);
+  --pico-card-border-color: var(--pam-green-line);
+  --pico-card-box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.18);
+
+  --pico-form-element-background-color: var(--pam-green);
+  --pico-form-element-selected-background-color: var(--pam-green-line);
+  --pico-form-element-border-color: var(--pam-green-line);
+  --pico-form-element-color: var(--pam-cream);
+  --pico-form-element-placeholder-color: rgba(250, 239, 224, 0.45);
+  --pico-form-element-active-background-color: var(--pam-green);
+  --pico-form-element-active-border-color: var(--pam-cream);
+  --pico-form-element-focus-color: var(--pam-cream-faint);
+
+  --pico-progress-background-color: var(--pam-green);
+  --pico-progress-color: var(--pam-cream);
+  --pico-mark-background-color: var(--pam-cream);
+  --pico-mark-color: var(--pam-green);
+}
+
+.app-header {
+  padding-block: 2rem 1rem;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  margin-bottom: 2rem;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.app-header p {
+  margin: 0.25rem 0 0;
+  color: var(--pico-muted-color);
+  font-style: italic;
+}
+
+/* Small pill used for priorities and status tags */
+.tag {
+  display: inline-block;
+  padding: 0.1rem 0.6rem;
+  border: 1px solid var(--pam-cream-muted);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--pam-cream-muted);
+}
+
+.tag.priority-urgent,
+.tag.overdue {
+  background: var(--pam-cream);
+  border-color: var(--pam-cream);
+  color: var(--pam-green);
+}
+
+.tag.priority-high {
+  border-color: var(--pam-cream);
+  color: var(--pam-cream);
+}
+
+.tag.priority-low {
+  border-color: var(--pam-green-line);
 }

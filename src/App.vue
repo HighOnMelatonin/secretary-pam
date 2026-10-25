@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import dashboard from './components/dashboard.vue';
-import task from './components/task.vue';
 </script>
 
 <template>
-  <h1>Hi, its Pam</h1>
-  <dashboard />
-  <task />
+  <main class="container">
+    <header class="app-header">
+      <h1>Hi, its Pam</h1>
+    </header>
+    <dashboard />
+  </main>
 </template>

@@ -1,0 +1,35 @@
+// Cloudflare Worker config: serves the built Vue app as static assets and
+// handles /api/* in worker/index.ts, which stores data in the D1 database below.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "secretary-pam",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+  "assets": {
+    // Unknown paths fall back to index.html so client-side routes work
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pam-data",
+      // Paste the id printed by `wrangler d1 create secretary-pam` here
+      "database_id": "8b85deab-6553-4c38-ba85-ee1d375aba47",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Settings for Preview deployments (`wrangler preview`), which Cloudflare builds
+  // for non-production branches. Bindings aren't inherited from above, so previews
+  // get their own database and can't touch the real data.
+  "previews": {
+    "d1_databases": [
+      {
+        "binding": "DB",
+        "database_name": "secretary-pam-preview",
+        "database_id": "fba30148-1a8e-498f-8c53-60dd7559e96f"
+      }
+    ]
+  }
+}

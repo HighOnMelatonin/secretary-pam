@@ -1,0 +1,14 @@
+// TSConfig for the Cloudflare Worker in worker/. Types for the Workers runtime and
+// the Env bindings come from worker-configuration.d.ts (regenerate with `pnpm cf-typegen`).
+{
+  "extends": "@tsconfig/node24/tsconfig.json",
+  "include": ["worker/**/*"],
+  "compilerOptions": {
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "lib": ["es2024"],
+    "types": [],
+    "noEmit": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.worker.tsbuildinfo"
+  }
+}
