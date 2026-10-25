@@ -19,7 +19,7 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 | Build | [Vite](https://vite.dev/) with the [Cloudflare Vite plugin](https://developers.cloudflare.com/workers/vite-plugin/) |
 | Backend | [Cloudflare Workers](https://developers.cloudflare.com/workers/) (`worker/index.ts`) |
 | Database | [Cloudflare D1](https://developers.cloudflare.com/d1/) |
-| Tests | [Vitest](https://vitest.dev/) and Vue Test Utils, [Cypress](https://www.cypress.io/) |
+| Tests | [Vitest](https://vitest.dev/) with Vue Test Utils and the [Cloudflare Vitest plugin](https://developers.cloudflare.com/workers/testing/vitest-integration/), [Cypress](https://www.cypress.io/) |
 
 ## Project structure
 
@@ -36,6 +36,10 @@ src/
   __tests__/          unit tests
 worker/
   index.ts            the /api routes, reading and writing D1
+  __tests__/          integration tests for the API and database
+cypress/
+  e2e/                end-to-end tests
+  support/            commands and builders for test data
 migrations/           SQL that creates the database tables
 wrangler.jsonc        Worker and database configuration
 ```
@@ -59,11 +63,16 @@ pnpm dev
 | `pnpm dev` | Start the dev server with the API and local database |
 | `pnpm build` | Type-check and build the app and Worker into `dist/` |
 | `pnpm preview` | Serve the production build locally, with the API |
-| `pnpm test:unit` | Run the unit tests |
+| `pnpm test` | Run the unit and integration tests once |
+| `pnpm test:unit` | Run the unit tests in watch mode |
+| `pnpm test:integration` | Run the Worker integration tests in watch mode |
+| `pnpm test:e2e` | Build, then run the end-to-end tests headless |
+| `pnpm test:e2e:dev` | Open Cypress against the dev server |
 | `pnpm type-check` | Type-check the app, Worker and config files |
 | `pnpm deploy` | Build and deploy to Cloudflare |
 | `pnpm db:migrate:local` | Apply new migrations to the local database |
 | `pnpm db:migrate:remote` | Apply new migrations to the production database |
+| `pnpm db:migrate:e2e` | Apply new migrations to the end-to-end test database (run by `pnpm test:e2e`) |
 | `pnpm cf-typegen` | Regenerate `worker/worker-configuration.d.ts` after changing `wrangler.jsonc` |
 
 ## Data storage
@@ -154,13 +163,19 @@ The API has no login of its own, so anyone with the URL can read and change the 
 
 ## Testing
 
-```sh
-pnpm test:unit    # Vitest: dashboard, project tile and task form
-```
+There are three layers of tests:
 
-Unit tests replace the API with a stub, so they don't need a database.
+| Layer | Command | Where | What it covers |
+|---|---|---|---|
+| Unit | `pnpm test:unit` | `src/__tests__/` | Components, stores, models and the API client in a simulated browser (jsdom). `fetch` is replaced by an in-memory fake API (`fakeApi.ts`), so no server or database is needed. |
+| Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers routing, saving and reading every field, validation, transactions, cascading deletes and the schema's constraints. The database is emptied before every test. |
+| End-to-end | `pnpm test:e2e` | `cypress/e2e/` | The production build in a real browser (Cypress), with the Worker and a local D1 database. Covers creating and editing projects and tasks, the tile preview, sorting, and how errors are shown. |
 
-Cypress is set up for end-to-end tests (`pnpm test:e2e:dev` against the dev server, `pnpm test:e2e` against a production build). `cypress/e2e/example.cy.ts` is still the starter template and fails until it's replaced with real tests.
+`pnpm test` runs the unit and integration tests together.
+
+End-to-end tests use their own database in `.wrangler/e2e-state`, so they never touch the data you use with `pnpm dev`. Each test clears it and adds the data it needs through the API, using the commands in `cypress/support/commands.ts`. `pnpm test:e2e` builds the app first. `pnpm test:e2e:dev` opens the Cypress app against the dev server instead, which is quicker for writing tests.
+
+If Cypress fails to start with `bad option: --smoke-test`, the `ELECTRON_RUN_AS_NODE` environment variable is set. Some editor extensions set it for the processes they start. Unset it, or run the tests from a normal terminal.
 
 ## Roadmap
 
