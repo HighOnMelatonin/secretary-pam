@@ -12,7 +12,11 @@
     "test:e2e": "start-server-and-test preview http://localhost:4173 'cypress run --e2e'",
     "test:e2e:dev": "start-server-and-test 'vite dev --port 4173' http://localhost:4173 'cypress open --e2e'",
     "build-only": "vite build",
-    "type-check": "vue-tsc --build"
+    "type-check": "vue-tsc --build",
+    "deploy": "pnpm build && wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply secretary-pam --local",
+    "db:migrate:remote": "wrangler d1 migrations apply secretary-pam --remote",
+    "cf-typegen": "wrangler types worker/worker-configuration.d.ts"
   },
   "dependencies": {
     "@picocss/pico": "^2.1.1",
@@ -21,6 +25,7 @@
     "vue-router": "^5.1.0"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.65.0",
     "@tsconfig/node24": "^24.0.4",
     "@types/jsdom": "^28.0.3",
     "@types/node": "^24.13.2",
@@ -36,7 +41,8 @@
     "vite": "^8.0.16",
     "vite-plugin-vue-devtools": "^8.1.2",
     "vitest": "^4.1.9",
-    "vue-tsc": "^3.3.5"
+    "vue-tsc": "^3.3.5",
+    "wrangler": "^4.152.0"
   },
   "engines": {
     "node": "^22.18.0 || >=24.12.0"

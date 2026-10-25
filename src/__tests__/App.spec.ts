@@ -1,11 +1,35 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import App from '../App.vue'
 
+// Stands in for the Worker API: every list request returns no items
+function stubEmptyApi() {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json([])))
+}
+
 describe('App', () => {
-  it('mounts renders properly', () => {
-    const wrapper = mount(App)
-    expect(wrapper.text()).toContain('You did it!')
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('prompts to create a project when there are none', async () => {
+    stubEmptyApi()
+    const wrapper = mount(App, { global: { plugins: [createPinia()] } })
+    expect(wrapper.text()).toContain('Hi, its Pam')
+
+    await flushPromises()
+    expect(fetch).toHaveBeenCalledWith('/api/projects', undefined)
+    expect(fetch).toHaveBeenCalledWith('/api/tasks', undefined)
+    expect(wrapper.text()).toContain('Create a project')
+  })
+
+  it('shows an error when the projects cannot be loaded', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'D1 is down' }, { status: 500 })))
+    const wrapper = mount(App, { global: { plugins: [createPinia()] } })
+
+    await flushPromises()
+    expect(wrapper.text()).toContain("Couldn't load your projects: D1 is down")
   })
 })

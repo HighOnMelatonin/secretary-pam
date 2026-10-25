@@ -1,0 +1,23 @@
+// Cloudflare Worker config: serves the built Vue app as static assets and
+// handles /api/* in worker/index.ts, which stores data in the D1 database below.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "secretary-pam",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+  "assets": {
+    // Unknown paths fall back to index.html so client-side routes work
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "secretary-pam",
+      // Paste the id printed by `wrangler d1 create secretary-pam` here
+      // "database_id": "",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

@@ -28,6 +28,7 @@ See [Vite Configuration Reference](https://vite.dev/config/).
 
 ```sh
 pnpm install
+pnpm db:migrate:local   # creates the tables in the local D1 database (.wrangler/)
 ```
 
 ### Compile and Hot-Reload for Development
@@ -35,6 +36,25 @@ pnpm install
 ```sh
 pnpm dev
 ```
+
+`pnpm dev` and `pnpm preview` run the API in [worker/index.ts](worker/index.ts) in the local Workers runtime, backed by a local D1 database.
+
+## Deploying to Cloudflare
+
+The app is deployed as a single Cloudflare Worker: it serves the built Vue app as static assets and handles `/api/*`, which stores projects and tasks in a [D1](https://developers.cloudflare.com/d1/) database. Configuration is in [wrangler.jsonc](wrangler.jsonc).
+
+First deploy:
+
+```sh
+pnpm exec wrangler login
+pnpm exec wrangler d1 create secretary-pam   # put the printed database_id in wrangler.jsonc
+pnpm db:migrate:remote                       # creates the tables in the remote database
+pnpm deploy
+```
+
+Later deploys only need `pnpm deploy`. After adding a file to [migrations/](migrations/), run `pnpm db:migrate:local` and `pnpm db:migrate:remote`. After changing bindings in `wrangler.jsonc`, run `pnpm cf-typegen`.
+
+The API has no login of its own, so anyone with the URL can read and change the data. Put the Worker behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-public-app/) (Zero Trust → Access → Applications, allow only your email), or enable Access from the Worker's Settings → Domains & Routes in the dashboard.
 
 ### Type-Check, Compile and Minify for Production
 

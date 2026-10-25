@@ -16,3 +16,7 @@ overrides:
 peerDependencyRules:
   allowAny:
     - 'vue'
+
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
