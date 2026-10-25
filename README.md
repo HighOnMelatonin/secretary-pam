@@ -52,6 +52,15 @@ pnpm db:migrate:remote                       # creates the tables in the remote 
 pnpm deploy
 ```
 
+Pushes to branches other than the production branch build a Preview deployment, which uses a separate database so the real data is never touched. To set it up once:
+
+```sh
+pnpm exec wrangler d1 create secretary-pam-preview   # put the printed database_id under "previews" in wrangler.jsonc
+pnpm exec wrangler d1 execute secretary-pam-preview --remote --file migrations/0001_create_projects_and_tasks.sql
+```
+
+`wrangler d1 migrations apply` only sees the production database, so new files in [migrations/](migrations/) are run on the preview database with `wrangler d1 execute` as above.
+
 Later deploys only need `pnpm deploy`. After adding a file to [migrations/](migrations/), run `pnpm db:migrate:local` and `pnpm db:migrate:remote`. After changing bindings in `wrangler.jsonc`, run `pnpm cf-typegen`.
 
 The API has no login of its own, so anyone with the URL can read and change the data. Put the Worker behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-public-app/) (Zero Trust → Access → Applications, allow only your email), or enable Access from the Worker's Settings → Domains & Routes in the dashboard.

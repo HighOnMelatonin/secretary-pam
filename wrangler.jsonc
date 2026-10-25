@@ -19,5 +19,18 @@
       // "database_id": "",
       "migrations_dir": "migrations"
     }
-  ]
+  ],
+  // Settings for Preview deployments (`wrangler preview`), which Cloudflare builds
+  // for non-production branches. Bindings aren't inherited from above, so previews
+  // get their own database and can't touch the real data.
+  "previews": {
+    "d1_databases": [
+      {
+        "binding": "DB",
+        "database_name": "secretary-pam-preview",
+        // Paste the id printed by `wrangler d1 create secretary-pam-preview` here
+        // "database_id": ""
+      }
+    ]
+  }
 }
