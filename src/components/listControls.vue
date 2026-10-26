@@ -35,13 +35,18 @@ const urgencies = [...PRIORITIES].reverse()
             v-for="tag in tags"
             :key="tag.id"
             type="button"
-            class="chip"
+            class="chip tag-chip"
             :aria-pressed="activeTagIds.includes(tag.id)"
             @click="view.toggleTag(tag.id)"
           >
             {{ tag.name }}
           </button>
-          <button type="button" class="chip" :aria-pressed="activeTagIds.includes(NO_TAG)" @click="view.toggleTag(NO_TAG)">
+          <button
+            type="button"
+            class="chip tag-chip"
+            :aria-pressed="activeTagIds.includes(NO_TAG)"
+            @click="view.toggleTag(NO_TAG)"
+          >
             No tag
           </button>
         </div>
@@ -54,7 +59,7 @@ const urgencies = [...PRIORITIES].reverse()
             v-for="p in urgencies"
             :key="p"
             type="button"
-            class="chip"
+            class="chip urgency-chip"
             :aria-pressed="priorities.includes(p)"
             @click="view.togglePriority(p)"
           >
@@ -126,9 +131,23 @@ const urgencies = [...PRIORITIES].reverse()
   font-size: 0.9rem;
 }
 
-.chip[aria-pressed='true'] {
+/* When on, each chip takes the accent of the badges it filters by (see main.css), plus a
+   tick so the state doesn't rest on colour alone */
+.chip[aria-pressed='true']::before {
+  content: '✓ ';
+  content: '✓ ' / ''; /* the empty alt text keeps screen readers from reading it; aria-pressed says it */
+}
+
+/* Indigo is as dark as the page, so the cream border marks the chip's edge */
+.tag-chip[aria-pressed='true'] {
   border-color: var(--pam-cream);
-  background: var(--pam-cream);
+  background: var(--pam-indigo);
+  color: var(--pam-cream);
+}
+
+.urgency-chip[aria-pressed='true'] {
+  border-color: var(--pam-coral);
+  background: var(--pam-coral);
   color: var(--pam-green);
 }
 

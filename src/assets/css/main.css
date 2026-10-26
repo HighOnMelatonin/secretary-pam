@@ -1,4 +1,5 @@
-/* Pam theme: Pico's dark theme recoloured to the forest green / cream palette.
+/* Pam theme: Pico's dark theme recoloured to the forest green / cream palette, with indigo
+   and coral accents. The README's "Design" section says where each colour is used.
    :root[data-theme=dark] outranks Pico's own [data-theme=dark] block. */
 :root[data-theme='dark'] {
   --pam-green: #204030;
@@ -7,6 +8,11 @@
   --pam-cream: #faefe0;
   --pam-cream-muted: rgba(250, 239, 224, 0.68);
   --pam-cream-faint: rgba(250, 239, 224, 0.14);
+
+  /* Accents, used sparingly. Indigo is too dark to read on the greens, so it is only ever a
+     fill behind cream text. Coral is light, so text on a coral fill is green, never cream. */
+  --pam-indigo: #343ca6; /* categories: project tags */
+  --pam-coral: #e69e7a; /* needs attention: urgent and overdue */
 
   --pico-font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
   --pico-border-radius: 0.5rem;
@@ -98,11 +104,9 @@
   color: var(--pam-cream-muted);
 }
 
-.tag.priority-urgent,
-.tag.overdue {
-  background: var(--pam-cream);
-  border-color: var(--pam-cream);
-  color: var(--pam-green);
+/* Priorities get louder from low to urgent; overdue is the loudest of all */
+.tag.priority-low {
+  border-color: var(--pam-green-line);
 }
 
 .tag.priority-high {
@@ -110,14 +114,22 @@
   color: var(--pam-cream);
 }
 
-.tag.priority-low {
-  border-color: var(--pam-green-line);
+/* A coral outline. The text stays cream: coral text is too faint on the cards for small type */
+.tag.priority-urgent {
+  border-color: var(--pam-coral);
+  color: var(--pam-cream);
 }
 
-/* The project's own tag, e.g. "Work": filled, and in the case it was typed */
+.tag.overdue {
+  background: var(--pam-coral);
+  border-color: var(--pam-coral);
+  color: var(--pam-green);
+}
+
+/* The project's own tag, e.g. "Work": indigo, and in the case it was typed */
 .tag.project-tag {
-  background: var(--pam-cream-faint);
-  border-color: transparent;
+  background: var(--pam-indigo);
+  border-color: var(--pam-indigo);
   color: var(--pam-cream);
   text-transform: none;
   letter-spacing: normal;

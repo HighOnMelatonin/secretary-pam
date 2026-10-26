@@ -25,6 +25,52 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 | Database | [Cloudflare D1](https://developers.cloudflare.com/d1/) |
 | Tests | [Vitest](https://vitest.dev/) with Vue Test Utils and the [Cloudflare Vitest plugin](https://developers.cloudflare.com/workers/testing/vitest-integration/), [Cypress](https://www.cypress.io/) |
 
+## Design
+
+A dark theme: [Pico CSS](https://picocss.com/) recoloured in `src/assets/css/main.css`, with a serif typeface (Iowan Old Style, falling back to Palatino and Georgia). Every colour is a CSS variable there, so use the variable rather than the hex code.
+
+### Palette
+
+| Colour | Hex | Variable | Used for |
+|---|---|---|---|
+| Forest green | `#204030` | `--pam-green` | Page background, form fields, and text on cream or coral fills |
+| Raised green | `#2a5040` | `--pam-green-raised` | Cards (project tiles, forms), the taskbar and menus |
+| Cream | `#faefe0` | `--pam-cream` | Text, primary buttons, progress bars |
+| Indigo (accent) | `#343ca6` | `--pam-indigo` | Categories: project tag badges, selected tag filters |
+| Coral (accent) | `#e69e7a` | `--pam-coral` | Needs attention: urgent and overdue badges, selected urgency filters |
+
+Three shades are derived from these: `--pam-green-line` (`#3d6652`) for borders and secondary buttons, `--pam-cream-muted` (cream at 68%) for secondary text, and `--pam-cream-faint` (cream at 14%) for focus rings.
+
+### Accents
+
+The accents carry meaning, so keep them to their jobs: **indigo** says which area of life something belongs to, and **coral** says it needs attention. Using them for decoration would blur that.
+
+Their contrast with the rest of the palette decides how they can be used:
+
+| Pairing | Contrast | Rule |
+|---|---|---|
+| Cream text on indigo | 7.9 : 1 | Indigo is only ever a fill behind cream text |
+| Indigo on forest / raised green | 1.3 : 1 / 1.0 : 1 | Never indigo text or borders on the greens. Give an indigo shape on the page a cream border so its edge shows |
+| Green text on coral | 5.2 : 1 | Text on a coral fill is forest green |
+| Cream text on coral | 1.9 : 1 | Never cream on coral |
+| Coral on forest green | 5.2 : 1 | Coral text is fine on the page background |
+| Coral on raised green | 4.1 : 1 | On cards, coral is for borders, not small text (which needs 4.5 : 1) |
+
+Colour is never the only cue: badges spell out their meaning, and a selected filter chip shows a ✓ as well as its colour.
+
+### Badges
+
+Priority badges get louder as the priority rises, and overdue is the loudest:
+
+| Badge | Style |
+|---|---|
+| low | faint green outline |
+| medium | muted cream outline |
+| high | cream outline |
+| urgent | coral outline |
+| overdue | coral fill |
+| project tag (e.g. Work) | indigo fill, in the case it was typed |
+
 ## Project structure
 
 ```
