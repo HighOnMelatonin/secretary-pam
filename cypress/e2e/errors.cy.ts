@@ -12,6 +12,7 @@ describe('Errors', () => {
     cy.visit('/')
 
     cy.get('[role="alert"]').should('have.text', "Couldn't load your projects: D1 is down")
+    cy.contains('No projects yet').should('not.exist')
   })
 
   it('keeps what was typed when a save fails, and saves on retry', () => {

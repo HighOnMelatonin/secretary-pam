@@ -131,7 +131,7 @@ The app deploys as one Cloudflare Worker named `secretary-pam`. It serves the bu
 
 | Database | Used by |
 |---|---|
-| `secretary-pam` | Production deploys, from the production branch |
+| `pam-data` | Production deploys, from the production branch |
 | `secretary-pam-preview` | Preview deploys, from every other branch, so testing never touches real data |
 
 ### First-time setup
@@ -139,7 +139,7 @@ The app deploys as one Cloudflare Worker named `secretary-pam`. It serves the bu
 ```sh
 pnpm exec wrangler login
 
-pnpm exec wrangler d1 create secretary-pam
+pnpm exec wrangler d1 create pam-data
 # Put the printed database_id in the top-level "d1_databases" in wrangler.jsonc
 pnpm db:migrate:remote
 

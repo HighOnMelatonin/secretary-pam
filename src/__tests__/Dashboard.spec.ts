@@ -49,6 +49,9 @@ describe('Dashboard loading', () => {
     api.failWith = 'D1 is down'
     const wrapper = await mountDashboard()
     expect(wrapper.find('[role="alert"]').text()).toBe("Couldn't load your projects: D1 is down")
+    // Nothing was loaded, so it can't say there are no projects or offer to create one
+    expect(wrapper.text()).not.toContain('No projects yet')
+    expect(wrapper.findAll('button')).toEqual([])
   })
 })
 
