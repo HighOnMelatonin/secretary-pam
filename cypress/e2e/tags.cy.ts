@@ -13,7 +13,7 @@ describe('Tags', () => {
     cy.seed({ projects: [project('p', { name: 'Thesis' })] })
     cy.visit('/')
 
-    cy.contains('button', 'Tags').click()
+    cy.taskbar('Tags')
     cy.contains('No tags yet.')
     cy.get('input[aria-label="New tag name"]').type('School (SUTD){enter}')
     tagRow('School (SUTD)').should('contain', 'Used by 0 projects')
@@ -36,7 +36,7 @@ describe('Tags', () => {
     })
     cy.visit('/')
 
-    cy.contains('button', 'Tags').click()
+    cy.taskbar('Tags')
     tagRow('Work').should('contain', 'Used by 2 projects')
     tagRow('Work').find('input').clear().type('Internship')
     tagRow('Work').contains('button', 'Rename').click()
@@ -50,7 +50,7 @@ describe('Tags', () => {
     cy.seed({ tags: [tag('work', 'Work'), tag('personal', 'Personal')], projects: [project('p')] })
     cy.visit('/')
 
-    cy.contains('button', 'Tags').click()
+    cy.taskbar('Tags')
     cy.get('input[aria-label="New tag name"]').type('work{enter}')
 
     cy.get('[role="alert"]').should('have.text', 'Couldn\'t add "work": There is already a tag with that name')
@@ -65,7 +65,7 @@ describe('Tags', () => {
       return true
     })
 
-    cy.contains('button', 'Tags').click()
+    cy.taskbar('Tags')
     tagRow('Work').contains('button', 'Delete').click()
     cy.contains('No tags yet.')
     cy.contains('button', 'Done').click()

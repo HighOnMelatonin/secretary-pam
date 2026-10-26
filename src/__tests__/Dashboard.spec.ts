@@ -5,7 +5,7 @@ import Dashboard from '../components/dashboard.vue'
 import { createEmptyProject, type Project } from '../types/project'
 import { createEmptyTask, type Task } from '../types/task'
 import { fakeApi } from './fakeApi'
-import { button, listedIn, selectWithOption } from './helpers'
+import { button, listedIn, routerAt, selectWithOption } from './helpers'
 
 const task = (id: string, fields: Partial<Task> = {}): Task => ({ ...createEmptyTask(), id, name: `Task ${id}`, ...fields })
 const project = (id: string, fields: Partial<Project> = {}): Project => ({
@@ -15,8 +15,9 @@ const project = (id: string, fields: Partial<Project> = {}): Project => ({
   ...fields,
 })
 
-async function mountDashboard() {
-  const wrapper = mount(Dashboard, { global: { plugins: [createPinia()] } })
+// Mounts the dashboard at `path` and waits for its data; the route is wrapper.vm.$route
+async function mountDashboard(path = '/') {
+  const wrapper = mount(Dashboard, { global: { plugins: [createPinia(), await routerAt(path)] } })
   await flushPromises()
   return wrapper
 }
@@ -30,7 +31,7 @@ afterEach(() => {
 describe('Dashboard loading', () => {
   it('shows a loading message until projects and tasks arrive', async () => {
     const api = fakeApi()
-    const wrapper = mount(Dashboard, { global: { plugins: [createPinia()] } })
+    const wrapper = mount(Dashboard, { global: { plugins: [createPinia(), await routerAt()] } })
     expect(wrapper.text()).toContain('Loading your projects')
 
     await flushPromises()
@@ -83,6 +84,8 @@ describe('Dashboard creating a project', () => {
     const wrapper = await mountDashboard()
 
     await button(wrapper, 'Create a project').trigger('click')
+
+    await flushPromises()
     await wrapper.find('input[placeholder="Project"]').setValue('Thesis')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
@@ -97,6 +100,7 @@ describe('Dashboard creating a project', () => {
     const api = fakeApi()
     const wrapper = await mountDashboard()
     await button(wrapper, 'Create a project').trigger('click')
+    await flushPromises()
     await wrapper.find('input[placeholder="Project"]').setValue('Thesis')
     api.failWith = 'D1 is down'
     await wrapper.find('form').trigger('submit')
@@ -117,7 +121,9 @@ describe('Dashboard creating a project', () => {
     const api = fakeApi()
     const wrapper = await mountDashboard()
     await button(wrapper, 'Create a project').trigger('click')
+    await flushPromises()
     await button(wrapper, 'Cancel').trigger('click')
+    await flushPromises()
 
     expect(wrapper.find('form').exists()).toBe(false)
     expect(api.requests.filter((r) => r.startsWith('PUT'))).toEqual([])
@@ -130,6 +136,8 @@ describe('Dashboard editing a project', () => {
     const wrapper = await mountDashboard()
 
     await button(wrapper, 'Edit').trigger('click')
+
+    await flushPromises()
     expect((wrapper.find('input[placeholder="Project"]').element as HTMLInputElement).value).toBe('Thesis')
     await wrapper.find('input[placeholder="Project"]').setValue('Final thesis')
     await wrapper.find('form').trigger('submit')
@@ -157,6 +165,8 @@ describe('Dashboard tags', () => {
     const wrapper = await mountDashboard()
 
     await button(wrapper, 'Edit').trigger('click')
+
+    await flushPromises()
     await selectWithOption(wrapper, 'work').setValue('work')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
@@ -165,15 +175,18 @@ describe('Dashboard tags', () => {
     expect(wrapper.find('.project-tag').text()).toBe('Work')
   })
 
-  it('opens the tag list from the toolbar, and its changes show on the tiles', async () => {
+  it('opens the tag list from the taskbar, and its changes show on the tiles', async () => {
     fakeApi({ tags, projects: [project('p', { name: 'Thesis', tagId: 'school' })] })
     const wrapper = await mountDashboard()
 
     await button(wrapper, 'Tags').trigger('click')
+
+    await flushPromises()
     await wrapper.find('input[aria-label="Name of School (SUTD)"]').setValue('SUTD')
     await wrapper.find('li form').trigger('submit')
     await flushPromises()
     await button(wrapper, 'Done').trigger('click')
+    await flushPromises()
 
     expect(wrapper.find('.project-tag').text()).toBe('SUTD')
   })
@@ -184,7 +197,9 @@ describe('Dashboard creating a task', () => {
     const api = fakeApi({ projects: [project('p', { name: 'Thesis' })] })
     const wrapper = await mountDashboard()
 
-    await button(wrapper, 'New task').trigger('click')
+    await button(wrapper, 'Add task').trigger('click')
+
+    await flushPromises()
     await wrapper.find('input[placeholder="Task"]').setValue('Write report')
     await selectWithOption(wrapper, 'p').setValue('p')
     await button(wrapper, 'Assign').trigger('click')
@@ -201,7 +216,9 @@ describe('Dashboard creating a task', () => {
     const api = fakeApi({ projects: [project('p', { name: 'Thesis' })] })
     const wrapper = await mountDashboard()
 
-    await button(wrapper, 'New task').trigger('click')
+    await button(wrapper, 'Add task').trigger('click')
+
+    await flushPromises()
     await wrapper.find('input[placeholder="Task"]').setValue('Write report')
     await selectWithOption(wrapper, 'p').setValue('p')
     await button(wrapper, 'Assign').trigger('click')
@@ -212,5 +229,73 @@ describe('Dashboard creating a task', () => {
     expect(wrapper.find('[role="alert"]').text()).toBe('Couldn\'t save "Write report": D1 is down')
     expect((wrapper.find('input[placeholder="Task"]').element as HTMLInputElement).value).toBe('Write report')
     expect(listedIn(wrapper, 'Projects')).toEqual(['Thesis'])
+  })
+})
+
+describe('Dashboard routes', () => {
+  const path = (wrapper: ReturnType<typeof mount>) => wrapper.vm.$route.fullPath
+
+  it('gives each form its own URL, and back closes it', async () => {
+    fakeApi({ projects: [project('p', { name: 'Thesis' })] })
+    const wrapper = await mountDashboard()
+
+    await button(wrapper, 'Add task').trigger('click')
+    await flushPromises()
+    expect(path(wrapper)).toBe('/tasks/new')
+    expect(wrapper.find('input[placeholder="Task"]').exists()).toBe(true)
+
+    wrapper.vm.$router.back()
+    await flushPromises()
+    expect(path(wrapper)).toBe('/')
+    expect(tileNames(wrapper)).toEqual(['Thesis'])
+  })
+
+  it('goes back to the list after saving, without leaving the form in history', async () => {
+    fakeApi()
+    const wrapper = await mountDashboard()
+    await button(wrapper, 'Create a project').trigger('click')
+    await flushPromises()
+    expect(path(wrapper)).toBe('/projects/new')
+
+    await wrapper.find('input[placeholder="Project"]').setValue('Thesis')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(path(wrapper)).toBe('/')
+    expect(tileNames(wrapper)).toEqual(['Thesis'])
+  })
+
+  it("opens a project's edit link directly, once the projects have loaded", async () => {
+    fakeApi({ projects: [project('p', { name: 'Thesis' })] })
+    const wrapper = await mountDashboard('/projects/p/edit')
+    expect((wrapper.find('input[placeholder="Project"]').element as HTMLInputElement).value).toBe('Thesis')
+
+    // Opened by link rather than from the list, so closing replaces it with the list
+    await button(wrapper, 'Cancel').trigger('click')
+    await flushPromises()
+    expect(path(wrapper)).toBe('/')
+  })
+
+  it('goes to the list for an edit link to a project that does not exist', async () => {
+    fakeApi({ projects: [project('p', { name: 'Thesis' })] })
+    const wrapper = await mountDashboard('/projects/missing/edit')
+    expect(path(wrapper)).toBe('/')
+    expect(tileNames(wrapper)).toEqual(['Thesis'])
+  })
+
+  it('opens the tag list from its link', async () => {
+    fakeApi({ tags: [{ id: 'w', name: 'Work' }] })
+    const wrapper = await mountDashboard('/tags')
+    expect(wrapper.find('input[aria-label="Name of Work"]').exists()).toBe(true)
+  })
+
+  it('hides the + button while a form is open', async () => {
+    fakeApi({ projects: [project('p')] })
+    const wrapper = await mountDashboard()
+    expect(wrapper.find('.fab').exists()).toBe(true)
+
+    await button(wrapper, 'Add task').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.fab').exists()).toBe(false)
   })
 })

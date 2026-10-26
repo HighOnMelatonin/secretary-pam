@@ -9,7 +9,9 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 - **Dashboard** of live projects, sorted by delivery date. A project stays live until it has tasks and all of them are done.
 - **Project tiles** show the project's tag, priority, due date, an overdue tag and task progress. Click a tile to expand a preview of its tasks and reference links.
 - **Projects** have a name, description, delivery date, priority, an optional tag, tasks and reference links.
-- **Tags** such as School (SUTD), Work and Personal file projects by area of life. Add, rename and delete them from the **Tags** button on the dashboard. Renaming a tag renames it on every project, and deleting one leaves its projects untagged.
+- **Taskbar** hidden on the left edge of the screen. Hover over it to slide it out over the page, with buttons for **Tags**, **Add task** and **Add project**. On phones and other touch screens these are behind a **+** button in the bottom-right corner instead.
+- **Works on phones**: each form has its own address (such as `/projects/new` or `/tags`), so the back button or gesture closes it, and the forms keep Save and Cancel pinned to the bottom of the screen.
+- **Tags** such as School (SUTD), Work and Personal file projects by area of life. Add, rename and delete them from **Tags** in the taskbar. Renaming a tag renames it on every project, and deleting one leaves its projects untagged.
 - **Tasks** have a name, description, due date, priority, completed flag and relations to other tasks (blocks, blocked by, subtask of, parent of, related to). A task can be assigned to several projects, from either the project form or the task form.
 
 ## Tech stack
@@ -28,10 +30,12 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 src/
   components/
     dashboard.vue     main page: loads data, lists projects, opens the forms
+    taskbar.vue       the Tags, Add task and Add project buttons: a hidden bar on the left, or a + button on phones
     projectTile.vue   one project on the dashboard; expands into a preview
     project.vue       create/edit a project
     task.vue          create/edit a task, including which projects it is in
     tags.vue          add, rename and delete tags
+  router/             one route per form, all showing the dashboard, so back closes forms
   stores/             Pinia stores for projects, tasks and tags; they load and save through the API
   types/              Project, Task and Tag models, shared by the app and the Worker
   api.ts              client for the Worker API

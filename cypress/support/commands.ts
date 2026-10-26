@@ -12,6 +12,8 @@ declare global {
       resetData(): Chainable<void>
       // Saves the tags and tasks, then the projects (projects can only refer to ones that exist)
       seed(data: { tags?: TagData[]; tasks?: TaskData[]; projects?: ProjectData[] }): Chainable<void>
+      // Opens the hidden taskbar on the left from its strip and clicks one of its buttons
+      taskbar(action: 'Tags' | 'Add task' | 'Add project'): Chainable<void>
     }
   }
 }
@@ -26,7 +28,12 @@ Cypress.Commands.add('resetData', () => {
   }
 })
 
-Cypress.Commands.add('seed', ({ tags = [], tasks = [], projects = [] }) => {
+Cypress.Commands.add('taskbar', (action) => {
+  cy.get('button[aria-label="Show actions"]').click()
+  cy.contains('nav button', action).click()
+})
+
+Cypress.Commands.add('seed',({ tags = [], tasks = [], projects = [] }) => {
   for (const tag of tags) cy.request('PUT', apiPath('tags', tag.id), tag)
   for (const task of tasks) cy.request('PUT', apiPath('tasks', task.id), task)
   for (const project of projects) cy.request('PUT', apiPath('projects', project.id), project)

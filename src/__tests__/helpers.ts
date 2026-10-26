@@ -1,5 +1,14 @@
 // Shared helpers for component tests
 import type { DOMWrapper, VueWrapper } from '@vue/test-utils'
+import { createMemoryHistory, createRouter } from 'vue-router'
+import { routes } from '../router'
+
+// A router with the app's routes, kept in memory rather than the address bar, at `path`
+export async function routerAt(path = '/') {
+  const router = createRouter({ history: createMemoryHistory(), routes })
+  await router.push(path)
+  return router
+}
 
 // The button whose text is exactly `text`; fails the test if there is none
 export function button(wrapper: VueWrapper, text: string): DOMWrapper<HTMLButtonElement> {

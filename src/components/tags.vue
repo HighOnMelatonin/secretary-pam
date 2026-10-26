@@ -132,16 +132,22 @@ async function add() {
   color: var(--pico-muted-color);
 }
 
-/* The name field takes the space the buttons don't need, so names stay readable on phones */
-form input {
-  flex: 1;
-  min-width: 0;
+form button {
+  white-space: nowrap;
 }
 
-form button {
-  flex: none;
-  width: auto;
-  padding-inline: 0.9rem;
-  white-space: nowrap;
+/* The name field takes the space the buttons don't need. Phones put the name on its own
+   line instead, with the buttons below (main.css). */
+@media (min-width: 576px) {
+  form input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  form button {
+    flex: none;
+    width: auto;
+    padding-inline: 0.9rem;
+  }
 }
 </style>

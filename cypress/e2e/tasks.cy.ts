@@ -13,7 +13,7 @@ describe('Tasks', () => {
     cy.seed({ projects: [project('p', { name: 'Thesis' })] })
     cy.visit('/')
 
-    cy.contains('button', 'New task').click()
+    cy.taskbar('Add task')
     field('Task name').type('Write report')
     field('Due date').type('2026-12-14')
     fieldset('Projects').find('select').select('Thesis')
@@ -45,7 +45,7 @@ describe('Tasks', () => {
     cy.seed({ tasks: [task('a', { name: 'Collect data' })], projects: [project('p')] })
     cy.visit('/')
 
-    cy.contains('button', 'New task').click()
+    cy.taskbar('Add task')
     field('Task name').type('Analyse data')
     fieldset('Related tasks').find('select').first().select('blocked by')
     fieldset('Related tasks').find('select').last().select('Collect data')

@@ -71,12 +71,14 @@ function onTileClick(event: MouseEvent) {
         <ul v-if="projectTasks.length" class="plain-list">
           <li v-for="task in projectTasks" :key="task.id" class="task" :class="{ done: task.completed }">
             <span class="check" aria-hidden="true">{{ task.completed ? '✓' : '○' }}</span>
-            <span class="task-name">
-              {{ task.name }}<span v-if="task.completed" class="sr-only"> (completed)</span>
+            <span class="task-body">
+              <span class="task-name">
+                {{ task.name }}<span v-if="task.completed" class="sr-only"> (completed)</span>
+              </span>
+              <span class="tag" :class="`priority-${task.priority}`">{{ task.priority }}</span>
+              <span v-if="!task.completed && isOverdue(task.dueDate)" class="tag overdue">overdue</span>
+              <small v-if="task.dueDate">Due {{ task.dueDate }}</small>
             </span>
-            <span class="tag" :class="`priority-${task.priority}`">{{ task.priority }}</span>
-            <span v-if="!task.completed && isOverdue(task.dueDate)" class="tag overdue">overdue</span>
-            <small v-if="task.dueDate">Due {{ task.dueDate }}</small>
           </li>
         </ul>
         <p v-else><small>No tasks in this project yet.</small></p>
@@ -229,16 +231,26 @@ button.small {
   margin-bottom: 0.5rem;
 }
 
+/* The icon keeps its own column; the name, badges and due date wrap beside it on narrow
+   screens rather than under it */
 .task {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
+  align-items: baseline;
   gap: 0.5rem;
 }
 
 .check {
+  flex: none;
   width: 1.25rem;
   color: var(--pico-muted-color);
+}
+
+.task-body {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  min-width: 0;
 }
 
 .task.done .task-name {
