@@ -8,7 +8,7 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 
 - **Dashboard** of live projects. A project stays live until it has tasks and all of them are done.
 - **Sort** the projects by delivery date, urgency (most or least urgent first) or % complete, and **filter** them by tag and urgency. The choices are remembered in the browser.
-- **Project tiles** show the project's tag, priority, due date, an overdue tag and task progress. Click a tile to expand a preview of its tasks and reference links.
+- **Project tiles** show the project's tag, priority, due date, an overdue tag and task progress. Click a tile to expand a preview of its tasks and reference links, with an **Edit** button on each task.
 - **Projects** have a name, description, delivery date, priority, an optional tag, tasks and reference links.
 - **Taskbar** hidden on the left edge of the screen. Hover over it to slide it out over the page, with buttons for **Tags**, **Add task** and **Add project**. On phones and other touch screens these are behind a **+** button in the bottom-right corner instead.
 - **Works on phones**: each form has its own address (such as `/projects/new` or `/tags`), so the back button or gesture closes it, and the forms keep Save and Cancel pinned to the bottom of the screen.
@@ -186,7 +186,6 @@ If Cypress fails to start with `bad option: --smoke-test`, the `ELECTRON_RUN_AS_
 
 Planned, not built yet:
 
-- Open and edit existing tasks from the dashboard
 - Task list view
 - Project list view, including completed projects
 - Messages

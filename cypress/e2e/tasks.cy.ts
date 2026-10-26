@@ -84,4 +84,26 @@ describe('Tasks', () => {
 
     tile('Thesis').contains('0 of 1 tasks completed')
   })
+
+  it("edits a task from its project's tile", () => {
+    // A second task keeps the project live once the first is completed
+    cy.seed({
+      tasks: [task('t', { name: 'Write report' }), task('u', { name: 'Review slides' })],
+      projects: [project('p', { name: 'Thesis', taskIds: ['t', 'u'] })],
+    })
+    cy.visit('/')
+
+    tile('Thesis').find('.tile-toggle').click()
+    cy.get('button[aria-label="Edit task Write report"]').click()
+    cy.location('pathname').should('eq', '/tasks/t/edit')
+    field('Task name').should('have.value', 'Write report').clear().type('Write final report')
+    field('Completed').check()
+    cy.contains('button', 'Save').click()
+
+    cy.location('pathname').should('eq', '/')
+    tile('Thesis').contains('1 of 2 tasks completed')
+    cy.reload()
+    tile('Thesis').find('.tile-toggle').click()
+    tile('Thesis').contains('.task', 'Write final report').should('have.class', 'done')
+  })
 })

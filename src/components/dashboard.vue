@@ -50,6 +50,10 @@ function editorForRoute(): Editor {
     }
     case 'new-task':
       return { kind: 'task' }
+    case 'edit-task': {
+      const task = tasks.value.find((t) => t.id === route.params.id)
+      return task ? { kind: 'task', task } : null
+    }
     case 'tags':
       return { kind: 'tags' }
     default:
@@ -91,15 +95,15 @@ onMounted(async () => {
   }
 })
 
-// Follows the route once the data has loaded, since an edit link needs its project.
-// A link to a project that doesn't exist goes back to the list.
+// Follows the route once the data has loaded, since an edit link needs its project or task.
+// A link to one that doesn't exist goes back to the list.
 watch(
   [() => route.fullPath, loading],
   () => {
     if (loading.value) return
     if (route.name === 'dashboard') openedFromDashboard = false
     editor.value = editorForRoute()
-    if (route.name === 'edit-project' && !editor.value) router.replace({ name: 'dashboard' })
+    if (route.name !== 'dashboard' && !editor.value) router.replace({ name: 'dashboard' })
   },
   { immediate: true },
 )
@@ -198,6 +202,7 @@ async function onSaveTask(task: Task, projectIds: string[]) {
           :tasks="tasks"
           :tag="tagOf(project)"
           @edit="open({ name: 'edit-project', params: { id: $event.id } })"
+          @edit-task="open({ name: 'edit-task', params: { id: $event.id } })"
         />
       </div>
     </template>

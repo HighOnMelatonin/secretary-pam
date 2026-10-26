@@ -9,6 +9,7 @@ export const routes: RouteRecordRaw[] = [
   { path: '/projects/new', name: 'new-project', component: Dashboard },
   { path: '/projects/:id/edit', name: 'edit-project', component: Dashboard },
   { path: '/tasks/new', name: 'new-task', component: Dashboard },
+  { path: '/tasks/:id/edit', name: 'edit-task', component: Dashboard },
   { path: '/tags', name: 'tags', component: Dashboard },
   { path: '/:unknown(.*)*', redirect: '/' },
 ]

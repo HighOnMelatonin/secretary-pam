@@ -351,3 +351,41 @@ describe('Dashboard sorting and filtering', () => {
     expect(wrapper.find('summary').text()).toBe('Filter')
   })
 })
+
+describe('Dashboard editing a task', () => {
+  it("opens a task's form from its project's tile and saves the changes", async () => {
+    const api = fakeApi({
+      tasks: [task('t', { name: 'Write report' })],
+      projects: [project('p', { name: 'Thesis', taskIds: ['t'] })],
+    })
+    const wrapper = await mountDashboard()
+
+    await wrapper.find('.tile-toggle').trigger('click')
+    await wrapper.find('button[aria-label="Edit task Write report"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.$route.fullPath).toBe('/tasks/t/edit')
+    const name = wrapper.find('input[placeholder="Task"]')
+    expect((name.element as HTMLInputElement).value).toBe('Write report')
+    expect(listedIn(wrapper, 'Projects')).toEqual(['Thesis'])
+
+    await name.setValue('Write final report')
+    await wrapper.find('input[type="checkbox"]').setValue(true)
+    expect(button(wrapper, 'Save').exists()).toBe(true)
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(api.data.tasks).toEqual([task('t', { name: 'Write final report', completed: true })])
+    expect(api.data.projects[0]!.taskIds).toEqual(['t'])
+    expect(wrapper.vm.$route.fullPath).toBe('/')
+  })
+
+  it("opens a task's edit link directly, and goes to the list for one that does not exist", async () => {
+    fakeApi({ tasks: [task('t', { name: 'Write report' })], projects: [project('p', { taskIds: ['t'] })] })
+    const wrapper = await mountDashboard('/tasks/t/edit')
+    expect((wrapper.find('input[placeholder="Task"]').element as HTMLInputElement).value).toBe('Write report')
+
+    fakeApi({ projects: [project('p')] })
+    const missing = await mountDashboard('/tasks/missing/edit')
+    expect(missing.vm.$route.fullPath).toBe('/')
+  })
+})
