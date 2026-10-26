@@ -15,7 +15,6 @@
     {
       "binding": "DB",
       "database_name": "pam-data",
-      // Paste the id printed by `wrangler d1 create secretary-pam` here
       "database_id": "8b85deab-6553-4c38-ba85-ee1d375aba47",
       "migrations_dir": "migrations"
     }

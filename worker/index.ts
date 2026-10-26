@@ -286,6 +286,10 @@ export default {
         return error(400, 'References a task that does not exist')
       }
       console.error(e)
+      // The migrations haven't been applied to this database
+      if (String(e).includes('no such table')) {
+        return error(503, 'The database has no tables yet. Run pnpm db:migrate:local (or db:migrate:remote when deployed)')
+      }
       return error(500, 'Internal error')
     }
   },

@@ -23,6 +23,8 @@ type Editor =
 const editor = ref<Editor>(null)
 
 const loading = ref(true)
+// Set when projects or tasks couldn't be loaded, so an empty list isn't shown as "no projects"
+const loadFailed = ref(false)
 const error = ref<string | null>(null)
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -31,6 +33,7 @@ onMounted(async () => {
   try {
     await Promise.all([projectList.load(), taskList.load()])
   } catch (e) {
+    loadFailed.value = true
     error.value = `Couldn't load your projects: ${messageOf(e)}`
   } finally {
     loading.value = false
@@ -67,6 +70,8 @@ async function onSaveTask(task: Task, projectIds: string[]) {
     <p v-if="error" class="error" role="alert">{{ error }}</p>
 
     <p v-if="loading" aria-busy="true">Loading your projects…</p>
+
+    <p v-else-if="loadFailed">Reload the page to try again.</p>
 
     <ProjectForm
       v-else-if="editor?.kind === 'project'"
