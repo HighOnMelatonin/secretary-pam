@@ -15,6 +15,7 @@ export interface Project {
   taskIds: string[] // ids of existing Task objects
   priority: Priority
   links: ReferenceLink[]
+  tagId: string | null // id of an existing Tag, or null for no tag
 }
 
 export interface CompletionStatus {
@@ -31,6 +32,7 @@ export function createEmptyProject(): Project {
     taskIds: [],
     priority: 'medium',
     links: [],
+    tagId: null,
   }
 }
 

@@ -3,6 +3,7 @@
 import { env, SELF } from 'cloudflare:test'
 import { describe, it, expect } from 'vitest'
 import type { Project } from '../../src/types/project'
+import type { Tag } from '../../src/types/tag'
 import type { Task } from '../../src/types/task'
 
 async function call(method: string, path: string, body?: unknown) {
@@ -39,8 +40,12 @@ const project = (id: string, fields: Partial<Project> = {}): Project => ({
   taskIds: [],
   priority: 'medium',
   links: [],
+  tagId: null,
   ...fields,
 })
+
+const listTags = async (): Promise<Tag[]> => (await call('GET', 'tags')).body
+const saveTag = (tag: Tag) => call('PUT', `tags/${tag.id}`, tag)
 
 const count = async (table: string) =>
   (await env.DB.prepare(`SELECT count(*) AS n FROM ${table}`).first<{ n: number }>())!.n
@@ -188,6 +193,77 @@ describe('projects', () => {
   })
 })
 
+describe('tags', () => {
+  it('stores tags and lists them by name, ignoring case', async () => {
+    await saveTag({ id: 'w', name: 'work' })
+    expect(await saveTag({ id: 's', name: 'School (SUTD)' })).toEqual({ status: 200, body: { id: 's', name: 'School (SUTD)' } })
+    await saveTag({ id: 'p', name: 'Personal' })
+
+    expect((await listTags()).map((t) => t.name)).toEqual(['Personal', 'School (SUTD)', 'work'])
+  })
+
+  it('trims names and renames a tag when saved again', async () => {
+    await saveTag({ id: 'w', name: 'Work' })
+    expect((await saveTag({ id: 'w', name: '  Job  ' })).body).toEqual({ id: 'w', name: 'Job' })
+    expect(await listTags()).toEqual([{ id: 'w', name: 'Job' }])
+  })
+
+  it('rejects a name another tag already has, ignoring case', async () => {
+    await saveTag({ id: 'w', name: 'Work' })
+    await saveTag({ id: 'p', name: 'Personal' })
+
+    expect(await saveTag({ id: 'x', name: 'WORK' })).toEqual({
+      status: 400,
+      body: { error: 'There is already a tag with that name' },
+    })
+    expect((await saveTag({ id: 'p', name: 'work' })).status).toBe(400)
+    expect(await listTags()).toEqual([
+      { id: 'p', name: 'Personal' },
+      { id: 'w', name: 'Work' },
+    ])
+  })
+
+  it.each<[string, unknown]>([
+    ['a blank name', { id: 't', name: '  ' }],
+    ['no name', { id: 't' }],
+    ['an id that does not match the URL', { id: 'other', name: 'Work' }],
+  ])('rejects a tag with %s', async (_, body) => {
+    expect((await call('PUT', 'tags/t', body)).status).toBe(400)
+    expect(await listTags()).toEqual([])
+  })
+
+  it("stores a project's tag and changes it", async () => {
+    await saveTag({ id: 'w', name: 'Work' })
+    await saveTag({ id: 's', name: 'School' })
+    await saveProject(project('p', { tagId: 'w' }))
+    expect(await listProjects()).toEqual([project('p', { tagId: 'w' })])
+
+    await saveProject(project('p', { tagId: 's' }))
+    expect((await listProjects())[0]!.tagId).toBe('s')
+    await saveProject(project('p', { tagId: null }))
+    expect((await listProjects())[0]!.tagId).toBeNull()
+  })
+
+  it('rejects a project with a tag that does not exist, or a tagId that is not a string', async () => {
+    expect(await saveProject(project('p', { tagId: 'missing' }))).toEqual({
+      status: 400,
+      body: { error: 'References a task or tag that does not exist' },
+    })
+    expect((await call('PUT', 'projects/p', { ...project('p'), tagId: 3 })).status).toBe(400)
+    expect(await listProjects()).toEqual([])
+  })
+
+  it('leaves projects untagged when their tag is deleted', async () => {
+    await saveTag({ id: 'w', name: 'Work' })
+    await saveProject(project('p', { tagId: 'w' }))
+
+    expect((await call('DELETE', 'tags/w')).status).toBe(204)
+
+    expect(await listTags()).toEqual([])
+    expect(await listProjects()).toEqual([project('p', { tagId: null })])
+  })
+})
+
 describe('validation', () => {
   it.each<[string, Record<string, unknown>]>([
     ['an unknown priority', { priority: 'asap' }],
@@ -233,12 +309,12 @@ describe('validation', () => {
 
   it('rejects a relation to a task that does not exist', async () => {
     const response = await saveTask(task('a', { relations: [{ taskId: 'missing', type: 'blocks' }] }))
-    expect(response).toEqual({ status: 400, body: { error: 'References a task that does not exist' } })
+    expect(response).toEqual({ status: 400, body: { error: 'References a task or tag that does not exist' } })
   })
 
   it('rejects a project with a task that does not exist', async () => {
     const response = await saveProject(project('p', { taskIds: ['missing'] }))
-    expect(response).toEqual({ status: 400, body: { error: 'References a task that does not exist' } })
+    expect(response).toEqual({ status: 400, body: { error: 'References a task or tag that does not exist' } })
   })
 
   it('leaves the stored task untouched when an update fails part way', async () => {
@@ -304,10 +380,14 @@ describe('schema constraints', () => {
     ['a link for a missing project', "INSERT INTO project_links (project_id, position, label, url) VALUES ('missing', 0, 'A', 'https://a')"],
     ['a relation type outside the allowed list', "INSERT INTO task_relations (task_id, related_task_id, type, position) VALUES ('t', 'u', 'depends_on', 0)"],
     ['a task related to itself', "INSERT INTO task_relations (task_id, related_task_id, type, position) VALUES ('t', 't', 'blocks', 0)"],
+    ['a project with a missing tag', "INSERT INTO projects (id, name, tag_id) VALUES ('q', 'Q', 'missing')"],
+    ['a tag name that differs only in case', "INSERT INTO tags (id, name) VALUES ('w2', 'WORK')"],
+    ['a tag without a name', "INSERT INTO tags (id) VALUES ('x')"],
   ])('rejects %s', async (_, sql) => {
     await env.DB.batch([
       env.DB.prepare("INSERT INTO tasks (id, name) VALUES ('t', 'T'), ('u', 'U')"),
       env.DB.prepare("INSERT INTO projects (id, name) VALUES ('p', 'P')"),
+      env.DB.prepare("INSERT INTO tags (id, name) VALUES ('w', 'Work')"),
     ])
     await expect(env.DB.prepare(sql).run()).rejects.toThrow(/constraint/i)
   })

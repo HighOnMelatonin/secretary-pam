@@ -3,10 +3,12 @@
 import { computed, ref, toRaw, watch } from 'vue'
 import { PRIORITIES, type Task } from '@/types/task'
 import { completionStatus, createEmptyProject, resolveTasks, type Project } from '@/types/project'
+import type { Tag } from '@/types/tag'
 
 const props = defineProps<{
   project?: Project // project to edit; a new empty project is used when omitted
   tasks?: Task[] // all existing tasks, used to resolve and link the project's tasks
+  tags?: Tag[] // all tags, to choose the project's tag from
 }>()
 
 const emit = defineEmits<{
@@ -93,6 +95,14 @@ function cancel() {
           Priority
           <select v-model="draft.priority">
             <option v-for="p in PRIORITIES" :key="p" :value="p">{{ p }}</option>
+          </select>
+        </label>
+
+        <label>
+          Tag
+          <select v-model="draft.tagId">
+            <option :value="null">No tag</option>
+            <option v-for="t in tags" :key="t.id" :value="t.id">{{ t.name }}</option>
           </select>
         </label>
       </div>

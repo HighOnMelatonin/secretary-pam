@@ -34,7 +34,7 @@ describe('Dashboard loading', () => {
     expect(wrapper.text()).toContain('Loading your projects')
 
     await flushPromises()
-    expect(api.requests.sort()).toEqual(['GET /api/projects', 'GET /api/tasks'])
+    expect(api.requests.sort()).toEqual(['GET /api/projects', 'GET /api/tags', 'GET /api/tasks'])
     expect(wrapper.text()).not.toContain('Loading your projects')
   })
 
@@ -137,6 +137,45 @@ describe('Dashboard editing a project', () => {
 
     expect(api.data.projects).toEqual([project('p', { name: 'Final thesis' })])
     expect(tileNames(wrapper)).toEqual(['Final thesis'])
+  })
+})
+
+describe('Dashboard tags', () => {
+  const tags = [
+    { id: 'school', name: 'School (SUTD)' },
+    { id: 'work', name: 'Work' },
+  ]
+
+  it('shows each tile with its tag', async () => {
+    fakeApi({ tags, projects: [project('p', { name: 'Thesis', tagId: 'school' }), project('q', { name: 'Gym' })] })
+    const wrapper = await mountDashboard()
+    expect(wrapper.findAll('.project-tag').map((t) => t.text())).toEqual(['School (SUTD)'])
+  })
+
+  it('tags a project from its form', async () => {
+    const api = fakeApi({ tags, projects: [project('p', { name: 'Thesis' })] })
+    const wrapper = await mountDashboard()
+
+    await button(wrapper, 'Edit').trigger('click')
+    await selectWithOption(wrapper, 'work').setValue('work')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(api.data.projects[0]!.tagId).toBe('work')
+    expect(wrapper.find('.project-tag').text()).toBe('Work')
+  })
+
+  it('opens the tag list from the toolbar, and its changes show on the tiles', async () => {
+    fakeApi({ tags, projects: [project('p', { name: 'Thesis', tagId: 'school' })] })
+    const wrapper = await mountDashboard()
+
+    await button(wrapper, 'Tags').trigger('click')
+    await wrapper.find('input[aria-label="Name of School (SUTD)"]').setValue('SUTD')
+    await wrapper.find('li form').trigger('submit')
+    await flushPromises()
+    await button(wrapper, 'Done').trigger('click')
+
+    expect(wrapper.find('.project-tag').text()).toBe('SUTD')
   })
 })
 

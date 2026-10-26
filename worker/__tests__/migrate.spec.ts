@@ -4,7 +4,7 @@ import { env, SELF } from 'cloudflare:test'
 import { describe, it, expect } from 'vitest'
 import { migrate } from '../migrate'
 
-const TABLES = ['project_links', 'project_tasks', 'task_relations', 'projects', 'tasks']
+const TABLES = ['project_links', 'project_tasks', 'task_relations', 'projects', 'tasks', 'tags']
 
 const tableNames = async () =>
   (
@@ -27,9 +27,21 @@ describe('migrate', () => {
     await migrate(env.DB)
 
     expect(await tableNames()).toEqual([...TABLES].sort())
-    expect(await appliedNames()).toEqual(['0001_create_projects_and_tasks.sql'])
+    expect(await appliedNames()).toEqual(['0001_create_projects_and_tasks.sql', '0002_add_tags.sql'])
     const response = await SELF.fetch('http://localhost/api/projects')
     expect(await response.json()).toEqual([])
+  })
+
+  it('starts a new database with the example tags', async () => {
+    await env.DB.batch([...TABLES, 'd1_migrations'].map((table) => env.DB.prepare(`DROP TABLE ${table}`)))
+    await migrate(env.DB)
+
+    const response = await SELF.fetch('http://localhost/api/tags')
+    expect(await response.json()).toEqual([
+      { id: 'personal', name: 'Personal' },
+      { id: 'school', name: 'School (SUTD)' },
+      { id: 'work', name: 'Work' },
+    ])
   })
 
   it('skips migrations that wrangler already applied', async () => {

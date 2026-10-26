@@ -31,6 +31,12 @@ describe('api client', () => {
     })
   })
 
+  it('removes with a DELETE to /api/<resource>/<id>, accepting an empty 204 reply', async () => {
+    const fetch = stubFetch(new Response(null, { status: 204 }))
+    expect(await api.remove('tags', 'a/b')).toBeUndefined()
+    expect(fetch).toHaveBeenCalledWith('/api/tags/a%2Fb', { method: 'DELETE' })
+  })
+
   it("throws the API's error message when a request fails", async () => {
     stubFetch(Response.json({ error: 'name must be a non-empty string' }, { status: 400 }))
     await expect(api.list('projects')).rejects.toThrow('name must be a non-empty string')

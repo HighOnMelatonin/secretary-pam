@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ProjectForm from '../components/project.vue'
 import { createEmptyProject, type Project } from '../types/project'
+import type { Tag } from '../types/tag'
 import { createEmptyTask, type Task } from '../types/task'
 import { button, listedIn, selectWithOption } from './helpers'
 
@@ -48,6 +49,7 @@ describe('ProjectForm for a new project', () => {
       taskIds: [],
       priority: 'urgent',
       links: [],
+      tagId: null,
     })
     expect((wrapper.find('input[placeholder="Project"]').element as HTMLInputElement).value).toBe('')
   })
@@ -57,6 +59,34 @@ describe('ProjectForm for a new project', () => {
     await wrapper.find('input[type="date"]').setValue('')
     await wrapper.find('form').trigger('submit')
     expect(savedProject(wrapper)!.deliveryDate).toBeNull()
+  })
+})
+
+describe('ProjectForm tag', () => {
+  const tags: Tag[] = [
+    { id: 'school', name: 'School (SUTD)' },
+    { id: 'work', name: 'Work' },
+  ]
+
+  it('offers no tag and every tag, starting with the project’s own', () => {
+    const wrapper = mount(ProjectForm, { props: { project: { ...existing, tagId: 'work' }, tasks, tags } })
+    const select = selectWithOption(wrapper, 'work')
+    expect(select.findAll('option').map((o) => o.text())).toEqual(['No tag', 'School (SUTD)', 'Work'])
+    expect(select.element.value).toBe('work')
+  })
+
+  it('saves the chosen tag, or null for no tag', async () => {
+    const wrapper = mount(ProjectForm, { props: { project: existing, tasks, tags } })
+    await selectWithOption(wrapper, 'school').setValue('school')
+    await wrapper.find('form').trigger('submit')
+    expect(savedProject(wrapper)!.tagId).toBe('school')
+
+    // Picks "No tag" by position: Vue gives its null value no value attribute to select by
+    const select = selectWithOption(wrapper, 'school')
+    select.element.selectedIndex = 0
+    await select.trigger('change')
+    await wrapper.find('form').trigger('submit')
+    expect(savedProject(wrapper)!.tagId).toBeNull()
   })
 })
 

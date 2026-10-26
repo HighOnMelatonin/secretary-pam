@@ -7,8 +7,9 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 ## Features
 
 - **Dashboard** of live projects, sorted by delivery date. A project stays live until it has tasks and all of them are done.
-- **Project tiles** show priority, due date, an overdue tag and task progress. Click a tile to expand a preview of its tasks and reference links.
-- **Projects** have a name, description, delivery date, priority, tasks and reference links.
+- **Project tiles** show the project's tag, priority, due date, an overdue tag and task progress. Click a tile to expand a preview of its tasks and reference links.
+- **Projects** have a name, description, delivery date, priority, an optional tag, tasks and reference links.
+- **Tags** such as School (SUTD), Work and Personal file projects by area of life. Add, rename and delete them from the **Tags** button on the dashboard. Renaming a tag renames it on every project, and deleting one leaves its projects untagged.
 - **Tasks** have a name, description, due date, priority, completed flag and relations to other tasks (blocks, blocked by, subtask of, parent of, related to). A task can be assigned to several projects, from either the project form or the task form.
 
 ## Tech stack
@@ -30,12 +31,14 @@ src/
     projectTile.vue   one project on the dashboard; expands into a preview
     project.vue       create/edit a project
     task.vue          create/edit a task, including which projects it is in
-  stores/             Pinia stores for projects and tasks; they load and save through the API
-  types/              Project and Task models, shared by the app and the Worker
+    tags.vue          add, rename and delete tags
+  stores/             Pinia stores for projects, tasks and tags; they load and save through the API
+  types/              Project, Task and Tag models, shared by the app and the Worker
   api.ts              client for the Worker API
   __tests__/          unit tests
 worker/
   index.ts            the /api routes, reading and writing D1
+  migrate.ts          applies migrations/ to the database on the Worker's first request
   __tests__/          integration tests for the API and database
 cypress/
   e2e/                end-to-end tests
@@ -92,23 +95,28 @@ Vue app (Pinia stores)  ──fetch──▶  Worker /api/*  ──SQL──▶ 
 | `GET /api/tasks` | All tasks |
 | `PUT /api/tasks/:id` | Create or update the task in the body; returns it |
 | `DELETE /api/tasks/:id` | Delete the task, removing it from projects and relations |
+| `GET /api/tags` | All tags, by name |
+| `PUT /api/tags/:id` | Create or rename the tag in the body; returns it |
+| `DELETE /api/tags/:id` | Delete the tag, leaving its projects untagged |
 
-Bodies are the `Project` and `Task` objects from `src/types`. The Worker checks every field and answers `400` with an error message if something is invalid, including a reference to a task that doesn't exist. Each save runs as one transaction, so a failed save changes nothing.
+Bodies are the `Project`, `Task` and `Tag` objects from `src/types`. The Worker checks every field and answers `400` with an error message if something is invalid, including a reference to a task or tag that doesn't exist, or a tag name that another tag already has. Each save runs as one transaction, so a failed save changes nothing.
 
 ### Schema
 
-Defined in `migrations/0001_create_projects_and_tasks.sql`. Each field has its own column, and each array is stored in its own table with a `position` column that keeps its order.
+Defined in the files in `migrations/`. Each field has its own column, and each array is stored in its own table with a `position` column that keeps its order.
 
 | Table | Holds | Columns |
 |---|---|---|
-| `projects` | `Project` | `id`, `name`, `description`, `delivery_date`, `priority`, `created_at`, `updated_at` |
+| `projects` | `Project` | `id`, `name`, `description`, `delivery_date`, `priority`, `tag_id` → `tags`, `created_at`, `updated_at` |
 | `tasks` | `Task` | `id`, `name`, `description`, `due_date`, `priority`, `completed`, `created_at`, `updated_at` |
 | `project_tasks` | `Project.taskIds` | `project_id` → `projects`, `task_id` → `tasks`, `position` |
 | `project_links` | `Project.links` | `project_id` → `projects`, `position`, `label`, `url` |
 | `task_relations` | `Task.relations` | `task_id` → `tasks`, `related_task_id` → `tasks`, `type`, `position` |
+| `tags` | `Tag` | `id`, `name`, `created_at`, `updated_at` |
 
 - `project_tasks` links projects to tasks. A task can be in several projects.
-- All foreign keys cascade on delete. Deleting a task removes it from its projects and from other tasks' relations, and deleting a project removes its links.
+- All foreign keys cascade on delete. Deleting a task removes it from its projects and from other tasks' relations, and deleting a project removes its links. The exception is `projects.tag_id`, which is set to `NULL` when its tag is deleted.
+- Tag names are unique, ignoring case. A new database starts with the tags School (SUTD), Work and Personal.
 - `CHECK` constraints limit `priority` to `low`, `medium`, `high` or `urgent`; relation `type` to `blocks`, `blocked_by`, `subtask_of`, `parent_of` or `related_to`; and `completed` to `0` or `1`.
 - Dates are ISO 8601 strings such as `2026-10-25`. Timestamps are UTC, such as `2026-10-25T15:08:26.123Z`.
 
@@ -159,8 +167,8 @@ There are three layers of tests:
 | Layer | Command | Where | What it covers |
 |---|---|---|---|
 | Unit | `pnpm test:unit` | `src/__tests__/` | Components, stores, models and the API client in a simulated browser (jsdom). `fetch` is replaced by an in-memory fake API (`fakeApi.ts`), so no server or database is needed. |
-| Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers routing, saving and reading every field, validation, transactions, cascading deletes and the schema's constraints. The database is emptied before every test. |
-| End-to-end | `pnpm test:e2e` | `cypress/e2e/` | The production build in a real browser (Cypress), with the Worker and a local D1 database. Covers creating and editing projects and tasks, the tile preview, sorting, and how errors are shown. |
+| Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers routing, saving and reading every field, tags, migrations, validation, transactions, cascading deletes and the schema's constraints. The database is emptied before every test. |
+| End-to-end | `pnpm test:e2e` | `cypress/e2e/` | The production build in a real browser (Cypress), with the Worker and a local D1 database. Covers creating and editing projects and tasks, managing tags, the tile preview, sorting, and how errors are shown. |
 
 `pnpm test` runs the unit and integration tests together.
 

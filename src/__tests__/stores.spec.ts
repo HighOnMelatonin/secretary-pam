@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useProjectList } from '../stores/projectList'
+import { useTagList } from '../stores/tagList'
 import { useTaskList } from '../stores/taskList'
 import { createEmptyProject, type Project } from '../types/project'
 import { createEmptyTask, type Task } from '../types/task'
@@ -145,5 +146,49 @@ describe('projectList', () => {
 
       expect(api.requests).toEqual([])
     })
+  })
+})
+
+describe('tagList', () => {
+  it('loads tags from the API', async () => {
+    fakeApi({ tags: [{ id: 'w', name: 'Work' }] })
+    const store = useTagList()
+    await store.load()
+    expect(store.tags).toEqual([{ id: 'w', name: 'Work' }])
+  })
+
+  it('saves a tag, keeping the list in name order', async () => {
+    const api = fakeApi()
+    const store = useTagList()
+    await store.saveTag({ id: 'w', name: 'Work' })
+    await store.saveTag({ id: 's', name: 'school' })
+    await store.saveTag({ id: 'w', name: 'Apprenticeship' })
+
+    expect(api.requests).toEqual(['PUT /api/tags/w', 'PUT /api/tags/s', 'PUT /api/tags/w'])
+    expect(store.tags.map((t) => t.name)).toEqual(['Apprenticeship', 'school'])
+  })
+
+  it('deletes a tag and clears it from the loaded projects', async () => {
+    const api = fakeApi({ tags: [{ id: 'w', name: 'Work' }] })
+    const store = useTagList()
+    await store.load()
+    const projectList = useProjectList()
+    projectList.projects = [project('p', { tagId: 'w' }), project('q', { tagId: 'other' })]
+
+    await store.deleteTag('w')
+
+    expect(api.requests).toContain('DELETE /api/tags/w')
+    expect(store.tags).toEqual([])
+    expect(projectList.projects.map((p) => p.tagId)).toEqual([null, 'other'])
+  })
+
+  it('keeps the tag when the API fails to delete it', async () => {
+    const api = fakeApi({ tags: [{ id: 'w', name: 'Work' }] })
+    const store = useTagList()
+    await store.load()
+    api.failWith = 'D1 is down'
+
+    await expect(store.deleteTag('w')).rejects.toThrow('D1 is down')
+    expect(store.tags).toEqual([{ id: 'w', name: 'Work' }])
   })
 })

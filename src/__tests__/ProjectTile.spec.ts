@@ -50,6 +50,12 @@ describe('ProjectTile', () => {
     expect(wrapper.find('.preview').exists()).toBe(false)
   })
 
+  it("shows the project's tag only when it has one", () => {
+    expect(mountTile().find('.project-tag').exists()).toBe(false)
+    const tagged = mount(ProjectTile, { props: { project, tasks, tag: { id: 'school', name: 'School (SUTD)' } } })
+    expect(tagged.find('.project-tag').text()).toBe('School (SUTD)')
+  })
+
   it('emits edit without expanding when Edit is clicked', async () => {
     const wrapper = mountTile()
     const edit = wrapper.findAll('button').find((b) => b.text() === 'Edit')!

@@ -2,12 +2,14 @@
 // Unit tests use it to check what the app sends and how it handles the replies.
 import { expect, vi } from 'vitest'
 import type { Project } from '@/types/project'
+import type { Tag } from '@/types/tag'
 import type { Task } from '@/types/task'
 
-export function fakeApi(initial: { projects?: Project[]; tasks?: Task[] } = {}) {
+export function fakeApi(initial: { projects?: Project[]; tasks?: Task[]; tags?: Tag[] } = {}) {
   const data = {
     projects: structuredClone(initial.projects ?? []),
     tasks: structuredClone(initial.tasks ?? []),
+    tags: structuredClone(initial.tags ?? []),
   }
 
   const api = {
@@ -21,9 +23,13 @@ export function fakeApi(initial: { projects?: Project[]; tasks?: Task[] } = {}) 
       api.requests.push(`${method} ${url}`)
       if (api.failWith) return Response.json({ error: api.failWith }, { status: 500 })
 
-      const [, , resource, rawId] = url.split('/') as [string, string, 'projects' | 'tasks', string?]
+      const [, , resource, rawId] = url.split('/') as [string, string, keyof typeof data, string?]
       const items: { id: string }[] = data[resource]
       if (method === 'GET') return Response.json(items)
+      if (method === 'DELETE') {
+        items.splice(items.findIndex((i) => i.id === decodeURIComponent(rawId!)), 1)
+        return new Response(null, { status: 204 })
+      }
 
       const item = JSON.parse(init!.body as string)
       expect(item.id).toBe(decodeURIComponent(rawId!))

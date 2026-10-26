@@ -4,21 +4,28 @@ import { onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import ProjectForm from './project.vue'
 import TaskForm from './task.vue'
+import TagManager from './tags.vue'
 import ProjectTile from './projectTile.vue'
 import { useProjectList } from '@/stores/projectList'
+import { useTagList } from '@/stores/tagList'
 import { useTaskList } from '@/stores/taskList'
 import type { Project } from '@/types/project'
 import type { Task } from '@/types/task'
 
 const projectList = useProjectList()
 const taskList = useTaskList()
+const tagList = useTagList()
 const { projects, liveProjects } = storeToRefs(projectList)
 const { tasks } = storeToRefs(taskList)
+const { tags } = storeToRefs(tagList)
 
-// Which form is open: none, a new/existing project, or a new/existing task
+const tagOf = (project: Project) => tags.value.find((t) => t.id === project.tagId)
+
+// Which form is open: none, a new/existing project, a new/existing task, or the tag list
 type Editor =
   | { kind: 'project'; project?: Project }
   | { kind: 'task'; task?: Task; projectIds?: string[] }
+  | { kind: 'tags' }
   | null
 const editor = ref<Editor>(null)
 
@@ -31,7 +38,7 @@ const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 onMounted(async () => {
   try {
-    await Promise.all([projectList.load(), taskList.load()])
+    await Promise.all([projectList.load(), taskList.load(), tagList.load()])
   } catch (e) {
     loadFailed.value = true
     error.value = `Couldn't load your projects: ${messageOf(e)}`
@@ -77,6 +84,7 @@ async function onSaveTask(task: Task, projectIds: string[]) {
       v-else-if="editor?.kind === 'project'"
       :project="editor.project"
       :tasks="tasks"
+      :tags="tags"
       @save="onSaveProject"
       @cancel="editor = null"
     />
@@ -89,6 +97,7 @@ async function onSaveTask(task: Task, projectIds: string[]) {
       @save="onSaveTask"
       @cancel="editor = null"
     />
+    <TagManager v-else-if="editor?.kind === 'tags'" @close="editor = null" />
 
     <template v-else-if="projects.length === 0">
       <article class="empty">
@@ -102,6 +111,7 @@ async function onSaveTask(task: Task, projectIds: string[]) {
       <header class="toolbar">
         <h2>Live projects</h2>
         <div class="actions">
+          <button class="secondary" @click="editor = { kind: 'tags' }">Tags</button>
           <button class="secondary" @click="editor = { kind: 'task' }">New task</button>
           <button @click="editor = { kind: 'project' }">New project</button>
         </div>
@@ -117,6 +127,7 @@ async function onSaveTask(task: Task, projectIds: string[]) {
           :key="project.id"
           :project="project"
           :tasks="tasks"
+          :tag="tagOf(project)"
           @edit="editor = { kind: 'project', project: $event }"
         />
       </div>
@@ -125,13 +136,6 @@ async function onSaveTask(task: Task, projectIds: string[]) {
 </template>
 
 <style scoped>
-.error {
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--pico-del-color);
-  border-radius: var(--pico-border-radius);
-  color: var(--pico-del-color);
-}
-
 .toolbar {
   display: flex;
   align-items: center;
