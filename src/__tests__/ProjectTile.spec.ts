@@ -39,6 +39,7 @@ describe('ProjectTile', () => {
     expect(preview.text()).toContain('Due 2026-11-02')
     expect(preview.text()).not.toContain('Not in this project')
     expect(preview.find('a').attributes('href')).toBe('https://example.com/repo')
+    expect(preview.find('.timeline').text()).toContain('Review slides')
     expect(wrapper.find('.tile-toggle').attributes('aria-expanded')).toBe('true')
   })
 

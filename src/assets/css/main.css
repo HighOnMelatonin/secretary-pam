@@ -92,6 +92,16 @@
   color: var(--pico-del-color);
 }
 
+/* Read out by screen readers but not shown, e.g. "(completed)" beside a struck-through task */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* Small pill used for priorities and status tags */
 .tag {
   display: inline-block;

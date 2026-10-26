@@ -84,7 +84,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
 /* The bar on the left */
 
 .taskbar {
-  --strip-width: 1.5rem;
+  --strip-width: 2.5rem;
   position: fixed;
   inset-block: 0;
   left: 0;

@@ -86,6 +86,36 @@ describe('Projects', () => {
     })
   })
 
+  it("shows the project's tasks on a timeline, in date order around today and the delivery date", () => {
+    cy.seed({
+      tasks: [
+        task('later', { name: 'Draft', dueDate: daysFromToday(7) }),
+        task('done', { name: 'Research', dueDate: daysFromToday(-7), completed: true }),
+        task('late', { name: 'Interview', dueDate: daysFromToday(-2) }),
+        task('undated', { name: 'Someday' }),
+      ],
+      projects: [
+        project('p', { name: 'Thesis', deliveryDate: daysFromToday(14), taskIds: ['later', 'done', 'late', 'undated'] }),
+      ],
+    })
+    cy.visit('/')
+
+    tile('Thesis').find('.tile-toggle').click()
+    tile('Thesis').find('.timeline .stop').then((stops) => {
+      expect([...stops].map((s) => s.querySelector('.stop-tasks')?.textContent?.replace(/[✓○]|\(completed\)/g, '').trim() ?? '')).to.deep.equal([
+        'Research',
+        'Interview',
+        '', // today
+        'Draft',
+        '', // delivery
+        'Someday',
+      ])
+    })
+    tile('Thesis').find('.stop.overdue').should('contain', 'Interview')
+    tile('Thesis').find('.stop.today').should('contain', 'Today')
+    tile('Thesis').find('.stop.delivery').should('contain', 'Delivery')
+  })
+
   it('opens the form, not the preview, when Edit is clicked', () => {
     cy.seed({ projects: [project('p', { name: 'Thesis' })] })
     cy.visit('/')
