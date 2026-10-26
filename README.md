@@ -50,11 +50,10 @@ You need Node.js `^22.18.0` or `>=24.12.0` and pnpm 10.
 
 ```sh
 pnpm install
-pnpm db:migrate:local   # creates the tables in a local database under .wrangler/
 pnpm dev
 ```
 
-`pnpm dev` runs the app with hot reload, and runs the API in the real Workers runtime against the local database. Nothing touches Cloudflare until you deploy.
+`pnpm dev` runs the app with hot reload, and runs the API in the real Workers runtime against a local database under `.wrangler/`. The Worker creates the tables on its first request. Nothing touches Cloudflare until you deploy.
 
 ### Scripts
 
@@ -70,8 +69,8 @@ pnpm dev
 | `pnpm test:e2e:dev` | Open Cypress against the dev server |
 | `pnpm type-check` | Type-check the app, Worker and config files |
 | `pnpm deploy` | Build and deploy to Cloudflare |
-| `pnpm db:migrate:local` | Apply new migrations to the local database |
-| `pnpm db:migrate:remote` | Apply new migrations to the production database |
+| `pnpm db:migrate:local` | Apply new migrations to the local database now, instead of on the Worker's next start |
+| `pnpm db:migrate:remote` | Apply new migrations to the production database now, instead of on the Worker's next start |
 | `pnpm db:migrate:e2e` | Apply new migrations to the end-to-end test database (run by `pnpm test:e2e`) |
 | `pnpm cf-typegen` | Regenerate `worker/worker-configuration.d.ts` after changing `wrangler.jsonc` |
 
@@ -115,15 +114,9 @@ Defined in `migrations/0001_create_projects_and_tasks.sql`. Each field has its o
 
 ### Changing the schema
 
-Add a new numbered file to `migrations/`, such as `0002_add_tags.sql`, instead of editing an applied one. Then apply it to every database:
+Add a new numbered file to `migrations/`, such as `0002_add_tags.sql`, instead of editing an applied one. End each statement with a semicolon at the end of a line.
 
-```sh
-pnpm db:migrate:local
-pnpm db:migrate:remote
-pnpm exec wrangler d1 execute secretary-pam-preview --remote --file migrations/0002_add_tags.sql
-```
-
-`wrangler d1 migrations apply` can't see the preview database, so new migrations are run on it with `d1 execute`.
+You don't need to apply it by hand. When a Worker instance handles its first request, `worker/migrate.ts` applies any files in `migrations/` that the database doesn't have yet. It records them in the `d1_migrations` table, the same one `wrangler d1 migrations apply` uses. The `pnpm db:migrate:*` scripts still work if you want to apply a migration before deploying.
 
 ## Deploying to Cloudflare
 
@@ -141,14 +134,12 @@ pnpm exec wrangler login
 
 pnpm exec wrangler d1 create pam-data
 # Put the printed database_id in the top-level "d1_databases" in wrangler.jsonc
-pnpm db:migrate:remote
 
 pnpm exec wrangler d1 create secretary-pam-preview
 # Put the printed database_id under "previews" → "d1_databases" in wrangler.jsonc
-pnpm exec wrangler d1 execute secretary-pam-preview --remote --file migrations/0001_create_projects_and_tasks.sql
 ```
 
-Commit `wrangler.jsonc` after adding the ids.
+Commit `wrangler.jsonc` after adding the ids. The Worker creates the tables in each database on its first request.
 
 ### Deploying
 
