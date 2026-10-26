@@ -3,11 +3,13 @@
 // project's tasks and links; the Edit button opens the full project form.
 import { computed, ref } from 'vue'
 import { completionStatus, resolveTasks, type Project } from '@/types/project'
+import type { Tag } from '@/types/tag'
 import type { Task } from '@/types/task'
 
 const props = defineProps<{
   project: Project
   tasks: Task[] // all tasks; the project's own are looked up by id
+  tag?: Tag // the project's tag, if it has one
 }>()
 
 defineEmits<{
@@ -55,6 +57,7 @@ function onTileClick(event: MouseEvent) {
     </div>
 
     <div class="meta">
+      <span v-if="tag" class="tag project-tag">{{ tag.name }}</span>
       <span class="tag" :class="`priority-${project.priority}`">{{ project.priority }}</span>
       <span v-if="isOverdue(project.deliveryDate)" class="tag overdue">overdue</span>
       <small>Due {{ project.deliveryDate ?? 'whenever' }}</small>

@@ -32,6 +32,7 @@ describe('createEmptyProject', () => {
       taskIds: [],
       priority: 'medium',
       links: [],
+      tagId: null,
     })
     expect(createEmptyProject().id).not.toBe(a.id)
   })

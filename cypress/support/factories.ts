@@ -1,5 +1,6 @@
 // Builders for test data, with every field filled so tests only state what matters to them
 import type { Project } from '../../src/types/project'
+import type { Tag } from '../../src/types/tag'
 import type { Task } from '../../src/types/task'
 
 export const task = (id: string, fields: Partial<Task> = {}): Task => ({
@@ -21,8 +22,11 @@ export const project = (id: string, fields: Partial<Project> = {}): Project => (
   taskIds: [],
   priority: 'medium',
   links: [],
+  tagId: null,
   ...fields,
 })
+
+export const tag = (id: string, name: string): Tag => ({ id, name })
 
 // YYYY-MM-DD for a day relative to today, in local time like the app uses
 export const daysFromToday = (days: number) => {

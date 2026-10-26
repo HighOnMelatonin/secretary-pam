@@ -78,6 +78,14 @@
   font-style: italic;
 }
 
+/* Error message shown above a page or form */
+.error {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--pico-del-color);
+  border-radius: var(--pico-border-radius);
+  color: var(--pico-del-color);
+}
+
 /* Small pill used for priorities and status tags */
 .tag {
   display: inline-block;
@@ -104,4 +112,13 @@
 
 .tag.priority-low {
   border-color: var(--pam-green-line);
+}
+
+/* The project's own tag, e.g. "Work": filled, and in the case it was typed */
+.tag.project-tag {
+  background: var(--pam-cream-faint);
+  border-color: transparent;
+  color: var(--pam-cream);
+  text-transform: none;
+  letter-spacing: normal;
 }

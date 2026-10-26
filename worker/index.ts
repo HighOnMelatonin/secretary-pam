@@ -6,8 +6,8 @@
 //   PUT    /api/projects/:id   -> saves the Project in the body, returns it
 //   DELETE /api/projects/:id   -> 204
 //
-// and the same for /api/tasks. Each object is split across its own table and the tables
-// holding its arrays when saved, and put back together when read.
+// and the same for /api/tasks and /api/tags. Each object is split across its own table and
+// the tables holding its arrays when saved, and put back together when read.
 import {
   PRIORITIES,
   RELATION_TYPES,
@@ -17,6 +17,7 @@ import {
   type TaskRelation,
 } from '../src/types/task'
 import type { Project, ReferenceLink } from '../src/types/project'
+import type { Tag } from '../src/types/tag'
 import { migrateOnce } from './migrate'
 
 const MAX_BODY_BYTES = 100_000
@@ -47,6 +48,7 @@ interface ProjectRow {
   description: string
   delivery_date: string | null
   priority: Priority
+  tag_id: string | null
 }
 
 interface ProjectTaskRow {
@@ -122,8 +124,9 @@ function parseTask(body: unknown, id: string): Task {
 
 function parseProject(body: unknown, id: string): Project {
   checkCommon(body, id)
-  const { deliveryDate, taskIds, links } = body
+  const { deliveryDate, taskIds, links, tagId } = body
   check(isDateOrNull(deliveryDate), 'deliveryDate must be null or a YYYY-MM-DD date')
+  check(tagId === null || isString(tagId), 'tagId must be null or a tag id')
   check(Array.isArray(taskIds) && taskIds.every(isString), 'taskIds must be a list of task ids')
   check(allDifferent(taskIds), 'taskIds must not list a task twice')
   check(Array.isArray(links) && links.every(isLink), 'links must be a list of { label, url }')
@@ -136,7 +139,15 @@ function parseProject(body: unknown, id: string): Project {
     taskIds,
     priority: body.priority,
     links: links.map((l) => ({ label: l.label, url: l.url })),
+    tagId,
   }
+}
+
+function parseTag(body: unknown, id: string): Tag {
+  check(isObject(body), 'Body must be a JSON object')
+  check(body.id === id, 'id must match the URL')
+  check(isString(body.name) && body.name.trim() !== '', 'name must be a non-empty string')
+  return { id, name: body.name.trim() }
 }
 
 // Tasks
@@ -201,6 +212,7 @@ async function listProjects(db: D1Database): Promise<Project[]> {
     taskIds: (tasksByProject.get(row.id) ?? []).map((t) => t.task_id),
     priority: row.priority,
     links: (linksByProject.get(row.id) ?? []).map((l) => ({ label: l.label, url: l.url })),
+    tagId: row.tag_id,
   }))
 }
 
@@ -209,12 +221,13 @@ async function saveProject(db: D1Database, project: Project): Promise<Project> {
   await db.batch([
     db
       .prepare(
-        `INSERT INTO projects (id, name, description, delivery_date, priority)
-         VALUES (?1, ?2, ?3, ?4, ?5)
+        `INSERT INTO projects (id, name, description, delivery_date, priority, tag_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT (id) DO UPDATE SET name = excluded.name, description = excluded.description,
-           delivery_date = excluded.delivery_date, priority = excluded.priority, updated_at = ${NOW}`,
+           delivery_date = excluded.delivery_date, priority = excluded.priority, tag_id = excluded.tag_id,
+           updated_at = ${NOW}`,
       )
-      .bind(project.id, project.name, project.description, project.deliveryDate, project.priority),
+      .bind(project.id, project.name, project.description, project.deliveryDate, project.priority, project.tagId),
     db.prepare('DELETE FROM project_tasks WHERE project_id = ?1').bind(project.id),
     ...project.taskIds.map((taskId, position) =>
       db
@@ -229,6 +242,24 @@ async function saveProject(db: D1Database, project: Project): Promise<Project> {
     ),
   ])
   return project
+}
+
+// Tags
+
+async function listTags(db: D1Database): Promise<Tag[]> {
+  const { results } = await db.prepare('SELECT id, name FROM tags ORDER BY name, id').all<Tag>()
+  return results
+}
+
+async function saveTag(db: D1Database, tag: Tag): Promise<Tag> {
+  await db
+    .prepare(
+      `INSERT INTO tags (id, name) VALUES (?1, ?2)
+       ON CONFLICT (id) DO UPDATE SET name = excluded.name, updated_at = ${NOW}`,
+    )
+    .bind(tag.id, tag.name)
+    .run()
+  return tag
 }
 
 // Routing
@@ -246,6 +277,8 @@ const RESOURCES: Record<string, Resource> = {
     list: listProjects,
     save: (db, id, body) => saveProject(db, parseProject(body, id)),
   },
+  // Deleting a tag leaves its projects untagged
+  tags: { table: 'tags', list: listTags, save: (db, id, body) => saveTag(db, parseTag(body, id)) },
 }
 
 function json(body: unknown, status = 200) {
@@ -286,7 +319,10 @@ export default {
     } catch (e) {
       if (e instanceof BadRequest) return error(400, e.message)
       if (String(e).includes('FOREIGN KEY constraint failed')) {
-        return error(400, 'References a task that does not exist')
+        return error(400, 'References a task or tag that does not exist')
+      }
+      if (String(e).includes('UNIQUE constraint failed: tags.name')) {
+        return error(400, 'There is already a tag with that name')
       }
       console.error(e)
       return error(500, 'Internal error')
