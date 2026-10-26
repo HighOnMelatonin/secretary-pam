@@ -26,6 +26,7 @@ const tileNames = (wrapper: ReturnType<typeof mount>) => wrapper.findAll('.tile-
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  localStorage.clear()
 })
 
 describe('Dashboard loading', () => {
@@ -297,5 +298,56 @@ describe('Dashboard routes', () => {
     await button(wrapper, 'Add task').trigger('click')
     await flushPromises()
     expect(wrapper.find('.fab').exists()).toBe(false)
+  })
+})
+
+describe('Dashboard sorting and filtering', () => {
+  const projects = [
+    project('report', { name: 'Report', deliveryDate: '2027-01-01', priority: 'low', tagId: 'work' }),
+    project('thesis', { name: 'Thesis', deliveryDate: '2027-02-01', priority: 'urgent', tagId: 'school' }),
+    project('gym', { name: 'Gym', priority: 'high' }),
+  ]
+  const tags = [
+    { id: 'school', name: 'School (SUTD)' },
+    { id: 'work', name: 'Work' },
+  ]
+  const chip = (wrapper: ReturnType<typeof mount>, text: string) =>
+    wrapper.findAll('.chip').find((c) => c.text() === text)!
+
+  it('sorts the tiles with the chosen order', async () => {
+    fakeApi({ projects, tags })
+    const wrapper = await mountDashboard()
+    expect(tileNames(wrapper)).toEqual(['Report', 'Thesis', 'Gym'])
+
+    await selectWithOption(wrapper, 'urgency-desc').setValue('urgency-desc')
+    expect(tileNames(wrapper)).toEqual(['Thesis', 'Gym', 'Report'])
+  })
+
+  it('filters by tag and urgency, counting the filters that are on', async () => {
+    fakeApi({ projects, tags })
+    const wrapper = await mountDashboard()
+
+    await chip(wrapper, 'Work').trigger('click')
+    expect(chip(wrapper, 'Work').attributes('aria-pressed')).toBe('true')
+    expect(tileNames(wrapper)).toEqual(['Report'])
+
+    await chip(wrapper, 'No tag').trigger('click')
+    await chip(wrapper, 'high').trigger('click')
+    expect(tileNames(wrapper)).toEqual(['Gym'])
+    expect(wrapper.find('summary').text()).toBe('Filter (3 on)')
+  })
+
+  it('says when nothing matches, and clears the filters', async () => {
+    fakeApi({ projects, tags })
+    const wrapper = await mountDashboard()
+    await chip(wrapper, 'Work').trigger('click')
+    await chip(wrapper, 'urgent').trigger('click')
+
+    expect(tileNames(wrapper)).toEqual([])
+    expect(wrapper.find('.no-match').text()).toContain('No projects match these filters.')
+
+    await wrapper.find('.no-match button').trigger('click')
+    expect(tileNames(wrapper)).toEqual(['Report', 'Thesis', 'Gym'])
+    expect(wrapper.find('summary').text()).toBe('Filter')
   })
 })

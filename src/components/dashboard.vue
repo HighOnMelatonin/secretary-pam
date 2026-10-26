@@ -9,6 +9,8 @@ import TaskForm from './task.vue'
 import TagManager from './tags.vue'
 import Taskbar from './taskbar.vue'
 import ProjectTile from './projectTile.vue'
+import ListControls from './listControls.vue'
+import { useProjectView } from '@/stores/projectView'
 import { useProjectList } from '@/stores/projectList'
 import { useTagList } from '@/stores/tagList'
 import { useTaskList } from '@/stores/taskList'
@@ -19,6 +21,9 @@ const projectList = useProjectList()
 const taskList = useTaskList()
 const tagList = useTagList()
 const { projects, liveProjects } = storeToRefs(projectList)
+// The live projects with the sort and filters from ListControls applied
+const projectView = useProjectView()
+const { visibleProjects } = storeToRefs(projectView)
 const { tasks } = storeToRefs(taskList)
 const { tags } = storeToRefs(tagList)
 
@@ -177,9 +182,17 @@ async function onSaveTask(task: Task, projectIds: string[]) {
         </a>
       </p>
 
+      <template v-else>
+        <ListControls />
+        <p v-if="visibleProjects.length === 0" class="no-match">
+          No projects match these filters.
+          <button type="button" class="secondary outline" @click="projectView.clearFilters()">Clear filters</button>
+        </p>
+      </template>
+
       <div class="project-grid">
         <ProjectTile
-          v-for="project in liveProjects"
+          v-for="project in visibleProjects"
           :key="project.id"
           :project="project"
           :tasks="tasks"
@@ -194,6 +207,21 @@ async function onSaveTask(task: Task, projectIds: string[]) {
 <style scoped>
 .heading {
   margin: 0;
+}
+
+.no-match {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-top: 1.5rem;
+}
+
+.no-match button {
+  width: auto;
+  margin: 0;
+  padding: 0.3rem 0.9rem;
+  font-size: 0.9rem;
 }
 
 .empty {

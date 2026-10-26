@@ -6,7 +6,8 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 
 ## Features
 
-- **Dashboard** of live projects, sorted by delivery date. A project stays live until it has tasks and all of them are done.
+- **Dashboard** of live projects. A project stays live until it has tasks and all of them are done.
+- **Sort** the projects by delivery date, urgency (most or least urgent first) or % complete, and **filter** them by tag and urgency. The choices are remembered in the browser.
 - **Project tiles** show the project's tag, priority, due date, an overdue tag and task progress. Click a tile to expand a preview of its tasks and reference links.
 - **Projects** have a name, description, delivery date, priority, an optional tag, tasks and reference links.
 - **Taskbar** hidden on the left edge of the screen. Hover over it to slide it out over the page, with buttons for **Tags**, **Add task** and **Add project**. On phones and other touch screens these are behind a **+** button in the bottom-right corner instead.
@@ -30,6 +31,7 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 src/
   components/
     dashboard.vue     main page: loads data, lists projects, opens the forms
+    listControls.vue  the sort menu and the tag and urgency filters
     taskbar.vue       the Tags, Add task and Add project buttons: a hidden bar on the left, or a + button on phones
     projectTile.vue   one project on the dashboard; expands into a preview
     project.vue       create/edit a project
