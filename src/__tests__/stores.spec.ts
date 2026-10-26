@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useProjectList } from '../stores/projectList'
+import { NO_TAG, useProjectView } from '../stores/projectView'
 import { useTagList } from '../stores/tagList'
 import { useTaskList } from '../stores/taskList'
 import { createEmptyProject, type Project } from '../types/project'
@@ -21,6 +23,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  localStorage.clear()
 })
 
 describe('taskList', () => {
@@ -190,5 +193,89 @@ describe('tagList', () => {
 
     await expect(store.deleteTag('w')).rejects.toThrow('D1 is down')
     expect(store.tags).toEqual([{ id: 'w', name: 'Work' }])
+  })
+})
+
+describe('projectView', () => {
+  // Live projects in delivery date order: a (Jan), b (Feb), c (Mar), d (no date)
+  function setUp() {
+    useTaskList().tasks = [task('done', { completed: true }), task('open1'), task('open2')]
+    useTagList().tags = [
+      { id: 'work', name: 'Work' },
+      { id: 'school', name: 'School' },
+    ]
+    useProjectList().projects = [
+      project('d', { priority: 'urgent', tagId: 'school' }),
+      project('c', { deliveryDate: '2027-03-01', priority: 'low', taskIds: ['done', 'open1'] }),
+      project('b', { deliveryDate: '2027-02-01', priority: 'urgent', tagId: 'work', taskIds: ['open1', 'open2'] }),
+      project('a', { deliveryDate: '2027-01-01', priority: 'medium', tagId: 'work', taskIds: ['done', 'open1', 'open2'] }),
+    ]
+    return useProjectView()
+  }
+  const ids = (view: ReturnType<typeof useProjectView>) => view.visibleProjects.map((p) => p.id)
+
+  it('starts with every live project, soonest delivery first', () => {
+    expect(ids(setUp())).toEqual(['a', 'b', 'c', 'd'])
+  })
+
+  it.each<[string, string[]]>([
+    ['urgency-desc', ['b', 'd', 'a', 'c']],
+    ['urgency-asc', ['c', 'a', 'b', 'd']],
+    ['percent-complete', ['c', 'a', 'b', 'd']],
+  ])('sorts by %s, keeping delivery date order for ties', (sort, expected) => {
+    const view = setUp()
+    view.sort = sort as typeof view.sort
+    expect(ids(view)).toEqual(expected)
+  })
+
+  it('filters by any of the chosen tags, including no tag', () => {
+    const view = setUp()
+    view.toggleTag('school')
+    expect(ids(view)).toEqual(['d'])
+    view.toggleTag(NO_TAG)
+    expect(ids(view)).toEqual(['c', 'd'])
+    view.toggleTag('school')
+    expect(ids(view)).toEqual(['c'])
+  })
+
+  it('filters by any of the chosen urgencies, together with the tag filter', () => {
+    const view = setUp()
+    view.togglePriority('urgent')
+    view.togglePriority('low')
+    expect(ids(view)).toEqual(['b', 'c', 'd'])
+
+    view.toggleTag('work')
+    expect(ids(view)).toEqual(['b'])
+    expect(view.filterCount).toBe(3)
+
+    view.clearFilters()
+    expect(ids(view)).toEqual(['a', 'b', 'c', 'd'])
+    expect(view.filterCount).toBe(0)
+  })
+
+  it('ignores a filtered tag that has been deleted', () => {
+    const view = setUp()
+    view.toggleTag('school')
+    useTagList().tags = [{ id: 'work', name: 'Work' }]
+    expect(ids(view)).toEqual(['a', 'b', 'c', 'd'])
+    expect(view.filterCount).toBe(0)
+  })
+
+  it('remembers the choices for next time, dropping any that are no longer valid', async () => {
+    const view = setUp()
+    view.sort = 'urgency-asc'
+    view.toggleTag('work')
+    view.togglePriority('high')
+    await nextTick()
+
+    setActivePinia(createPinia())
+    const next = useProjectView()
+    expect(next.sort).toBe('urgency-asc')
+    expect(next.tagIds).toEqual(['work'])
+    expect(next.priorities).toEqual(['high'])
+
+    localStorage.setItem('pam.projectView', JSON.stringify({ sort: 'by-colour', tagIds: [3], priorities: ['asap', 'low'] }))
+    setActivePinia(createPinia())
+    expect(useProjectView().$state).toMatchObject({ sort: 'delivery-date', tagIds: [], priorities: ['low'] })
   })
 })

@@ -56,6 +56,15 @@ describe('ProjectTile', () => {
     expect(tagged.find('.project-tag').text()).toBe('School (SUTD)')
   })
 
+  it("emits editTask from a task's Edit button, without collapsing the tile", async () => {
+    const wrapper = mountTile()
+    await wrapper.find('article').trigger('click')
+    await wrapper.find('button[aria-label="Edit task Review slides"]').trigger('click')
+
+    expect(wrapper.emitted('editTask')).toEqual([[tasks[1]]])
+    expect(wrapper.find('.preview').exists()).toBe(true)
+  })
+
   it('emits edit without expanding when Edit is clicked', async () => {
     const wrapper = mountTile()
     const edit = wrapper.findAll('button').find((b) => b.text() === 'Edit')!

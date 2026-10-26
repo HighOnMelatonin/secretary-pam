@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// Dashboard tile for one project. Clicking it expands a read-only preview of the
-// project's tasks and links; the Edit button opens the full project form.
+// Dashboard tile for one project. Clicking it expands a preview of the project's tasks and
+// links, with an Edit button on each task; the Edit button at the top opens the project form.
 import { computed, ref } from 'vue'
 import { completionStatus, resolveTasks, type Project } from '@/types/project'
 import type { Tag } from '@/types/tag'
@@ -14,6 +14,7 @@ const props = defineProps<{
 
 defineEmits<{
   edit: [project: Project]
+  editTask: [task: Task]
 }>()
 
 const expanded = ref(false)
@@ -71,12 +72,22 @@ function onTileClick(event: MouseEvent) {
         <ul v-if="projectTasks.length" class="plain-list">
           <li v-for="task in projectTasks" :key="task.id" class="task" :class="{ done: task.completed }">
             <span class="check" aria-hidden="true">{{ task.completed ? '✓' : '○' }}</span>
-            <span class="task-name">
-              {{ task.name }}<span v-if="task.completed" class="sr-only"> (completed)</span>
+            <span class="task-body">
+              <span class="task-name">
+                {{ task.name }}<span v-if="task.completed" class="sr-only"> (completed)</span>
+              </span>
+              <span class="tag" :class="`priority-${task.priority}`">{{ task.priority }}</span>
+              <span v-if="!task.completed && isOverdue(task.dueDate)" class="tag overdue">overdue</span>
+              <small v-if="task.dueDate">Due {{ task.dueDate }}</small>
             </span>
-            <span class="tag" :class="`priority-${task.priority}`">{{ task.priority }}</span>
-            <span v-if="!task.completed && isOverdue(task.dueDate)" class="tag overdue">overdue</span>
-            <small v-if="task.dueDate">Due {{ task.dueDate }}</small>
+            <button
+              type="button"
+              class="secondary outline small task-edit"
+              :aria-label="`Edit task ${task.name}`"
+              @click="$emit('editTask', task)"
+            >
+              Edit
+            </button>
           </li>
         </ul>
         <p v-else><small>No tasks in this project yet.</small></p>
@@ -229,16 +240,34 @@ button.small {
   margin-bottom: 0.5rem;
 }
 
+/* The icon keeps its own column; the name, badges and due date wrap beside it on narrow
+   screens rather than under it */
 .task {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
+  align-items: baseline;
   gap: 0.5rem;
 }
 
 .check {
+  flex: none;
   width: 1.25rem;
   color: var(--pico-muted-color);
+}
+
+/* At the end of the row, however long the task's details are */
+.task-edit {
+  flex: none;
+  align-self: center;
+  width: auto;
+  margin: 0 0 0 auto;
+}
+
+.task-body {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  min-width: 0;
 }
 
 .task.done .task-name {

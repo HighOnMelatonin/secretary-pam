@@ -122,3 +122,43 @@
   text-transform: none;
   letter-spacing: normal;
 }
+
+/* Phones, below Pico's 576px breakpoint */
+@media (max-width: 575px) {
+  /* Rows of joined fields and buttons (role="group") wrap instead of squeezing: each field
+     takes a whole line and the buttons share the last one. !important beats Pico's very
+     specific rules for the joined corners. */
+  [role='group'] {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    --pico-group-box-shadow: none;
+  }
+
+  [role='group'] > input,
+  [role='group'] > select {
+    flex: 1 1 100%;
+  }
+
+  [role='group'] > button {
+    flex: 1 1 0;
+  }
+
+  [role='group'] > * {
+    margin-left: 0 !important;
+    border-radius: var(--pico-border-radius) !important;
+  }
+}
+
+/* Room below the last tile for the + button, shown with the same query in taskbar.vue */
+@media (hover: none), (max-width: 575px) {
+  main.container {
+    padding-bottom: 6rem;
+  }
+}
+
+/* Touch screens: buttons at least 44px tall, the recommended size for a fingertip */
+@media (pointer: coarse) {
+  button {
+    min-height: 2.75rem;
+  }
+}

@@ -181,4 +181,38 @@ li button {
   display: flex;
   gap: 0.5rem;
 }
+
+/* Below Pico's 768px breakpoint, where .grid would put each field on its own line:
+   delivery date and priority share one, and the tag, whose names vary in length, gets its own */
+@media (max-width: 767px) {
+  .grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .grid > :last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 575px) {
+  fieldset ul {
+    padding-left: 0;
+  }
+
+  /* Save and Cancel stay at the bottom of the screen while the long form scrolls */
+  .actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    margin: 0 calc(var(--pico-block-spacing-horizontal) * -1) calc(var(--pico-block-spacing-vertical) * -1);
+    padding: 0.75rem var(--pico-block-spacing-horizontal) calc(0.75rem + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--pico-muted-border-color);
+    border-radius: 0 0 var(--pico-border-radius) var(--pico-border-radius);
+    background: var(--pico-card-background-color);
+  }
+
+  .actions button {
+    margin: 0;
+  }
+}
 </style>
