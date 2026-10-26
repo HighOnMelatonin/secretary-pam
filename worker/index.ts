@@ -1,5 +1,6 @@
-// API for storing projects and tasks in D1 (tables in migrations/0001). Requests outside
-// /api/* never reach this Worker: they are served from the built Vue app (see wrangler.jsonc).
+// API for storing projects and tasks in D1 (tables in migrations/, created by migrate.ts on
+// the first request). Requests outside /api/* never reach this Worker: they are served
+// from the built Vue app (see wrangler.jsonc).
 //
 //   GET    /api/projects       -> Project[]
 //   PUT    /api/projects/:id   -> saves the Project in the body, returns it
@@ -16,6 +17,7 @@ import {
   type TaskRelation,
 } from '../src/types/task'
 import type { Project, ReferenceLink } from '../src/types/project'
+import { migrateOnce } from './migrate'
 
 const MAX_BODY_BYTES = 100_000
 const NOW = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
@@ -273,6 +275,7 @@ export default {
     const id = rawId ? decodeURIComponent(rawId) : undefined
 
     try {
+      await migrateOnce(env.DB)
       if (!id && request.method === 'GET') return json(await resource.list(env.DB))
       if (id && request.method === 'PUT') return json(await resource.save(env.DB, id, await readJson(request)))
       if (id && request.method === 'DELETE') {
@@ -286,10 +289,6 @@ export default {
         return error(400, 'References a task that does not exist')
       }
       console.error(e)
-      // The migrations haven't been applied to this database
-      if (String(e).includes('no such table')) {
-        return error(503, 'The database has no tables yet. Run pnpm db:migrate:local (or db:migrate:remote when deployed)')
-      }
       return error(500, 'Internal error')
     }
   },

@@ -51,19 +51,6 @@ describe('routing', () => {
     expect(await call('GET', 'tasks')).toEqual({ status: 200, body: [] })
   })
 
-  it('says to run the migrations when the tables are missing', async () => {
-    // Renaming the table hides it like an unmigrated database would, and is undone after
-    await env.DB.prepare('ALTER TABLE projects RENAME TO projects_hidden').run()
-    try {
-      expect(await call('GET', 'projects')).toEqual({
-        status: 503,
-        body: { error: 'The database has no tables yet. Run pnpm db:migrate:local (or db:migrate:remote when deployed)' },
-      })
-    } finally {
-      await env.DB.prepare('ALTER TABLE projects_hidden RENAME TO projects').run()
-    }
-  })
-
   it.each([['users'], ['tasks/a/b'], ['']])('answers 404 for /api/%s', async (path) => {
     expect((await call('GET', path)).status).toBe(404)
   })
