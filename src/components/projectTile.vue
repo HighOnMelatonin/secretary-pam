@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// Dashboard tile for one project. Clicking it expands a preview of the project's tasks and
-// links, with an Edit button on each task; the Edit button at the top opens the project form.
+// Dashboard tile for one project. Clicking it expands a preview of the project's timeline, tasks
+// and links, with an Edit button on each task; the Edit button at the top opens the project form.
 import { computed, ref } from 'vue'
+import ProjectTimeline from './projectTimeline.vue'
 import { completionStatus, resolveTasks, type Project } from '@/types/project'
 import type { Tag } from '@/types/tag'
 import type { Task } from '@/types/task'
@@ -67,6 +68,11 @@ function onTileClick(event: MouseEvent) {
     <p v-if="project.description" class="description">{{ project.description }}</p>
 
     <div v-if="expanded" :id="previewId" class="preview">
+      <section class="timeline-section">
+        <h4>Timeline</h4>
+        <ProjectTimeline :tasks="projectTasks" :delivery-date="project.deliveryDate" />
+      </section>
+
       <section>
         <h4>Tasks</h4>
         <ul v-if="projectTasks.length" class="plain-list">
@@ -222,6 +228,12 @@ button.small {
   margin: 0;
 }
 
+/* Across the whole tile, above the task and link lists */
+.timeline-section {
+  grid-column: 1 / -1;
+  min-width: 0; /* so a long timeline scrolls inside the tile instead of widening it */
+}
+
 .preview h4 {
   margin-bottom: 0.75rem;
   font-size: 0.85rem;
@@ -273,15 +285,6 @@ button.small {
 .task.done .task-name {
   text-decoration: line-through;
   opacity: 0.7;
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
 }
 
 .project-tile footer {
