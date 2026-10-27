@@ -5,7 +5,7 @@ import TagManager from '../components/tags.vue'
 import { useProjectList } from '../stores/projectList'
 import { useTagList } from '../stores/tagList'
 import { createEmptyProject } from '../types/project'
-import type { Tag } from '../types/tag'
+import { ARCHIVE_TAG_ID, type Tag } from '../types/tag'
 import { fakeApi } from './fakeApi'
 import { button } from './helpers'
 
@@ -15,12 +15,12 @@ const tags: Tag[] = [
 ]
 
 // Mounts the tag list with the tags (and projects) already loaded into the stores
-async function mountTags(options: { projectTagIds?: (string | null)[] } = {}) {
+async function mountTags(options: { projectTagIds?: string[][] } = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
   const api = fakeApi({ tags })
   await useTagList().load()
-  useProjectList().projects = (options.projectTagIds ?? []).map((tagId) => ({ ...createEmptyProject(), tagId }))
+  useProjectList().projects = (options.projectTagIds ?? []).map((tagIds) => ({ ...createEmptyProject(), tagIds }))
   api.requests.length = 0
   const wrapper = mount(TagManager, { global: { plugins: [pinia] } })
   return { api, wrapper }
@@ -36,8 +36,8 @@ afterEach(() => {
 
 describe('TagManager', () => {
   it('lists each tag with how many projects use it', async () => {
-    const { wrapper } = await mountTags({ projectTagIds: ['work', 'work', null] })
-    expect(rowOf(wrapper, 'School (SUTD)').text()).toContain('Used by 0 projects')
+    const { wrapper } = await mountTags({ projectTagIds: [['work'], ['school', 'work'], []] })
+    expect(rowOf(wrapper, 'School (SUTD)').text()).toContain('Used by 1 project')
     expect(rowOf(wrapper, 'Work').text()).toContain('Used by 2 projects')
   })
 
@@ -97,14 +97,23 @@ describe('TagManager', () => {
   it('asks before deleting a tag that projects use, and keeps it if cancelled', async () => {
     const confirm = vi.fn(() => false)
     vi.stubGlobal('confirm', confirm)
-    const { api, wrapper } = await mountTags({ projectTagIds: ['work'] })
+    const { api, wrapper } = await mountTags({ projectTagIds: [['work']] })
 
     await rowOf(wrapper, 'Work').findAll('button').find((b) => b.text() === 'Delete')!.trigger('click')
     await flushPromises()
 
-    expect(confirm).toHaveBeenCalledWith('Delete "Work"? 1 project will no longer have a tag.')
+    expect(confirm).toHaveBeenCalledWith('Delete "Work"? It will be removed from 1 project.')
     expect(api.requests).toEqual([])
     expect(nameInput(wrapper, 'Work').exists()).toBe(true)
+  })
+
+  it('offers no Delete for the built-in Archive tag', async () => {
+    const { wrapper } = await mountTags()
+    useTagList().tags = [...tags, { id: ARCHIVE_TAG_ID, name: 'Archive' }]
+    await flushPromises()
+
+    expect(rowOf(wrapper, 'Archive').findAll('button').map((b) => b.text())).toEqual(['Rename'])
+    expect(rowOf(wrapper, 'Archive').text()).toContain('Built in')
   })
 
   it('emits close from Done', async () => {

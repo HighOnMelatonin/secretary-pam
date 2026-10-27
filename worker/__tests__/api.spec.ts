@@ -40,7 +40,7 @@ const project = (id: string, fields: Partial<Project> = {}): Project => ({
   taskIds: [],
   priority: 'medium',
   links: [],
-  tagId: null,
+  tagIds: [],
   ...fields,
 })
 
@@ -232,35 +232,55 @@ describe('tags', () => {
     expect(await listTags()).toEqual([])
   })
 
-  it("stores a project's tag and changes it", async () => {
+  it("stores a project's tags in order and changes them", async () => {
     await saveTag({ id: 'w', name: 'Work' })
     await saveTag({ id: 's', name: 'School' })
-    await saveProject(project('p', { tagId: 'w' }))
-    expect(await listProjects()).toEqual([project('p', { tagId: 'w' })])
+    await saveProject(project('p', { tagIds: ['w', 's'] }))
+    expect(await listProjects()).toEqual([project('p', { tagIds: ['w', 's'] })])
 
-    await saveProject(project('p', { tagId: 's' }))
-    expect((await listProjects())[0]!.tagId).toBe('s')
-    await saveProject(project('p', { tagId: null }))
-    expect((await listProjects())[0]!.tagId).toBeNull()
+    await saveProject(project('p', { tagIds: ['s'] }))
+    expect((await listProjects())[0]!.tagIds).toEqual(['s'])
+    await saveProject(project('p', { tagIds: [] }))
+    expect((await listProjects())[0]!.tagIds).toEqual([])
   })
 
-  it('rejects a project with a tag that does not exist, or a tagId that is not a string', async () => {
-    expect(await saveProject(project('p', { tagId: 'missing' }))).toEqual({
-      status: 400,
-      body: { error: 'References a task or tag that does not exist' },
-    })
-    expect((await call('PUT', 'projects/p', { ...project('p'), tagId: 3 })).status).toBe(400)
+  it.each<[string, unknown]>([
+    ['a tag id that is not a string', [3]],
+    ['the same tag twice', ['w', 'w']],
+    ['no tag list', undefined],
+  ])('rejects a project with %s', async (_, tagIds) => {
+    await saveTag({ id: 'w', name: 'Work' })
+    expect((await call('PUT', 'projects/p', { ...project('p'), tagIds })).status).toBe(400)
     expect(await listProjects()).toEqual([])
   })
 
-  it('leaves projects untagged when their tag is deleted', async () => {
+  it('rejects a project with a tag that does not exist, saving nothing', async () => {
+    expect(await saveProject(project('p', { tagIds: ['missing'] }))).toEqual({
+      status: 400,
+      body: { error: 'References a task or tag that does not exist' },
+    })
+    expect(await listProjects()).toEqual([])
+  })
+
+  it('removes a deleted tag from its projects, keeping their other tags', async () => {
     await saveTag({ id: 'w', name: 'Work' })
-    await saveProject(project('p', { tagId: 'w' }))
+    await saveTag({ id: 's', name: 'School' })
+    await saveProject(project('p', { tagIds: ['w', 's'] }))
 
     expect((await call('DELETE', 'tags/w')).status).toBe(204)
 
-    expect(await listTags()).toEqual([])
-    expect(await listProjects()).toEqual([project('p', { tagId: null })])
+    expect(await listTags()).toEqual([{ id: 's', name: 'School' }])
+    expect(await listProjects()).toEqual([project('p', { tagIds: ['s'] })])
+  })
+
+  it('refuses to delete the built-in Archive tag, but renames it', async () => {
+    await saveTag({ id: 'archive', name: 'Archive' })
+    expect(await call('DELETE', 'tags/archive')).toEqual({
+      status: 400,
+      body: { error: 'The Archive tag is built in and cannot be deleted' },
+    })
+    expect((await saveTag({ id: 'archive', name: 'Done' })).status).toBe(200)
+    expect(await listTags()).toEqual([{ id: 'archive', name: 'Done' }])
   })
 })
 
@@ -380,7 +400,8 @@ describe('schema constraints', () => {
     ['a link for a missing project', "INSERT INTO project_links (project_id, position, label, url) VALUES ('missing', 0, 'A', 'https://a')"],
     ['a relation type outside the allowed list', "INSERT INTO task_relations (task_id, related_task_id, type, position) VALUES ('t', 'u', 'depends_on', 0)"],
     ['a task related to itself', "INSERT INTO task_relations (task_id, related_task_id, type, position) VALUES ('t', 't', 'blocks', 0)"],
-    ['a project with a missing tag', "INSERT INTO projects (id, name, tag_id) VALUES ('q', 'Q', 'missing')"],
+    ['a project_tags row for a missing tag', "INSERT INTO project_tags (project_id, tag_id, position) VALUES ('p', 'missing', 0)"],
+    ['a project_tags row for a missing project', "INSERT INTO project_tags (project_id, tag_id, position) VALUES ('missing', 'w', 0)"],
     ['a tag name that differs only in case', "INSERT INTO tags (id, name) VALUES ('w2', 'WORK')"],
     ['a tag without a name', "INSERT INTO tags (id) VALUES ('x')"],
   ])('rejects %s', async (_, sql) => {

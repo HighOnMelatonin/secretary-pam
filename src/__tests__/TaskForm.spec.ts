@@ -19,7 +19,9 @@ const project = (id: string, name: string, taskIds: string[] = []): Project => (
 })
 const projects = [project('p1', 'Thesis', ['t1']), project('p2', 'Website')]
 
-const saved = (wrapper: ReturnType<typeof mount>) => wrapper.emitted<[Task, string[]]>('save')?.slice(-1)[0]
+const saved = (wrapper: ReturnType<typeof mount>) =>
+  wrapper.emitted<[Task, string[], Record<string, string>]>('save')?.slice(-1)[0]
+const dateInput = (wrapper: ReturnType<typeof mount>) => wrapper.find<HTMLInputElement>('input[type="date"]')
 
 describe('TaskForm for a new task', () => {
   it('only allows adding once the task has a name', async () => {
@@ -49,6 +51,7 @@ describe('TaskForm for a new task', () => {
         completed: true,
       },
       [],
+      {},
     ])
     expect((wrapper.find('input[placeholder="Task"]').element as HTMLInputElement).value).toBe('')
   })
@@ -81,6 +84,65 @@ describe('TaskForm project assignment', () => {
     const wrapper = mount(TaskForm, { props: { projects } })
     expect(listedIn(wrapper, 'Projects')).toEqual([])
     expect(wrapper.text()).toContain('Not in any project.')
+  })
+})
+
+describe("TaskForm checks the due date against its projects' deadlines", () => {
+  const dated = [
+    { ...project('p1', 'Thesis', ['t1']), deliveryDate: '2026-11-30' },
+    { ...project('p2', 'Website'), deliveryDate: '2026-11-30' },
+  ]
+
+  it('blocks assigning a project due before the task, but only once both dates are set', async () => {
+    const wrapper = mount(TaskForm, { props: { projects: dated } })
+    await selectWithOption(wrapper, 'p2').setValue('p2')
+    expect(wrapper.find('.date-error').exists()).toBe(false)
+    expect(button(wrapper, 'Assign').attributes('disabled')).toBeUndefined()
+
+    await dateInput(wrapper).setValue('2026-12-05')
+    expect(wrapper.find('.date-error').text()).toContain(
+      "This task is due 2026-12-05, after Website's deadline (2026-11-30).",
+    )
+    expect(button(wrapper, 'Assign').attributes('disabled')).toBeDefined()
+
+    await button(wrapper, 'Move task to 2026-11-30').trigger('click')
+    expect(dateInput(wrapper).element.value).toBe('2026-11-30')
+    expect(wrapper.find('.date-error').exists()).toBe(false)
+    expect(button(wrapper, 'Assign').attributes('disabled')).toBeUndefined()
+  })
+
+  it("extends the project's deadline when the task is saved", async () => {
+    const wrapper = mount(TaskForm, { props: { task: { ...task, dueDate: '2026-12-05' }, projects: [{ ...project('p2', 'Website'), deliveryDate: '2026-11-30' }] } })
+    await selectWithOption(wrapper, 'p2').setValue('p2')
+    await button(wrapper, 'Extend Website to 2026-12-05').trigger('click')
+    expect(wrapper.find('.date-error').exists()).toBe(false)
+
+    await button(wrapper, 'Assign').trigger('click')
+    expect(listedIn(wrapper, 'Projects')).toEqual(['Website deadline extends to 2026-12-05'])
+    await wrapper.find('form').trigger('submit')
+    expect(saved(wrapper)?.slice(1)).toEqual([['p2'], { p2: '2026-12-05' }])
+  })
+
+  it('blocks saving while the due date is after a project the task is in', async () => {
+    const wrapper = mount(TaskForm, { props: { task, projects: dated } })
+    await dateInput(wrapper).setValue('2026-12-01')
+    expect(wrapper.find('.date-error').text()).toContain("after Thesis's deadline (2026-11-30)")
+    expect(button(wrapper, 'Save').attributes('disabled')).toBeDefined()
+    await wrapper.find('form').trigger('submit')
+    expect(saved(wrapper)).toBeUndefined()
+
+    // Clearing the due date leaves nothing to check
+    await dateInput(wrapper).setValue('')
+    expect(wrapper.find('.date-error').exists()).toBe(false)
+    expect(button(wrapper, 'Save').attributes('disabled')).toBeUndefined()
+  })
+
+  it('drops the clash, and any extension, when the project is removed', async () => {
+    const wrapper = mount(TaskForm, { props: { task: { ...task, dueDate: '2026-12-01' }, projects: dated } })
+    await button(wrapper, 'Extend Thesis to 2026-12-01').trigger('click')
+    await wrapper.find('li button').trigger('click') // remove Thesis
+    await wrapper.find('form').trigger('submit')
+    expect(saved(wrapper)?.slice(1)).toEqual([[], {}])
   })
 })
 

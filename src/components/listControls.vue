@@ -1,14 +1,18 @@
 <script setup lang="ts">
 // Sort and filter controls for the dashboard's project list. The choices live in the
 // projectView store, which also works out which projects show.
+import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { NO_TAG, SORTS, useProjectView } from '@/stores/projectView'
 import { useTagList } from '@/stores/tagList'
+import { ARCHIVE_TAG_ID } from '@/types/tag'
 import { PRIORITIES } from '@/types/task'
 
 const view = useProjectView()
 const { sort, activeTagIds, priorities, filterCount } = storeToRefs(view)
 const { tags } = storeToRefs(useTagList())
+// Live projects never have the Archive tag, so it isn't offered as a filter
+const filterTags = computed(() => tags.value.filter((t) => t.id !== ARCHIVE_TAG_ID))
 
 // Most urgent first, the order people scan for
 const urgencies = [...PRIORITIES].reverse()
@@ -32,7 +36,7 @@ const urgencies = [...PRIORITIES].reverse()
         <legend>Tag</legend>
         <div class="chips">
           <button
-            v-for="tag in tags"
+            v-for="tag in filterTags"
             :key="tag.id"
             type="button"
             class="chip tag-chip"

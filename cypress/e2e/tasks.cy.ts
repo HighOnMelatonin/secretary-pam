@@ -61,17 +61,46 @@ describe('Tasks', () => {
       })
   })
 
-  it('moves a project out of the live list once all its tasks are done', () => {
-    cy.seed({ tasks: [task('t')], projects: [project('p', { name: 'Thesis', taskIds: ['t'] })] })
+  it("won't assign a task due after the project's deadline until one of the dates moves", () => {
+    cy.seed({ projects: [project('p', { name: 'Thesis', deliveryDate: '2026-12-10' })] })
     cy.visit('/')
-    tile('Thesis').should('be.visible')
 
-    // There is no task editor on the dashboard yet, so the task is completed through the API
-    cy.seed({ tasks: [task('t', { completed: true })] })
+    cy.taskbar('Add task')
+    field('Task name').type('Write report')
+    field('Due date').type('2026-12-14')
+    fieldset('Projects').find('select').select('Thesis')
+    cy.get('.date-error').should('contain', "after Thesis's deadline (2026-12-10)")
+    fieldset('Projects').contains('button', 'Assign').should('be.disabled')
+
+    cy.contains('button', 'Extend Thesis to 2026-12-14').click()
+    cy.get('.date-error').should('not.exist')
+    fieldset('Projects').contains('button', 'Assign').click()
+    cy.contains('button', /^Add$/).click()
+
+    tile('Thesis').contains('Due 2026-12-14')
+    cy.request('/api/projects').its('body.0.deliveryDate').should('eq', '2026-12-14')
+  })
+
+  it('archives a project once its last task is ticked off, and brings it back when Archive is removed', () => {
+    cy.seed({ tasks: [task('t', { name: 'Write report' })], projects: [project('p', { name: 'Thesis', taskIds: ['t'] })] })
+    cy.visit('/')
+
+    tile('Thesis').find('.tile-toggle').click()
+    cy.get('button[aria-label="Done: Write report"]').click()
+
+    cy.contains('All projects are archived.')
+    cy.contains('.archived summary', 'Archived projects (1)').click()
+    tile('Thesis').find('.project-tag').should('have.text', 'Archive')
+    cy.request('/api/projects').its('body.0.tagIds').should('deep.equal', ['archive'])
+
+    tile('Thesis').contains('button', 'Edit').click()
+    field('Archive').uncheck()
+    cy.contains('button', 'Save').click()
+
+    // Still completed, but stays live after a reload since it was taken out by hand
     cy.reload()
-
-    cy.contains('All projects are completed.')
-    cy.get('.project-tile').should('not.exist')
+    cy.get('.archived').should('not.exist')
+    tile('Thesis').contains('1 of 1 tasks completed')
   })
 
   it('removes a deleted task from its project', () => {

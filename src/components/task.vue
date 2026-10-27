@@ -1,5 +1,7 @@
 <script setup lang="ts">
-// Component to create or edit the details of a single task
+// Component to create or edit the details of a single task. A task can't be due after the
+// delivery date of a project it's in: each clash offers to extend the project's deadline (saved
+// with the task) or move the task's due date, and blocks saving until one is fixed.
 import { computed, ref, toRaw, watch } from 'vue'
 import {
   createEmptyTask,
@@ -9,17 +11,19 @@ import {
   type RelationType,
   type Task,
 } from '@/types/task'
-import type { Project } from '@/types/project'
+import { isPastDeadline, type Project } from '@/types/project'
 
 const props = defineProps<{
   task?: Task // task to edit; a new empty task is used when omitted
   availableTasks?: Pick<Task, 'id' | 'name'>[] // tasks that can be linked as relations
-  projects?: Pick<Project, 'id' | 'name' | 'taskIds'>[] // projects the task can be assigned to
+  projects?: Pick<Project, 'id' | 'name' | 'taskIds' | 'deliveryDate'>[] // projects the task can be assigned to
   projectIds?: string[] // projects to show as assigned; defaults to the projects whose taskIds include the task
+  deadlines?: Record<string, string> // project deadlines to start out extended, by project id
 }>()
 
 const emit = defineEmits<{
-  save: [task: Task, projectIds: string[]]
+  // deadlines: new delivery dates for the projects whose deadlines were extended, by project id
+  save: [task: Task, projectIds: string[], deadlines: Record<string, string>]
   cancel: []
 }>()
 
@@ -34,16 +38,17 @@ const assignedIdsOf = (task?: Task): string[] => {
 // Edits happen on a copy so the original is only changed when saved
 const draft = ref<Task>(copyOf(props.task))
 const projectIds = ref<string[]>(assignedIdsOf(props.task))
+const deadlines = ref<Record<string, string>>({ ...props.deadlines })
 watch(
   () => props.task,
   (task) => {
     draft.value = copyOf(task)
     projectIds.value = assignedIdsOf(task)
+    deadlines.value = { ...props.deadlines }
   },
 )
 
 const isNew = computed(() => !props.task)
-const canSave = computed(() => draft.value.name.trim() !== '')
 
 // Project assignment
 const newProjectId = ref('')
@@ -55,14 +60,38 @@ const assignableProjects = computed(() =>
   (props.projects ?? []).filter((p) => !projectIds.value.includes(p.id)),
 )
 
+// Deadlines: a project's delivery date, or the one it's being extended to
+type AssignableProject = NonNullable<typeof props.projects>[number]
+const deadlineOf = (project: AssignableProject) => deadlines.value[project.id] ?? project.deliveryDate
+const isLateFor = (project: AssignableProject) => isPastDeadline(draft.value.dueDate, deadlineOf(project))
+
+const selectedProject = computed(() => assignableProjects.value.find((p) => p.id === newProjectId.value))
+// Assigned projects the task is due after block saving; the project picked to assign blocks Assign
+const lateProjects = computed(() => assignedProjects.value.filter(isLateFor))
+const selectionIsLate = computed(() => selectedProject.value !== undefined && isLateFor(selectedProject.value))
+const clashes = computed(() =>
+  selectionIsLate.value ? [...lateProjects.value, selectedProject.value!] : lateProjects.value,
+)
+
+const canSave = computed(() => draft.value.name.trim() !== '' && lateProjects.value.length === 0)
+
+function extendDeadline(project: AssignableProject) {
+  deadlines.value[project.id] = draft.value.dueDate!
+}
+
+function moveDueDate(project: AssignableProject) {
+  draft.value.dueDate = deadlineOf(project)
+}
+
 function assignProject() {
-  if (!newProjectId.value) return
+  if (!newProjectId.value || selectionIsLate.value) return
   projectIds.value.push(newProjectId.value)
   newProjectId.value = ''
 }
 
 function unassignProject(id: string) {
   projectIds.value = projectIds.value.filter((projectId) => projectId !== id)
+  delete deadlines.value[id]
 }
 
 // Relation input
@@ -92,16 +121,20 @@ function removeRelation(index: number) {
 function save() {
   if (!canSave.value) return
   draft.value.name = draft.value.name.trim()
-  emit('save', structuredClone(toRaw(draft.value)), [...projectIds.value])
+  // Only the projects the task ends up in are extended
+  const extended = Object.fromEntries(Object.entries(deadlines.value).filter(([id]) => projectIds.value.includes(id)))
+  emit('save', structuredClone(toRaw(draft.value)), [...projectIds.value], extended)
   if (isNew.value) {
     draft.value = createEmptyTask()
     projectIds.value = []
+    deadlines.value = {}
   }
 }
 
 function cancel() {
   draft.value = copyOf(props.task)
   projectIds.value = assignedIdsOf(props.task)
+  deadlines.value = { ...props.deadlines }
   emit('cancel')
 }
 </script>
@@ -141,7 +174,10 @@ function cancel() {
         <legend>Projects</legend>
         <ul v-if="assignedProjects.length">
           <li v-for="project in assignedProjects" :key="project.id">
-            <span>{{ project.name }}</span>
+            <span>
+              {{ project.name }}
+              <small v-if="deadlines[project.id]" class="pending">deadline extends to {{ deadlines[project.id] }}</small>
+            </span>
             <button type="button" class="secondary outline" @click="unassignProject(project.id)">Remove</button>
           </li>
         </ul>
@@ -152,7 +188,22 @@ function cancel() {
             <option value="" disabled>Select project</option>
             <option v-for="p in assignableProjects" :key="p.id" :value="p.id">{{ p.name }}</option>
           </select>
-          <button type="button" :disabled="!newProjectId" @click="assignProject">Assign</button>
+          <button type="button" :disabled="!newProjectId || selectionIsLate" @click="assignProject">Assign</button>
+        </div>
+
+        <div v-for="project in clashes" :key="project.id" class="date-error" role="alert">
+          <p>
+            This task is due {{ draft.dueDate }}, after {{ project.name }}'s deadline ({{ deadlineOf(project) }}).
+            Extend the project's deadline or move the task's due date.
+          </p>
+          <div class="date-fixes">
+            <button type="button" class="secondary" @click="extendDeadline(project)">
+              Extend {{ project.name }} to {{ draft.dueDate }}
+            </button>
+            <button type="button" class="secondary outline" @click="moveDueDate(project)">
+              Move task to {{ deadlineOf(project) }}
+            </button>
+          </div>
         </div>
       </fieldset>
 
@@ -203,6 +254,11 @@ li button {
   width: auto;
   margin: 0;
   padding: 0.25rem 0.75rem;
+}
+
+.pending {
+  margin-left: 0.5rem;
+  color: var(--pico-muted-color);
 }
 
 .actions {

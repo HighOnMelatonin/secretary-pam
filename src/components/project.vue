@@ -1,18 +1,22 @@
 <script setup lang="ts">
-// Component to create or edit the details of a single project
+// Component to create or edit the details of a single project. None of its tasks can be due
+// after its delivery date: each clash offers to extend the delivery date or move the task's due
+// date (saved with the project), and blocks saving until one is fixed.
 import { computed, ref, toRaw, watch } from 'vue'
 import { PRIORITIES, type Task } from '@/types/task'
-import { completionStatus, createEmptyProject, resolveTasks, type Project } from '@/types/project'
+import { completionStatus, createEmptyProject, isPastDeadline, resolveTasks, type Project } from '@/types/project'
 import type { Tag } from '@/types/tag'
 
 const props = defineProps<{
   project?: Project // project to edit; a new empty project is used when omitted
   tasks?: Task[] // all existing tasks, used to resolve and link the project's tasks
-  tags?: Tag[] // all tags, to choose the project's tag from
+  tags?: Tag[] // all tags, to choose the project's tags from
+  taskDueDates?: Record<string, string> // task due dates to start out moved, by task id
 }>()
 
 const emit = defineEmits<{
-  save: [project: Project]
+  // taskDueDates: new due dates for the tasks whose due dates were moved, by task id
+  save: [project: Project, taskDueDates: Record<string, string>]
   cancel: []
 }>()
 
@@ -21,10 +25,16 @@ const copyOf = (project?: Project): Project =>
 
 // Edits happen on a copy so the original is only changed when saved
 const draft = ref<Project>(copyOf(props.project))
-watch(() => props.project, (project) => (draft.value = copyOf(project)))
+const taskDueDates = ref<Record<string, string>>({ ...props.taskDueDates })
+watch(
+  () => props.project,
+  (project) => {
+    draft.value = copyOf(project)
+    taskDueDates.value = { ...props.taskDueDates }
+  },
+)
 
 const isNew = computed(() => !props.project)
-const canSave = computed(() => draft.value.name.trim() !== '')
 
 // Tasks
 const projectTasks = computed(() => resolveTasks(draft.value, props.tasks ?? []))
@@ -34,14 +44,35 @@ const linkableTasks = computed(() =>
 )
 const newTaskId = ref('')
 
+// Due dates: a task's own, or the one it's being moved to
+const dueDateOf = (task: Task) => taskDueDates.value[task.id] ?? task.dueDate
+const isLate = (task: Task) => isPastDeadline(dueDateOf(task), draft.value.deliveryDate)
+
+const selectedTask = computed(() => linkableTasks.value.find((t) => t.id === newTaskId.value))
+// The project's tasks that are due late block saving; the task picked to add blocks Add task
+const lateTasks = computed(() => projectTasks.value.filter(isLate))
+const selectionIsLate = computed(() => selectedTask.value !== undefined && isLate(selectedTask.value))
+const clashes = computed(() => (selectionIsLate.value ? [...lateTasks.value, selectedTask.value!] : lateTasks.value))
+
+const canSave = computed(() => draft.value.name.trim() !== '' && lateTasks.value.length === 0)
+
+function extendDeadline(task: Task) {
+  draft.value.deliveryDate = dueDateOf(task)
+}
+
+function moveDueDate(task: Task) {
+  taskDueDates.value[task.id] = draft.value.deliveryDate!
+}
+
 function addTask() {
-  if (!newTaskId.value) return
+  if (!newTaskId.value || selectionIsLate.value) return
   draft.value.taskIds.push(newTaskId.value)
   newTaskId.value = ''
 }
 
 function removeTask(id: string) {
   draft.value.taskIds = draft.value.taskIds.filter((taskId) => taskId !== id)
+  delete taskDueDates.value[id]
 }
 
 // Reference links
@@ -63,12 +94,18 @@ function removeLink(index: number) {
 function save() {
   if (!canSave.value) return
   draft.value.name = draft.value.name.trim()
-  emit('save', structuredClone(toRaw(draft.value)))
-  if (isNew.value) draft.value = createEmptyProject()
+  // Only the tasks the project ends up with are moved
+  const moved = Object.fromEntries(Object.entries(taskDueDates.value).filter(([id]) => draft.value.taskIds.includes(id)))
+  emit('save', structuredClone(toRaw(draft.value)), moved)
+  if (isNew.value) {
+    draft.value = createEmptyProject()
+    taskDueDates.value = {}
+  }
 }
 
 function cancel() {
   draft.value = copyOf(props.project)
+  taskDueDates.value = { ...props.taskDueDates }
   emit('cancel')
 }
 </script>
@@ -97,15 +134,15 @@ function cancel() {
             <option v-for="p in PRIORITIES" :key="p" :value="p">{{ p }}</option>
           </select>
         </label>
-
-        <label>
-          Tag
-          <select v-model="draft.tagId">
-            <option :value="null">No tag</option>
-            <option v-for="t in tags" :key="t.id" :value="t.id">{{ t.name }}</option>
-          </select>
-        </label>
       </div>
+
+      <fieldset v-if="tags?.length" class="tags">
+        <legend>Tags</legend>
+        <label v-for="t in tags" :key="t.id">
+          <input v-model="draft.tagIds" type="checkbox" :value="t.id" />
+          {{ t.name }}
+        </label>
+      </fieldset>
 
       <label>
         Description
@@ -118,7 +155,10 @@ function cancel() {
 
         <ul v-if="projectTasks.length">
           <li v-for="task in projectTasks" :key="task.id">
-            <span :class="{ done: task.completed }">{{ task.name }}</span>
+            <span>
+              <!-- On one line, so the space between the name and the note is kept -->
+              <span :class="{ done: task.completed }">{{ task.name }}</span> <small v-if="taskDueDates[task.id]" class="pending">due date moves to {{ taskDueDates[task.id] }}</small>
+            </span>
             <button type="button" class="secondary outline" @click="removeTask(task.id)">Remove</button>
           </li>
         </ul>
@@ -129,7 +169,22 @@ function cancel() {
             <option value="" disabled>Select task</option>
             <option v-for="t in linkableTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
           </select>
-          <button type="button" :disabled="!newTaskId" @click="addTask">Add task</button>
+          <button type="button" :disabled="!newTaskId || selectionIsLate" @click="addTask">Add task</button>
+        </div>
+
+        <div v-for="task in clashes" :key="task.id" class="date-error" role="alert">
+          <p>
+            {{ task.name }} is due {{ dueDateOf(task) }}, after this project's delivery date
+            ({{ draft.deliveryDate }}). Extend the project's deadline or move the task's due date.
+          </p>
+          <div class="date-fixes">
+            <button type="button" class="secondary" @click="extendDeadline(task)">
+              Extend project to {{ dueDateOf(task) }}
+            </button>
+            <button type="button" class="secondary outline" @click="moveDueDate(task)">
+              Move {{ task.name }} to {{ draft.deliveryDate }}
+            </button>
+          </div>
         </div>
       </fieldset>
 
@@ -177,21 +232,37 @@ li button {
   opacity: 0.7;
 }
 
+.pending {
+  margin-left: 0.5rem;
+  color: var(--pico-muted-color);
+}
+
 .actions {
   display: flex;
   gap: 0.5rem;
 }
 
-/* Below Pico's 768px breakpoint, where .grid would put each field on its own line:
-   delivery date and priority share one, and the tag, whose names vary in length, gets its own */
+/* Below Pico's 768px breakpoint, where .grid would put each field on its own line, delivery
+   date and priority still share one */
 @media (max-width: 767px) {
   .grid {
     grid-template-columns: 1fr 1fr;
   }
+}
 
-  .grid > :last-child {
-    grid-column: 1 / -1;
-  }
+/* The tags sit side by side, wrapping onto more lines as needed */
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.5rem;
+}
+
+.tags legend {
+  width: 100%;
+}
+
+.tags label {
+  margin: 0;
 }
 
 @media (max-width: 575px) {

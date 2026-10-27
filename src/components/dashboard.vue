@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// Main page: lists live projects, or prompts the user to create one. Shown for every route;
+// Main page: lists live projects, with archived ones in a section below, or prompts the user to
+// create one. Shown for every route;
 // the route says which form or details page, if any, is open in place of the list (see
 // router/index.ts).
 import { computed, onMounted, ref, watch } from 'vue'
@@ -23,14 +24,16 @@ import type { Task } from '@/types/task'
 const projectList = useProjectList()
 const taskList = useTaskList()
 const tagList = useTagList()
-const { projects, liveProjects } = storeToRefs(projectList)
+const { projects, liveProjects, archivedProjects } = storeToRefs(projectList)
 // The live projects with the sort and filters from ListControls applied
 const projectView = useProjectView()
 const { visibleProjects } = storeToRefs(projectView)
 const { tasks } = storeToRefs(taskList)
 const { tags } = storeToRefs(tagList)
 
-const tagOf = (project: Project) => tags.value.find((t) => t.id === project.tagId)
+// The project's tags, in the order it lists them
+const tagsOf = (project: Project) =>
+  project.tagIds.map((id) => tags.value.find((t) => t.id === id)).filter((t) => t !== undefined)
 
 // Ids of the expanded tiles, kept here so Expand all can reach every tile and so tiles stay
 // open after a visit to a project's page
@@ -50,10 +53,11 @@ function toggleAll() {
   expandedIds.value = allExpanded.value ? new Set() : new Set(visibleProjects.value.map((p) => p.id))
 }
 
-// Which form is open: none, a new/existing project, a new/existing task, or the tag list
+// Which form is open: none, a new/existing project, a new/existing task, or the tag list. The
+// optional fields carry a form's unsaved changes when it's reopened after a failed save.
 type Editor =
-  | { kind: 'project'; project?: Project }
-  | { kind: 'task'; task?: Task; projectIds?: string[] }
+  | { kind: 'project'; project?: Project; taskDueDates?: Record<string, string> }
+  | { kind: 'task'; task?: Task; projectIds?: string[]; deadlines?: Record<string, string> }
   | { kind: 'tags' }
   | null
 const editor = ref<Editor>(null)
@@ -147,26 +151,43 @@ watch(
 )
 
 // On failure the form is reopened with the unsaved project/task so no input is lost
-async function onSaveProject(project: Project) {
+// along with the due dates or deadlines it moved to fix date clashes
+async function onSaveProject(project: Project, taskDueDates: Record<string, string>) {
   error.value = null
   try {
-    await projectList.saveProject(project)
+    await projectList.archivingCompleted(async () => {
+      await taskList.setDueDates(taskDueDates)
+      await projectList.saveProject(project)
+    })
     await close()
   } catch (e) {
     error.value = `Couldn't save "${project.name}": ${messageOf(e)}`
-    editor.value = { kind: 'project', project }
+    editor.value = { kind: 'project', project, taskDueDates }
   }
 }
 
-async function onSaveTask(task: Task, projectIds: string[]) {
+async function onSaveTask(task: Task, projectIds: string[], deadlines: Record<string, string>) {
   error.value = null
   try {
-    await taskList.saveTask(task)
-    await projectList.assignTask(task.id, projectIds)
+    await projectList.archivingCompleted(async () => {
+      await projectList.setDeliveryDates(deadlines)
+      await taskList.saveTask(task)
+      await projectList.assignTask(task.id, projectIds)
+    })
     await close()
   } catch (e) {
     error.value = `Couldn't save "${task.name}": ${messageOf(e)}`
-    editor.value = { kind: 'task', task, projectIds }
+    editor.value = { kind: 'task', task, projectIds, deadlines }
+  }
+}
+
+// From a task's check mark; the list keeps the old state if saving fails
+async function onToggleTask(task: Task) {
+  error.value = null
+  try {
+    await projectList.archivingCompleted(() => taskList.saveTask({ ...task, completed: !task.completed }))
+  } catch (e) {
+    error.value = `Couldn't save "${task.name}": ${messageOf(e)}`
   }
 }
 </script>
@@ -193,6 +214,7 @@ async function onSaveTask(task: Task, projectIds: string[]) {
       :project="editor.project"
       :tasks="tasks"
       :tags="tags"
+      :task-due-dates="editor.taskDueDates"
       @save="onSaveProject"
       @cancel="close"
     />
@@ -202,6 +224,7 @@ async function onSaveTask(task: Task, projectIds: string[]) {
       :available-tasks="tasks"
       :projects="projects"
       :project-ids="editor.projectIds"
+      :deadlines="editor.deadlines"
       @save="onSaveTask"
       @cancel="close"
     />
@@ -211,9 +234,10 @@ async function onSaveTask(task: Task, projectIds: string[]) {
       v-else-if="page?.kind === 'project'"
       :project="page.project"
       :tasks="tasks"
-      :tag="tagOf(page.project)"
+      :tags="tagsOf(page.project)"
       @edit="open({ name: 'edit-project', params: { id: $event.id } })"
       @edit-task="open({ name: 'edit-task', params: { id: $event.id } })"
+      @toggle-task="onToggleTask"
     />
     <TaskDetails
       v-else-if="page?.kind === 'task'"
@@ -245,7 +269,7 @@ async function onSaveTask(task: Task, projectIds: string[]) {
       </div>
 
       <p v-if="liveProjects.length === 0">
-        All projects are completed. <a :href="router.resolve({ name: 'new-project' }).href" @click.prevent="open({ name: 'new-project' })">
+        All projects are archived. <a :href="router.resolve({ name: 'new-project' }).href" @click.prevent="open({ name: 'new-project' })">
           Create a new one?
         </a>
       </p>
@@ -264,13 +288,32 @@ async function onSaveTask(task: Task, projectIds: string[]) {
           :key="project.id"
           :project="project"
           :tasks="tasks"
-          :tag="tagOf(project)"
+          :tags="tagsOf(project)"
           :expanded="expandedIds.has(project.id)"
           @update:expanded="setExpanded(project.id, $event)"
           @edit="open({ name: 'edit-project', params: { id: $event.id } })"
           @edit-task="open({ name: 'edit-task', params: { id: $event.id } })"
+          @toggle-task="onToggleTask"
         />
       </div>
+
+      <details v-if="archivedProjects.length" class="archived">
+        <summary>Archived projects ({{ archivedProjects.length }})</summary>
+        <div class="project-grid">
+          <ProjectTile
+            v-for="project in archivedProjects"
+            :key="project.id"
+            :project="project"
+            :tasks="tasks"
+            :tags="tagsOf(project)"
+            :expanded="expandedIds.has(project.id)"
+            @update:expanded="setExpanded(project.id, $event)"
+            @edit="open({ name: 'edit-project', params: { id: $event.id } })"
+            @edit-task="open({ name: 'edit-task', params: { id: $event.id } })"
+            @toggle-task="onToggleTask"
+          />
+        </div>
+      </details>
     </template>
   </section>
 </template>
@@ -320,5 +363,15 @@ async function onSaveTask(task: Task, projectIds: string[]) {
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
   gap: 1rem;
   margin-top: 1.5rem;
+}
+
+.archived {
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--pico-muted-border-color);
+}
+
+.archived summary {
+  color: var(--pico-muted-color);
 }
 </style>

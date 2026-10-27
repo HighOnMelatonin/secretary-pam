@@ -16,7 +16,7 @@ export const SORTS = {
 } as const
 export type SortKey = keyof typeof SORTS
 
-// Stands for "projects with no tag" in the tag filter
+// Stands for "projects with no tags" in the tag filter
 export const NO_TAG = ''
 
 const STORAGE_KEY = 'pam.projectView'
@@ -87,9 +87,14 @@ export const useProjectView = defineStore('projectView', () => {
     'percent-complete': (a, b) => percentComplete(b) - percentComplete(a),
   }
 
+  const hasActiveTag = (project: Project) =>
+    project.tagIds.length === 0
+      ? activeTagIds.value.includes(NO_TAG)
+      : project.tagIds.some((id) => activeTagIds.value.includes(id))
+
   const visibleProjects = computed(() =>
     projectList.liveProjects
-      .filter((p) => activeTagIds.value.length === 0 || activeTagIds.value.includes(p.tagId ?? NO_TAG))
+      .filter((p) => activeTagIds.value.length === 0 || hasActiveTag(p))
       .filter((p) => priorities.value.length === 0 || priorities.value.includes(p.priority))
       .sort(compare[sort.value]),
   )

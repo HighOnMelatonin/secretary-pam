@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, toRaw } from 'vue'
 import { acceptHMRUpdate, defineStore } from 'pinia'
 import * as api from '@/api'
 import type { Task } from '@/types/task'
@@ -18,7 +18,16 @@ export const useTaskList = defineStore('taskList', () => {
     else tasks.value[index] = saved
   }
 
-  return { tasks, load, saveTask }
+  // Moves the due dates of the given tasks, by task id
+  async function setDueDates(dates: Record<string, string>) {
+    await Promise.all(
+      tasks.value
+        .filter((t) => t.id in dates)
+        .map((t) => saveTask({ ...structuredClone(toRaw(t)), dueDate: dates[t.id]! })),
+    )
+  }
+
+  return { tasks, load, saveTask, setDueDates }
 })
 
 // Lets Vite hot-swap this store when the file changes, instead of keeping the old one

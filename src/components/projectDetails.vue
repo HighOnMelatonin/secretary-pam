@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // Page for one project, using the whole width of the screen: its details and progress, its
 // timeline, every task with its description, and its reference links. Each task links to its own
-// page; the Edit buttons open the project's or a task's form.
+// page and its check mark marks it done or not done; the Edit buttons open the project's or a
+// task's form.
 import { computed } from 'vue'
 import ProjectTimeline from './projectTimeline.vue'
 import TaskRow from './taskRow.vue'
@@ -12,12 +13,13 @@ import type { Task } from '@/types/task'
 const props = defineProps<{
   project: Project
   tasks: Task[] // all tasks; the project's own are looked up by id
-  tag?: Tag // the project's tag, if it has one
+  tags: Tag[] // the project's tags
 }>()
 
 defineEmits<{
   edit: [project: Project]
   editTask: [task: Task]
+  toggleTask: [task: Task]
 }>()
 
 const today = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD in local time
@@ -37,7 +39,7 @@ const status = computed(() => completionStatus(props.project, props.tasks))
     </header>
 
     <div class="meta">
-      <span v-if="tag" class="tag project-tag">{{ tag.name }}</span>
+      <span v-for="tag in tags" :key="tag.id" class="tag project-tag">{{ tag.name }}</span>
       <span class="tag" :class="`priority-${project.priority}`">{{ project.priority }}</span>
       <span v-if="isOverdue" class="tag overdue">overdue</span>
       <small>Due {{ project.deliveryDate ?? 'whenever' }}</small>
@@ -65,6 +67,7 @@ const status = computed(() => completionStatus(props.project, props.tasks))
             :task="task"
             show-description
             @edit="$emit('editTask', task)"
+            @toggle-completed="$emit('toggleTask', task)"
           />
         </ul>
         <p v-else><small>No tasks in this project yet.</small></p>

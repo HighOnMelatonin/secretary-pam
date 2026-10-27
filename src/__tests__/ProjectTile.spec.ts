@@ -19,8 +19,8 @@ const project: Project = {
   links: [{ label: 'GitHub repo', url: 'https://example.com/repo' }],
 }
 
-const mountTile = (props: { tag?: { id: string; name: string }; expanded?: boolean } = {}) =>
-  mount(ProjectTile, { props: { project, tasks, ...props }, global: { plugins: [memoryRouter()] } })
+const mountTile = (props: { tags?: { id: string; name: string }[]; expanded?: boolean } = {}) =>
+  mount(ProjectTile, { props: { project, tasks, tags: [], ...props }, global: { plugins: [memoryRouter()] } })
 
 describe('ProjectTile', () => {
   it('starts collapsed, showing the summary but not the preview', () => {
@@ -64,10 +64,10 @@ describe('ProjectTile', () => {
     expect(wrapper.find('.preview').exists()).toBe(false)
   })
 
-  it("shows the project's tag only when it has one", () => {
+  it("shows each of the project's tags", () => {
     expect(mountTile().find('.project-tag').exists()).toBe(false)
-    const tagged = mountTile({ tag: { id: 'school', name: 'School (SUTD)' } })
-    expect(tagged.find('.project-tag').text()).toBe('School (SUTD)')
+    const tagged = mountTile({ tags: [{ id: 'school', name: 'School (SUTD)' }, { id: 'archive', name: 'Archive' }] })
+    expect(tagged.findAll('.project-tag').map((t) => t.text())).toEqual(['School (SUTD)', 'Archive'])
   })
 
   it("links each task to its page, without collapsing the tile when one is clicked", async () => {
@@ -99,6 +99,21 @@ describe('ProjectTile', () => {
     await wrapper.find('button[aria-label="Edit task Review slides"]').trigger('click')
 
     expect(wrapper.emitted('editTask')).toEqual([[tasks[1]]])
+    expect(wrapper.find('.preview').exists()).toBe(true)
+  })
+
+  it("emits toggleTask from a task's check mark, without collapsing the tile", async () => {
+    const wrapper = mountTile()
+    await wrapper.find('article').trigger('click')
+
+    const checks = wrapper.findAll('.preview .task .check')
+    expect(checks.map((c) => [c.attributes('aria-label'), c.attributes('aria-pressed')])).toEqual([
+      ['Done: Write report', 'true'],
+      ['Done: Review slides', 'false'],
+    ])
+    await checks[1]!.trigger('click')
+
+    expect(wrapper.emitted('toggleTask')).toEqual([[tasks[1]]])
     expect(wrapper.find('.preview').exists()).toBe(true)
   })
 

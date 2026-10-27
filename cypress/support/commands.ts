@@ -23,7 +23,11 @@ const apiPath = (resource: string, id: string) => `/api/${resource}/${encodeURIC
 Cypress.Commands.add('resetData', () => {
   for (const resource of ['projects', 'tasks', 'tags']) {
     cy.request<{ id: string }[]>(`/api/${resource}`).then(({ body }) => {
-      for (const item of body) cy.request('DELETE', apiPath(resource, item.id))
+      for (const item of body) {
+        // The built-in Archive tag can't be deleted, so it's put back to its own name instead
+        if (resource === 'tags' && item.id === 'archive') cy.request('PUT', apiPath('tags', 'archive'), { id: 'archive', name: 'Archive' })
+        else cy.request('DELETE', apiPath(resource, item.id))
+      }
     })
   }
 })

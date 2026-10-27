@@ -24,12 +24,12 @@ export const useTagList = defineStore('tagList', () => {
     tags.value.sort(byName)
   }
 
-  // The API also clears the tag from its projects, so the loaded projects are updated to match
+  // The API also removes the tag from its projects, so the loaded projects are updated to match
   async function deleteTag(id: string) {
     await api.remove('tags', id)
     tags.value = tags.value.filter((t) => t.id !== id)
     for (const project of projectList.projects) {
-      if (project.tagId === id) project.tagId = null
+      project.tagIds = project.tagIds.filter((tagId) => tagId !== id)
     }
   }
 

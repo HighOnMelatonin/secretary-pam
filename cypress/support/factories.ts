@@ -22,7 +22,7 @@ export const project = (id: string, fields: Partial<Project> = {}): Project => (
   taskIds: [],
   priority: 'medium',
   links: [],
-  tagId: null,
+  tagIds: [],
   ...fields,
 })
 

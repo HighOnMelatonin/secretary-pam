@@ -92,6 +92,33 @@
   color: var(--pico-del-color);
 }
 
+/* A task due after its project's delivery date, in the task and project forms, with a button
+   for each way to fix it */
+.date-error {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--pico-del-color);
+  border-radius: var(--pico-border-radius);
+}
+
+.date-error p {
+  margin-bottom: 0.5rem;
+  color: var(--pico-del-color);
+}
+
+.date-fixes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.date-fixes button {
+  width: auto;
+  margin: 0;
+  padding: 0.3rem 0.9rem;
+  font-size: 0.9rem;
+}
+
 /* Read out by screen readers but not shown, e.g. "(completed)" beside a struck-through task */
 .sr-only {
   position: absolute;

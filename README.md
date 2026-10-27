@@ -6,16 +6,16 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 
 ## Features
 
-- **Dashboard** of live projects. A project stays live until it has tasks and all of them are done.
+- **Dashboard** of live projects, with **archived projects** in a collapsible section below. When a project's last task is done, it gets the built-in **Archive** tag and moves to that section. Remove the tag in the project's form to bring it back; it stays live until its tasks go from not all done to all done again.
 - **Sort** the projects by delivery date, urgency (most or least urgent first) or % complete, and **filter** them by tag and urgency. The choices are remembered in the browser.
-- **Project tiles** show the project's tag, priority, due date, an overdue tag and task progress. Click a tile to expand a preview of its timeline, tasks and reference links, with an **Edit** button on each task. Each task's name links to its page, and **View more** opens the project's page. **Expand all** above the list opens every tile at once (and **Collapse all** closes them), and open tiles stay open after a visit to a project's page.
+- **Project tiles** show the project's tags, priority, due date, an overdue tag and task progress. Click a tile to expand a preview of its timeline, tasks and reference links, with an **Edit** button on each task. Click a task's check mark to mark it done or not done. Each task's name links to its page, and **View more** opens the project's page. **Expand all** above the list opens every tile at once (and **Collapse all** closes them), and open tiles stay open after a visit to a project's page.
 - **Project pages** (`/projects/:id`) use the whole screen for one project: its details and progress, its timeline, every task with its description, and its reference links.
 - **Task pages** (`/tasks/:id`) show a task's status, priority, due date and description, the projects it is in, and its related tasks. Relations are shown from both sides, so if A blocks B, B's page says it is blocked by A.
-- **Projects** have a name, description, delivery date, priority, an optional tag, tasks and reference links.
+- **Projects** have a name, description, delivery date, priority, any number of tags, tasks and reference links.
 - **Taskbar** hidden on the left edge of the screen. Hover over it to slide it out over the page, with buttons for **Tags**, **Add task** and **Add project**. On phones and other touch screens these are behind a **+** button in the bottom-right corner instead.
 - **Works on phones**: each form has its own address (such as `/projects/new` or `/tags`), so the back button or gesture closes it, and the forms keep Save and Cancel pinned to the bottom of the screen.
-- **Tags** such as School (SUTD), Work and Personal file projects by area of life. Add, rename and delete them from **Tags** in the taskbar. Renaming a tag renames it on every project, and deleting one leaves its projects untagged.
-- **Tasks** have a name, description, due date, priority, completed flag and relations to other tasks (blocks, blocked by, subtask of, parent of, related to). A task can be assigned to several projects, from either the project form or the task form.
+- **Tags** such as School (SUTD), Work and Personal file projects by area of life. Add, rename and delete them from **Tags** in the taskbar. Renaming a tag renames it on every project, and deleting one removes it from its projects. The Archive tag can be renamed but not deleted.
+- **Tasks** have a name, description, due date, priority, completed flag and relations to other tasks (blocks, blocked by, subtask of, parent of, related to). A task can be assigned to several projects, from either the project form or the task form. A task can't be due after the delivery date of a project it's in: once both dates are set, either form points out the clash, offers to extend the project's deadline or move the task's due date, and won't add the task or save until it's fixed.
 
 ## Tech stack
 
@@ -151,9 +151,11 @@ Vue app (Pinia stores)  ──fetch──▶  Worker /api/*  ──SQL──▶ 
 | `DELETE /api/tasks/:id` | Delete the task, removing it from projects and relations |
 | `GET /api/tags` | All tags, by name |
 | `PUT /api/tags/:id` | Create or rename the tag in the body; returns it |
-| `DELETE /api/tags/:id` | Delete the tag, leaving its projects untagged |
+| `DELETE /api/tags/:id` | Delete the tag, removing it from its projects (`400` for the built-in `archive` tag) |
 
 Bodies are the `Project`, `Task` and `Tag` objects from `src/types`. The Worker checks every field and answers `400` with an error message if something is invalid, including a reference to a task or tag that doesn't exist, or a tag name that another tag already has. Each save runs as one transaction, so a failed save changes nothing.
+
+The Worker doesn't check that a task's due date is on or before the delivery dates of its projects. Only the task and project forms enforce that, so a project or task saved straight through the API can break the rule. Its form will then refuse to save until the dates are fixed.
 
 ### Schema
 
@@ -161,16 +163,17 @@ Defined in the files in `migrations/`. Each field has its own column, and each a
 
 | Table | Holds | Columns |
 |---|---|---|
-| `projects` | `Project` | `id`, `name`, `description`, `delivery_date`, `priority`, `tag_id` → `tags`, `created_at`, `updated_at` |
+| `projects` | `Project` | `id`, `name`, `description`, `delivery_date`, `priority`, `created_at`, `updated_at` (and `tag_id`, unused since `0003`) |
 | `tasks` | `Task` | `id`, `name`, `description`, `due_date`, `priority`, `completed`, `created_at`, `updated_at` |
 | `project_tasks` | `Project.taskIds` | `project_id` → `projects`, `task_id` → `tasks`, `position` |
 | `project_links` | `Project.links` | `project_id` → `projects`, `position`, `label`, `url` |
+| `project_tags` | `Project.tagIds` | `project_id` → `projects`, `tag_id` → `tags`, `position` |
 | `task_relations` | `Task.relations` | `task_id` → `tasks`, `related_task_id` → `tasks`, `type`, `position` |
 | `tags` | `Tag` | `id`, `name`, `created_at`, `updated_at` |
 
 - `project_tasks` links projects to tasks. A task can be in several projects.
-- All foreign keys cascade on delete. Deleting a task removes it from its projects and from other tasks' relations, and deleting a project removes its links. The exception is `projects.tag_id`, which is set to `NULL` when its tag is deleted.
-- Tag names are unique, ignoring case. A new database starts with the tags School (SUTD), Work and Personal.
+- All foreign keys cascade on delete. Deleting a task removes it from its projects and from other tasks' relations, deleting a project removes its links and tags, and deleting a tag removes it from its projects.
+- Tag names are unique, ignoring case. A new database starts with the tags School (SUTD), Work and Personal, plus the built-in Archive tag (id `archive`).
 - `CHECK` constraints limit `priority` to `low`, `medium`, `high` or `urgent`; relation `type` to `blocks`, `blocked_by`, `subtask_of`, `parent_of` or `related_to`; and `completed` to `0` or `1`.
 - Dates are ISO 8601 strings such as `2026-10-25`. Timestamps are UTC, such as `2026-10-25T15:08:26.123Z`.
 

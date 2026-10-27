@@ -6,6 +6,7 @@ import { NO_TAG, useProjectView } from '../stores/projectView'
 import { useTagList } from '../stores/tagList'
 import { useTaskList } from '../stores/taskList'
 import { createEmptyProject, type Project } from '../types/project'
+import { ARCHIVE_TAG_ID } from '../types/tag'
 import { createEmptyTask, type Task } from '../types/task'
 import { fakeApi } from './fakeApi'
 
@@ -81,18 +82,20 @@ describe('projectList', () => {
     expect(store.projects).toEqual([project('p', { name: 'Renamed' })])
   })
 
-  describe('liveProjects', () => {
-    it('keeps projects with no tasks or unfinished tasks, and drops finished ones', () => {
+  describe('liveProjects and archivedProjects', () => {
+    it('splits the projects by the Archive tag, whether or not their tasks are done', () => {
       const taskList = useTaskList()
       taskList.tasks = [task('done', { completed: true }), task('open')]
       const store = useProjectList()
       store.projects = [
         project('empty'),
         project('finished', { taskIds: ['done'] }),
-        project('in progress', { taskIds: ['done', 'open'] }),
+        project('archived', { taskIds: ['done'], tagIds: ['work', ARCHIVE_TAG_ID] }),
+        project('shelved', { taskIds: ['open'], tagIds: [ARCHIVE_TAG_ID] }),
       ]
 
-      expect(store.liveProjects.map((p) => p.id)).toEqual(['empty', 'in progress'])
+      expect(store.liveProjects.map((p) => p.id)).toEqual(['empty', 'finished'])
+      expect(store.archivedProjects.map((p) => p.id)).toEqual(['archived', 'shelved'])
     })
 
     it('sorts by delivery date, soonest first, with undated projects last', () => {
@@ -106,15 +109,50 @@ describe('projectList', () => {
       expect(store.liveProjects.map((p) => p.id)).toEqual(['soon', 'late', 'none'])
     })
 
-    it('updates when a task is completed', () => {
+  })
+
+  describe('archivingCompleted', () => {
+    it('archives the projects the change completes, keeping their other tags', async () => {
+      const api = fakeApi()
+      const taskList = useTaskList()
+      taskList.tasks = [task('t'), task('u')]
+      const store = useProjectList()
+      store.projects = [
+        project('p', { taskIds: ['t'], tagIds: ['work'] }),
+        project('q', { taskIds: ['t', 'u'] }),
+        project('r'),
+      ]
+
+      await store.archivingCompleted(() => taskList.saveTask(task('t', { completed: true })))
+
+      expect(api.requests).toEqual(['PUT /api/tasks/t', 'PUT /api/projects/p'])
+      expect(store.projects.map((p) => p.tagIds)).toEqual([['work', ARCHIVE_TAG_ID], [], []])
+      expect(store.archivedProjects.map((p) => p.id)).toEqual(['p'])
+    })
+
+    it('leaves a completed project that was taken out of the archive alone', async () => {
+      const api = fakeApi()
+      const taskList = useTaskList()
+      taskList.tasks = [task('t', { completed: true })]
+      const store = useProjectList()
+      store.projects = [project('p', { taskIds: ['t'] })]
+
+      await store.archivingCompleted(() => taskList.saveTask(task('t', { name: 'Renamed', completed: true })))
+
+      expect(api.requests).toEqual(['PUT /api/tasks/t'])
+      expect(store.projects[0]!.tagIds).toEqual([])
+    })
+
+    it('archives nothing when the change fails', async () => {
+      const api = fakeApi()
+      api.failWith = 'D1 is down'
       const taskList = useTaskList()
       taskList.tasks = [task('t')]
       const store = useProjectList()
       store.projects = [project('p', { taskIds: ['t'] })]
-      expect(store.liveProjects).toHaveLength(1)
 
-      taskList.tasks = [task('t', { completed: true })]
-      expect(store.liveProjects).toHaveLength(0)
+      await expect(store.archivingCompleted(() => taskList.saveTask(task('t', { completed: true })))).rejects.toThrow()
+      expect(store.projects[0]!.tagIds).toEqual([])
     })
   })
 
@@ -176,13 +214,13 @@ describe('tagList', () => {
     const store = useTagList()
     await store.load()
     const projectList = useProjectList()
-    projectList.projects = [project('p', { tagId: 'w' }), project('q', { tagId: 'other' })]
+    projectList.projects = [project('p', { tagIds: ['other', 'w'] }), project('q', { tagIds: ['other'] })]
 
     await store.deleteTag('w')
 
     expect(api.requests).toContain('DELETE /api/tags/w')
     expect(store.tags).toEqual([])
-    expect(projectList.projects.map((p) => p.tagId)).toEqual([null, 'other'])
+    expect(projectList.projects.map((p) => p.tagIds)).toEqual([['other'], ['other']])
   })
 
   it('keeps the tag when the API fails to delete it', async () => {
@@ -205,10 +243,10 @@ describe('projectView', () => {
       { id: 'school', name: 'School' },
     ]
     useProjectList().projects = [
-      project('d', { priority: 'urgent', tagId: 'school' }),
+      project('d', { priority: 'urgent', tagIds: ['school'] }),
       project('c', { deliveryDate: '2027-03-01', priority: 'low', taskIds: ['done', 'open1'] }),
-      project('b', { deliveryDate: '2027-02-01', priority: 'urgent', tagId: 'work', taskIds: ['open1', 'open2'] }),
-      project('a', { deliveryDate: '2027-01-01', priority: 'medium', tagId: 'work', taskIds: ['done', 'open1', 'open2'] }),
+      project('b', { deliveryDate: '2027-02-01', priority: 'urgent', tagIds: ['work', 'school'], taskIds: ['open1', 'open2'] }),
+      project('a', { deliveryDate: '2027-01-01', priority: 'medium', tagIds: ['work'], taskIds: ['done', 'open1', 'open2'] }),
     ]
     return useProjectView()
   }
@@ -231,9 +269,9 @@ describe('projectView', () => {
   it('filters by any of the chosen tags, including no tag', () => {
     const view = setUp()
     view.toggleTag('school')
-    expect(ids(view)).toEqual(['d'])
+    expect(ids(view)).toEqual(['b', 'd'])
     view.toggleTag(NO_TAG)
-    expect(ids(view)).toEqual(['c', 'd'])
+    expect(ids(view)).toEqual(['b', 'c', 'd'])
     view.toggleTag('school')
     expect(ids(view)).toEqual(['c'])
   })

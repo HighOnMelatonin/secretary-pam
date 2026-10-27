@@ -5,7 +5,7 @@ import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useProjectList } from '@/stores/projectList'
 import { useTagList } from '@/stores/tagList'
-import { createEmptyTag, type Tag } from '@/types/tag'
+import { ARCHIVE_TAG_ID, createEmptyTag, type Tag } from '@/types/tag'
 
 defineEmits<{
   close: []
@@ -30,7 +30,7 @@ async function attempt(action: () => Promise<void>, failure: string) {
   }
 }
 
-const projectCount = (tag: Tag) => projects.value.filter((p) => p.tagId === tag.id).length
+const projectCount = (tag: Tag) => projects.value.filter((p) => p.tagIds.includes(tag.id)).length
 const projectsText = (count: number) => `${count} ${count === 1 ? 'project' : 'projects'}`
 
 // Names typed into the list but not saved yet, by tag id
@@ -48,7 +48,7 @@ async function rename(tag: Tag) {
 
 async function remove(tag: Tag) {
   const count = projectCount(tag)
-  if (count > 0 && !confirm(`Delete "${tag.name}"? ${projectsText(count)} will no longer have a tag.`)) return
+  if (count > 0 && !confirm(`Delete "${tag.name}"? It will be removed from ${projectsText(count)}.`)) return
   if (await attempt(() => tagList.deleteTag(tag.id), `Couldn't delete "${tag.name}"`)) {
     delete drafts.value[tag.id]
   }
@@ -83,9 +83,15 @@ async function add() {
             @input="drafts[tag.id] = ($event.target as HTMLInputElement).value"
           />
           <button type="submit" :disabled="!canRename(tag)">Rename</button>
-          <button type="button" class="secondary outline" @click="remove(tag)">Delete</button>
+          <button v-if="tag.id !== ARCHIVE_TAG_ID" type="button" class="secondary outline" @click="remove(tag)">
+            Delete
+          </button>
         </form>
-        <small>Used by {{ projectsText(projectCount(tag)) }}</small>
+        <small>
+          Used by {{ projectsText(projectCount(tag)) }}<template v-if="tag.id === ARCHIVE_TAG_ID">.
+            Built in: completed projects get it automatically, and removing it from a project brings the
+            project back to the live list.</template>
+        </small>
       </li>
     </ul>
     <p v-else><small>No tags yet.</small></p>
