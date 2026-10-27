@@ -389,3 +389,109 @@ describe('Dashboard editing a task', () => {
     expect(missing.vm.$route.fullPath).toBe('/')
   })
 })
+
+describe('Dashboard details pages', () => {
+  const path = (wrapper: ReturnType<typeof mount>) => wrapper.vm.$route.fullPath
+  const pageHeading = (wrapper: ReturnType<typeof mount>) => wrapper.find('.page-header h2').text()
+  const relations = (wrapper: ReturnType<typeof mount>) =>
+    wrapper.findAll('.related li').map((li) => li.findAll('li > *').map((part) => part.text()).join(' '))
+
+  const thesis = () =>
+    fakeApi({
+      tasks: [
+        task('t1', {
+          name: 'Write report',
+          description: 'Chapters 1 to 3',
+          dueDate: '2026-11-02',
+          relations: [{ taskId: 't2', type: 'blocks' }],
+        }),
+        task('t2', { name: 'Review slides', completed: true }),
+      ],
+      projects: [
+        project('p', {
+          name: 'Thesis',
+          description: 'Final year thesis',
+          taskIds: ['t1', 't2'],
+          links: [{ label: 'GitHub repo', url: 'https://example.com/repo' }],
+        }),
+      ],
+    })
+
+  it("opens a project's page from View more, with every task's description, and back returns to the list", async () => {
+    thesis()
+    const wrapper = await mountDashboard()
+
+    await wrapper.find('a[aria-label="View more of Thesis"]').trigger('click')
+    await flushPromises()
+    expect(path(wrapper)).toBe('/projects/p')
+    expect(pageHeading(wrapper)).toBe('Thesis')
+    expect(wrapper.text()).toContain('Final year thesis')
+    expect(wrapper.text()).toContain('1 of 2 tasks completed')
+    expect(wrapper.find('.timeline').text()).toContain('Write report')
+    expect(wrapper.find('.task-description').text()).toBe('Chapters 1 to 3')
+    expect(wrapper.find('a[href="https://example.com/repo"]').text()).toBe('GitHub repo')
+
+    wrapper.vm.$router.back()
+    await flushPromises()
+    expect(path(wrapper)).toBe('/')
+    expect(tileNames(wrapper)).toEqual(['Thesis'])
+  })
+
+  it("goes from a project's page to a task's page, which shows its projects and both sides of its relations", async () => {
+    thesis()
+    const wrapper = await mountDashboard('/projects/p')
+
+    await wrapper.find('.task .task-name[href="/tasks/t2"]').trigger('click')
+    await flushPromises()
+    expect(path(wrapper)).toBe('/tasks/t2')
+    expect(pageHeading(wrapper)).toBe('Review slides (completed)')
+    expect(wrapper.find('.meta').text()).toContain('✓ done')
+    expect(wrapper.text()).toContain('No description.')
+    // Recorded on Write report, so read from this side
+    expect(relations(wrapper)).toEqual(['blocked by Write report'])
+
+    await wrapper.find('a[href="/tasks/t1"]').trigger('click')
+    await flushPromises()
+    expect(pageHeading(wrapper)).toBe('Write report')
+    expect(relations(wrapper)).toEqual(['blocks Review slides (completed)'])
+
+    await wrapper.find('a[href="/projects/p"]').trigger('click')
+    await flushPromises()
+    expect(pageHeading(wrapper)).toBe('Thesis')
+  })
+
+  it("opens a task's form from its page, and saving returns to the page with the changes", async () => {
+    const api = thesis()
+    const wrapper = await mountDashboard('/tasks/t1')
+
+    await button(wrapper, 'Edit').trigger('click')
+    await flushPromises()
+    expect(path(wrapper)).toBe('/tasks/t1/edit')
+    await wrapper.find('input[placeholder="Task"]').setValue('Write final report')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(api.data.tasks[0]!.name).toBe('Write final report')
+    expect(path(wrapper)).toBe('/tasks/t1')
+    expect(pageHeading(wrapper)).toBe('Write final report')
+  })
+
+  it("opens a project's form from its page, and cancelling returns to the page", async () => {
+    thesis()
+    const wrapper = await mountDashboard('/projects/p')
+
+    await wrapper.find('.page-header button').trigger('click')
+    await flushPromises()
+    expect(path(wrapper)).toBe('/projects/p/edit')
+    await button(wrapper, 'Cancel').trigger('click')
+    await flushPromises()
+    expect(path(wrapper)).toBe('/projects/p')
+  })
+
+  it('goes to the list for a page whose project or task does not exist', async () => {
+    thesis()
+    expect(path(await mountDashboard('/projects/missing'))).toBe('/')
+    thesis()
+    expect(path(await mountDashboard('/tasks/missing'))).toBe('/')
+  })
+})

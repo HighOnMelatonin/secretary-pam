@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // Main page: lists live projects, or prompts the user to create one. Shown for every route;
-// the route says which form, if any, is open in place of the list (see router/index.ts).
-import { onMounted, ref, watch } from 'vue'
+// the route says which form or details page, if any, is open in place of the list (see
+// router/index.ts).
+import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import ProjectForm from './project.vue'
@@ -9,6 +10,8 @@ import TaskForm from './task.vue'
 import TagManager from './tags.vue'
 import Taskbar from './taskbar.vue'
 import ProjectTile from './projectTile.vue'
+import ProjectDetails from './projectDetails.vue'
+import TaskDetails from './taskDetails.vue'
 import ListControls from './listControls.vue'
 import { useProjectView } from '@/stores/projectView'
 import { useProjectList } from '@/stores/projectList'
@@ -61,19 +64,36 @@ function editorForRoute(): Editor {
   }
 }
 
-// Whether the open form was opened from the dashboard, so closing it can go back in history
-// rather than adding the dashboard again (which would make back reopen the form)
-let openedFromDashboard = false
+// Which details page is open: a project's or a task's. Follows the stores, so a page shows
+// changes saved from its forms.
+type Page = { kind: 'project'; project: Project } | { kind: 'task'; task: Task } | null
+const page = computed<Page>(() => {
+  if (route.name === 'project') {
+    const project = projects.value.find((p) => p.id === route.params.id)
+    return project ? { kind: 'project', project } : null
+  }
+  if (route.name === 'task') {
+    const task = tasks.value.find((t) => t.id === route.params.id)
+    return task ? { kind: 'task', task } : null
+  }
+  return null
+})
 
-// Opens a form; switching from one form to another replaces it, so back always leads to the list
+// Whether the open form was opened from within the app (the list or a details page), so
+// closing it can go back in history to that page rather than adding the dashboard again
+// (which would make back reopen the form)
+let openedInApp = false
+
+// Opens a form; switching from one form to another replaces it, so back always leads to the
+// page the first form was opened from
 function open(to: RouteLocationRaw) {
   if (editor.value) return router.replace(to)
-  openedFromDashboard = true
+  openedInApp = true
   return router.push(to)
 }
 
 function close() {
-  if (openedFromDashboard) return router.back()
+  if (openedInApp) return router.back()
   return router.replace({ name: 'dashboard' })
 }
 
@@ -95,15 +115,15 @@ onMounted(async () => {
   }
 })
 
-// Follows the route once the data has loaded, since an edit link needs its project or task.
-// A link to one that doesn't exist goes back to the list.
+// Follows the route once the data has loaded, since an edit link or details page needs its
+// project or task. A link to one that doesn't exist goes back to the list.
 watch(
   [() => route.fullPath, loading],
   () => {
     if (loading.value) return
-    if (route.name === 'dashboard') openedFromDashboard = false
     editor.value = editorForRoute()
-    if (route.name !== 'dashboard' && !editor.value) router.replace({ name: 'dashboard' })
+    if (!editor.value) openedInApp = false
+    if (route.name !== 'dashboard' && !editor.value && !page.value) router.replace({ name: 'dashboard' })
   },
   { immediate: true },
 )
@@ -168,6 +188,22 @@ async function onSaveTask(task: Task, projectIds: string[]) {
       @cancel="close"
     />
     <TagManager v-else-if="editor?.kind === 'tags'" @close="close" />
+
+    <ProjectDetails
+      v-else-if="page?.kind === 'project'"
+      :project="page.project"
+      :tasks="tasks"
+      :tag="tagOf(page.project)"
+      @edit="open({ name: 'edit-project', params: { id: $event.id } })"
+      @edit-task="open({ name: 'edit-task', params: { id: $event.id } })"
+    />
+    <TaskDetails
+      v-else-if="page?.kind === 'task'"
+      :task="page.task"
+      :tasks="tasks"
+      :projects="projects"
+      @edit="open({ name: 'edit-task', params: { id: $event.id } })"
+    />
 
     <template v-else-if="projects.length === 0">
       <article class="empty">

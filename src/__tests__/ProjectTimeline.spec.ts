@@ -3,11 +3,12 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ProjectTimeline from '../components/projectTimeline.vue'
 import { createEmptyTask, type Task } from '../types/task'
+import { memoryRouter } from './helpers'
 
 const task = (id: string, fields: Partial<Task> = {}): Task => ({ ...createEmptyTask(), id, name: id, ...fields })
 
 const mountTimeline = (tasks: Task[], deliveryDate: string | null = null) =>
-  mount(ProjectTimeline, { props: { tasks, deliveryDate } })
+  mount(ProjectTimeline, { props: { tasks, deliveryDate }, global: { plugins: [memoryRouter()] } })
 
 // Each stop's date (or "No due date") and labels, then its tasks with their check marks
 const stopsOf = (wrapper: ReturnType<typeof mountTimeline>) =>

@@ -86,6 +86,33 @@ describe('Projects', () => {
     })
   })
 
+  it("opens a project's page from View more, then a task's page from its link, and back retraces the way", () => {
+    cy.seed({
+      tasks: [
+        task('t1', { name: 'Write report', description: 'Chapters 1 to 3', relations: [{ taskId: 't2', type: 'blocks' }] }),
+        task('t2', { name: 'Review slides' }),
+      ],
+      projects: [project('p', { name: 'Thesis', description: 'Final year project', taskIds: ['t1', 't2'] })],
+    })
+    cy.visit('/')
+
+    tile('Thesis').contains('a', 'View more').click()
+    cy.location('pathname').should('eq', '/projects/p')
+    cy.contains('.page-header h2', 'Thesis')
+    cy.contains('Final year project')
+    cy.contains('.task', 'Write report').should('contain', 'Chapters 1 to 3')
+
+    cy.contains('.task a', 'Review slides').click()
+    cy.location('pathname').should('eq', '/tasks/t2')
+    cy.contains('.page-header h2', 'Review slides')
+    cy.contains('.related li', 'blocked by').should('contain', 'Write report')
+
+    cy.go('back')
+    cy.contains('.page-header h2', 'Thesis')
+    cy.go('back')
+    tile('Thesis').should('be.visible')
+  })
+
   it("shows the project's tasks on a timeline, in date order around today and the delivery date", () => {
     cy.seed({
       tasks: [

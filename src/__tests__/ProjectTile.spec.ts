@@ -4,6 +4,7 @@ import { mount } from '@vue/test-utils'
 import ProjectTile from '../components/projectTile.vue'
 import { createEmptyProject, type Project } from '../types/project'
 import { createEmptyTask, type Task } from '../types/task'
+import { memoryRouter } from './helpers'
 
 const tasks: Task[] = [
   { ...createEmptyTask(), id: 't1', name: 'Write report', completed: true },
@@ -18,7 +19,8 @@ const project: Project = {
   links: [{ label: 'GitHub repo', url: 'https://example.com/repo' }],
 }
 
-const mountTile = () => mount(ProjectTile, { props: { project, tasks } })
+const mountTile = (props: { tag?: { id: string; name: string } } = {}) =>
+  mount(ProjectTile, { props: { project, tasks, ...props }, global: { plugins: [memoryRouter()] } })
 
 describe('ProjectTile', () => {
   it('starts collapsed, showing the summary but not the preview', () => {
@@ -38,7 +40,7 @@ describe('ProjectTile', () => {
     expect(preview.text()).toContain('Review slides')
     expect(preview.text()).toContain('Due 2026-11-02')
     expect(preview.text()).not.toContain('Not in this project')
-    expect(preview.find('a').attributes('href')).toBe('https://example.com/repo')
+    expect(preview.find('a[target="_blank"]').attributes('href')).toBe('https://example.com/repo')
     expect(preview.find('.timeline').text()).toContain('Review slides')
     expect(wrapper.find('.tile-toggle').attributes('aria-expanded')).toBe('true')
   })
@@ -53,8 +55,31 @@ describe('ProjectTile', () => {
 
   it("shows the project's tag only when it has one", () => {
     expect(mountTile().find('.project-tag').exists()).toBe(false)
-    const tagged = mount(ProjectTile, { props: { project, tasks, tag: { id: 'school', name: 'School (SUTD)' } } })
+    const tagged = mountTile({ tag: { id: 'school', name: 'School (SUTD)' } })
     expect(tagged.find('.project-tag').text()).toBe('School (SUTD)')
+  })
+
+  it("links each task to its page, without collapsing the tile when one is clicked", async () => {
+    const wrapper = mountTile()
+    await wrapper.find('article').trigger('click')
+
+    const links = wrapper.findAll('.preview .task .task-name')
+    expect(links.map((a) => [a.text(), a.attributes('href')])).toEqual([
+      ['Write report (completed)', '/tasks/t1'],
+      ['Review slides', '/tasks/t2'],
+    ])
+    await links[1]!.trigger('click')
+    expect(wrapper.find('.preview').exists()).toBe(true)
+  })
+
+  it('links to the project page from View more, without expanding', async () => {
+    const wrapper = mountTile()
+    const viewMore = wrapper.find('a[aria-label="View more of Thesis"]')
+    expect(viewMore.text()).toBe('View more')
+    expect(viewMore.attributes('href')).toBe('/projects/p1')
+
+    await viewMore.trigger('click')
+    expect(wrapper.find('.preview').exists()).toBe(false)
   })
 
   it("emits editTask from a task's Edit button, without collapsing the tile", async () => {

@@ -3,9 +3,15 @@ import type { DOMWrapper, VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { routes } from '../router'
 
-// A router with the app's routes, kept in memory rather than the address bar, at `path`
+// A router with the app's routes, kept in memory rather than the address bar. Enough for
+// components that only render links; see routerAt for ones that read the route.
+export function memoryRouter() {
+  return createRouter({ history: createMemoryHistory(), routes })
+}
+
+// A memory router at `path`
 export async function routerAt(path = '/') {
-  const router = createRouter({ history: createMemoryHistory(), routes })
+  const router = memoryRouter()
   await router.push(path)
   return router
 }
