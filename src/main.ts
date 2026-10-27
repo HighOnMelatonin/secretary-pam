@@ -7,8 +7,6 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import Task from './components/task.vue'
-import dashboard from './components/dashboard.vue'
-import project from './components/project.vue'
 
 const app = createApp(App)
 
