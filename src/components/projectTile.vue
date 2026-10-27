@@ -1,8 +1,10 @@
 <script setup lang="ts">
 // Dashboard tile for one project. Clicking it expands a preview of the project's timeline, tasks
-// and links, with an Edit button on each task; the Edit button at the top opens the project form.
+// and links; each task links to its own page and has an Edit button. At the top, View more opens
+// the project's page and Edit opens the project form.
 import { computed, ref } from 'vue'
 import ProjectTimeline from './projectTimeline.vue'
+import TaskRow from './taskRow.vue'
 import { completionStatus, resolveTasks, type Project } from '@/types/project'
 import type { Tag } from '@/types/tag'
 import type { Task } from '@/types/task'
@@ -55,7 +57,17 @@ function onTileClick(event: MouseEvent) {
           {{ project.name }}
         </button>
       </h3>
-      <button type="button" class="secondary outline small" @click="$emit('edit', project)">Edit</button>
+      <div class="tile-actions">
+        <RouterLink
+          :to="{ name: 'project', params: { id: project.id } }"
+          role="button"
+          class="secondary outline small"
+          :aria-label="`View more of ${project.name}`"
+        >
+          View more
+        </RouterLink>
+        <button type="button" class="secondary outline small" @click="$emit('edit', project)">Edit</button>
+      </div>
     </div>
 
     <div class="meta">
@@ -69,38 +81,20 @@ function onTileClick(event: MouseEvent) {
 
     <div v-if="expanded" :id="previewId" class="preview">
       <section class="timeline-section">
-        <h4>Timeline</h4>
+        <h4 class="section-heading">Timeline</h4>
         <ProjectTimeline :tasks="projectTasks" :delivery-date="project.deliveryDate" />
       </section>
 
       <section>
-        <h4>Tasks</h4>
+        <h4 class="section-heading">Tasks</h4>
         <ul v-if="projectTasks.length" class="plain-list">
-          <li v-for="task in projectTasks" :key="task.id" class="task" :class="{ done: task.completed }">
-            <span class="check" aria-hidden="true">{{ task.completed ? '✓' : '○' }}</span>
-            <span class="task-body">
-              <span class="task-name">
-                {{ task.name }}<span v-if="task.completed" class="sr-only"> (completed)</span>
-              </span>
-              <span class="tag" :class="`priority-${task.priority}`">{{ task.priority }}</span>
-              <span v-if="!task.completed && isOverdue(task.dueDate)" class="tag overdue">overdue</span>
-              <small v-if="task.dueDate">Due {{ task.dueDate }}</small>
-            </span>
-            <button
-              type="button"
-              class="secondary outline small task-edit"
-              :aria-label="`Edit task ${task.name}`"
-              @click="$emit('editTask', task)"
-            >
-              Edit
-            </button>
-          </li>
+          <TaskRow v-for="task in projectTasks" :key="task.id" :task="task" @edit="$emit('editTask', task)" />
         </ul>
         <p v-else><small>No tasks in this project yet.</small></p>
       </section>
 
       <section v-if="project.links.length">
-        <h4>Reference links</h4>
+        <h4 class="section-heading">Reference links</h4>
         <ul class="plain-list">
           <li v-for="link in project.links" :key="link.url">
             <a :href="link.url" target="_blank" rel="noopener noreferrer">{{ link.label }}</a>
@@ -146,11 +140,20 @@ function onTileClick(event: MouseEvent) {
   gap: 1rem;
 }
 
+/* The name wraps, rather than pushing View more and Edit off the tile */
 .tile-header h3 {
+  min-width: 0;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
-.tile-header button {
+.tile-actions {
+  display: flex;
+  flex: none;
+  gap: 0.5rem;
+}
+
+.tile-actions > * {
   width: auto;
   margin: 0;
 }
@@ -184,22 +187,9 @@ function onTileClick(event: MouseEvent) {
   transform: rotate(90deg);
 }
 
-button.small {
+.small {
   padding: 0.2rem 0.75rem;
   font-size: 0.85rem;
-}
-
-.meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-block: 0.75rem;
-}
-
-.meta small,
-.task small {
-  color: var(--pico-muted-color);
 }
 
 .description {
@@ -232,59 +222,6 @@ button.small {
 .timeline-section {
   grid-column: 1 / -1;
   min-width: 0; /* so a long timeline scrolls inside the tile instead of widening it */
-}
-
-.preview h4 {
-  margin-bottom: 0.75rem;
-  font-size: 0.85rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--pico-muted-color);
-}
-
-.plain-list {
-  margin: 0;
-  padding: 0;
-}
-
-.plain-list li {
-  list-style: none;
-  margin-bottom: 0.5rem;
-}
-
-/* The icon keeps its own column; the name, badges and due date wrap beside it on narrow
-   screens rather than under it */
-.task {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-}
-
-.check {
-  flex: none;
-  width: 1.25rem;
-  color: var(--pico-muted-color);
-}
-
-/* At the end of the row, however long the task's details are */
-.task-edit {
-  flex: none;
-  align-self: center;
-  width: auto;
-  margin: 0 0 0 auto;
-}
-
-.task-body {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.25rem 0.5rem;
-  min-width: 0;
-}
-
-.task.done .task-name {
-  text-decoration: line-through;
-  opacity: 0.7;
 }
 
 .project-tile footer {

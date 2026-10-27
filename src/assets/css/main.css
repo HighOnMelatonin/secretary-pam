@@ -102,6 +102,66 @@
   white-space: nowrap;
 }
 
+/* Small uppercase heading above a section of a project tile or details page */
+.section-heading {
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pico-muted-color);
+}
+
+/* A list without bullets or indent, e.g. a project's tasks or reference links */
+.plain-list {
+  margin: 0;
+  padding: 0;
+}
+
+.plain-list li {
+  list-style: none;
+  margin-bottom: 0.5rem;
+}
+
+/* A row of a project's or task's badges (tag, priority, overdue) and its due date */
+.meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-block: 0.75rem;
+}
+
+.meta small {
+  color: var(--pico-muted-color);
+}
+
+/* Project and task pages: the link back to the list above the title, and the title with
+   its Edit button */
+.back-link {
+  display: inline-block;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+  color: var(--pico-muted-color);
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.page-header h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.page-header button {
+  flex: none;
+  width: auto;
+  margin: 0;
+}
+
 /* Small pill used for priorities and status tags */
 .tag {
   display: inline-block;
@@ -180,7 +240,8 @@
 
 /* Touch screens: buttons at least 44px tall, the recommended size for a fingertip */
 @media (pointer: coarse) {
-  button {
+  button,
+  [role='button'] {
     min-height: 2.75rem;
   }
 }

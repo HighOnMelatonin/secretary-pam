@@ -1,8 +1,9 @@
 <script setup lang="ts">
-// A project's tasks laid out along their due dates, shown in the expanded project tile. Tasks
-// due on the same day share a stop; today and the delivery date get a stop of their own when
-// no task falls on them, and tasks with no due date are gathered at the end. Runs left to right,
-// scrolling sideways when crowded, and top to bottom on phones.
+// A project's tasks laid out along their due dates, shown in the expanded project tile and on the
+// project page, with each task linking to its own page. Tasks due on the same day share a stop;
+// today and the delivery date get a stop of their own when no task falls on them, and tasks with
+// no due date are gathered at the end. Runs left to right, scrolling sideways when crowded, and
+// top to bottom on phones.
 import { computed, onMounted, ref } from 'vue'
 import type { Task } from '@/types/task'
 
@@ -91,9 +92,9 @@ onMounted(() => {
       <ul v-if="stop.tasks.length" class="stop-tasks">
         <li v-for="task in stop.tasks" :key="task.id" :class="{ done: task.completed }">
           <span class="check" aria-hidden="true">{{ task.completed ? '✓' : '○' }}</span>
-          <span class="task-name">
+          <RouterLink :to="{ name: 'task', params: { id: task.id } }" class="task-name">
             {{ task.name }}<span v-if="task.completed" class="sr-only"> (completed)</span>
-          </span>
+          </RouterLink>
         </li>
       </ul>
     </li>

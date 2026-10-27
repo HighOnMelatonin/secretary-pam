@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { completionStatus, createEmptyProject, resolveTasks, type Project } from '../types/project'
-import { createEmptyTask, type Task } from '../types/task'
+import { createEmptyTask, relatedTasks, type Task, type TaskRelation } from '../types/task'
 
 const task = (id: string, completed = false): Task => ({ ...createEmptyTask(), id, name: id, completed })
 const projectWith = (taskIds: string[]): Project => ({ ...createEmptyProject(), taskIds })
@@ -71,5 +71,40 @@ describe('completionStatus', () => {
 
   it('is 0 of 0 for a project without tasks', () => {
     expect(completionStatus(projectWith([]), [])).toEqual({ completed: 0, total: 0 })
+  })
+})
+
+describe('relatedTasks', () => {
+  const withRelations = (id: string, relations: TaskRelation[]): Task => ({ ...task(id), relations })
+  const summary = (id: string, tasks: Task[]) =>
+    relatedTasks(tasks.find((t) => t.id === id)!, tasks).map((r) => `${r.type} ${r.task.id}`)
+
+  it("lists the task's own relations", () => {
+    const tasks = [withRelations('a', [{ taskId: 'b', type: 'blocks' }]), task('b')]
+    expect(summary('a', tasks)).toEqual(['blocks b'])
+  })
+
+  it('turns round the relations other tasks record with it', () => {
+    const tasks = [
+      withRelations('a', [{ taskId: 'c', type: 'blocks' }]),
+      withRelations('b', [{ taskId: 'c', type: 'parent_of' }]),
+      withRelations('c', [{ taskId: 'd', type: 'related_to' }]),
+      withRelations('d', []),
+    ]
+    expect(summary('c', tasks)).toEqual(['related_to d', 'blocked_by a', 'subtask_of b'])
+    expect(summary('d', tasks)).toEqual(['related_to c'])
+  })
+
+  it('lists a relation recorded on both tasks once', () => {
+    const tasks = [
+      withRelations('a', [{ taskId: 'b', type: 'blocks' }]),
+      withRelations('b', [{ taskId: 'a', type: 'blocked_by' }]),
+    ]
+    expect(summary('a', tasks)).toEqual(['blocks b'])
+    expect(summary('b', tasks)).toEqual(['blocked_by a'])
+  })
+
+  it('skips relations to tasks that no longer exist', () => {
+    expect(summary('a', [withRelations('a', [{ taskId: 'gone', type: 'blocks' }])])).toEqual([])
   })
 })

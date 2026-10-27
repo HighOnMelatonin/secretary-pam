@@ -12,6 +12,15 @@ export interface TaskRelation {
   type: RelationType // how this task relates to the other task
 }
 
+// The same relation read from the other task's side, e.g. A blocks B means B is blocked by A
+const INVERSE: Record<RelationType, RelationType> = {
+  blocks: 'blocked_by',
+  blocked_by: 'blocks',
+  subtask_of: 'parent_of',
+  parent_of: 'subtask_of',
+  related_to: 'related_to',
+}
+
 export interface Task {
   id: string
   name: string
@@ -33,3 +42,29 @@ export function createEmptyTask(): Task {
     completed: false,
   }
 }
+
+export interface RelatedTask {
+  type: RelationType // how `task` relates to the other task
+  task: Task // the other task
+}
+
+// The task's own relations, plus the ones other tasks record with it turned round to read from
+// this task, since a relation is only stored on the task it was added to. Each pairing appears
+// once, and relations to tasks that no longer exist are skipped.
+export function relatedTasks(task: Task, tasks: Task[]): RelatedTask[] {
+  const byId = new Map(tasks.map((t) => [t.id, t]))
+  const found = new Map<string, RelatedTask>()
+  const add = (type: RelationType, other: Task | undefined) => {
+    if (other && other.id !== task.id) found.set(`${type}:${other.id}`, { type, task: other })
+  }
+  for (const relation of task.relations) add(relation.type, byId.get(relation.taskId))
+  for (const other of tasks) {
+    for (const relation of other.relations) {
+      if (relation.taskId === task.id) add(INVERSE[relation.type], other)
+    }
+  }
+  return [...found.values()]
+}
+
+// "blocked_by" reads as "blocked by"
+export const relationLabel = (type: RelationType) => type.replace('_', ' ')

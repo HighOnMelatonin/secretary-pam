@@ -5,6 +5,7 @@ import {
   createEmptyTask,
   PRIORITIES,
   RELATION_TYPES,
+  relationLabel,
   type RelationType,
   type Task,
 } from '@/types/task'
@@ -159,7 +160,7 @@ function cancel() {
         <legend>Related tasks</legend>
         <ul v-if="draft.relations.length">
           <li v-for="(relation, i) in draft.relations" :key="relation.taskId">
-            <span>{{ relation.type.replace('_', ' ') }}: {{ taskName(relation.taskId) }}</span>
+            <span>{{ relationLabel(relation.type) }}: {{ taskName(relation.taskId) }}</span>
             <button type="button" class="secondary outline" @click="removeRelation(i)">Remove</button>
           </li>
         </ul>
@@ -167,7 +168,7 @@ function cancel() {
 
         <div v-if="relatableTasks.length" role="group">
           <select v-model="newRelationType">
-            <option v-for="t in RELATION_TYPES" :key="t" :value="t">{{ t.replace('_', ' ') }}</option>
+            <option v-for="t in RELATION_TYPES" :key="t" :value="t">{{ relationLabel(t) }}</option>
           </select>
           <select v-model="newRelationTaskId">
             <option value="" disabled>Select task</option>
