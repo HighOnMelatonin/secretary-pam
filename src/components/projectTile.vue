@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Dashboard tile for one project. Clicking it expands a preview of the project's timeline, tasks
-// and links; each task links to its own page and has an Edit button. At the top, View more opens
-// the project's page and Edit opens the project form.
+// and links; each task links to its own page, has an Edit button, and its check mark marks it done
+// or not done. At the top, View more opens the project's page and Edit opens the project form.
 import { computed } from 'vue'
 import ProjectTimeline from './projectTimeline.vue'
 import TaskRow from './taskRow.vue'
@@ -18,6 +18,7 @@ const props = defineProps<{
 defineEmits<{
   edit: [project: Project]
   editTask: [task: Task]
+  toggleTask: [task: Task]
 }>()
 
 // v-model:expanded lets the dashboard open or close every tile at once; without it the
@@ -90,7 +91,13 @@ function onTileClick(event: MouseEvent) {
       <section>
         <h4 class="section-heading">Tasks</h4>
         <ul v-if="projectTasks.length" class="plain-list">
-          <TaskRow v-for="task in projectTasks" :key="task.id" :task="task" @edit="$emit('editTask', task)" />
+          <TaskRow
+            v-for="task in projectTasks"
+            :key="task.id"
+            :task="task"
+            @edit="$emit('editTask', task)"
+            @toggle-completed="$emit('toggleTask', task)"
+          />
         </ul>
         <p v-else><small>No tasks in this project yet.</small></p>
       </section>

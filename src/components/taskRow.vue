@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// One task in a project's task list: its check mark, its name (a link to the task's page), priority,
-// overdue tag and due date, with an Edit button at the end of the row. Used in the expanded
-// project tile, and on the project page, which also shows each task's description.
+// One task in a project's task list: its check mark (a button that marks it done or not done), its
+// name (a link to the task's page), priority, overdue tag and due date, with an Edit button at the
+// end of the row. Used in the expanded project tile, and on the project page, which also shows each
+// task's description.
 import type { Task } from '@/types/task'
 
 defineProps<{
@@ -11,6 +12,7 @@ defineProps<{
 
 defineEmits<{
   edit: [task: Task]
+  toggleCompleted: [task: Task]
 }>()
 
 const today = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD in local time
@@ -19,7 +21,16 @@ const isOverdue = (date: string | null) => date !== null && date < today
 
 <template>
   <li class="task" :class="{ done: task.completed }">
-    <span class="check" aria-hidden="true">{{ task.completed ? '✓' : '○' }}</span>
+    <button
+      type="button"
+      class="check"
+      :aria-pressed="task.completed"
+      :aria-label="`Done: ${task.name}`"
+      :title="task.completed ? 'Mark as not done' : 'Mark as done'"
+      @click="$emit('toggleCompleted', task)"
+    >
+      {{ task.completed ? '✓' : '○' }}
+    </button>
     <span class="task-body">
       <span class="task-line">
         <RouterLink :to="{ name: 'task', params: { id: task.id } }" class="task-name">
@@ -56,7 +67,24 @@ const isOverdue = (date: string | null) => date !== null && date < today
 .check {
   flex: none;
   width: 1.25rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
   color: var(--pico-muted-color);
+  font: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+
+.check:hover {
+  color: var(--pico-color);
+}
+
+.check:focus-visible {
+  outline: 2px solid var(--pam-cream-muted);
+  outline-offset: 2px;
+  box-shadow: none;
 }
 
 .task-body {

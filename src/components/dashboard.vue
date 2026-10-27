@@ -169,6 +169,16 @@ async function onSaveTask(task: Task, projectIds: string[]) {
     editor.value = { kind: 'task', task, projectIds }
   }
 }
+
+// From a task's check mark; the list keeps the old state if saving fails
+async function onToggleTask(task: Task) {
+  error.value = null
+  try {
+    await taskList.saveTask({ ...task, completed: !task.completed })
+  } catch (e) {
+    error.value = `Couldn't save "${task.name}": ${messageOf(e)}`
+  }
+}
 </script>
 
 <template>
@@ -214,6 +224,7 @@ async function onSaveTask(task: Task, projectIds: string[]) {
       :tag="tagOf(page.project)"
       @edit="open({ name: 'edit-project', params: { id: $event.id } })"
       @edit-task="open({ name: 'edit-task', params: { id: $event.id } })"
+      @toggle-task="onToggleTask"
     />
     <TaskDetails
       v-else-if="page?.kind === 'task'"
@@ -269,6 +280,7 @@ async function onSaveTask(task: Task, projectIds: string[]) {
           @update:expanded="setExpanded(project.id, $event)"
           @edit="open({ name: 'edit-project', params: { id: $event.id } })"
           @edit-task="open({ name: 'edit-task', params: { id: $event.id } })"
+          @toggle-task="onToggleTask"
         />
       </div>
     </template>

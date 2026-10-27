@@ -102,6 +102,21 @@ describe('ProjectTile', () => {
     expect(wrapper.find('.preview').exists()).toBe(true)
   })
 
+  it("emits toggleTask from a task's check mark, without collapsing the tile", async () => {
+    const wrapper = mountTile()
+    await wrapper.find('article').trigger('click')
+
+    const checks = wrapper.findAll('.preview .task .check')
+    expect(checks.map((c) => [c.attributes('aria-label'), c.attributes('aria-pressed')])).toEqual([
+      ['Done: Write report', 'true'],
+      ['Done: Review slides', 'false'],
+    ])
+    await checks[1]!.trigger('click')
+
+    expect(wrapper.emitted('toggleTask')).toEqual([[tasks[1]]])
+    expect(wrapper.find('.preview').exists()).toBe(true)
+  })
+
   it('emits edit without expanding when Edit is clicked', async () => {
     const wrapper = mountTile()
     const edit = wrapper.findAll('button').find((b) => b.text() === 'Edit')!

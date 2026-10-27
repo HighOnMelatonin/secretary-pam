@@ -379,6 +379,43 @@ describe('Dashboard editing a task', () => {
     expect(wrapper.vm.$route.fullPath).toBe('/')
   })
 
+  it("marks a task done and not done from its check mark in the tile", async () => {
+    const api = fakeApi({
+      tasks: [task('t', { name: 'Write report' }), task('u', { name: 'Review slides' })],
+      projects: [project('p', { name: 'Thesis', taskIds: ['t', 'u'] })],
+    })
+    const wrapper = await mountDashboard()
+    await wrapper.find('.tile-toggle').trigger('click')
+    const check = () => wrapper.find('button[aria-label="Done: Write report"]')
+
+    await check().trigger('click')
+    await flushPromises()
+    expect(api.data.tasks[0]).toEqual(task('t', { name: 'Write report', completed: true }))
+    expect(check().attributes('aria-pressed')).toBe('true')
+    expect(wrapper.text()).toContain('1 of 2 tasks completed')
+
+    await check().trigger('click')
+    await flushPromises()
+    expect(api.data.tasks[0]!.completed).toBe(false)
+    expect(wrapper.text()).toContain('0 of 2 tasks completed')
+  })
+
+  it("shows an error and keeps the task as it was when marking it done fails", async () => {
+    const api = fakeApi({
+      tasks: [task('t', { name: 'Write report' })],
+      projects: [project('p', { name: 'Thesis', taskIds: ['t'] })],
+    })
+    const wrapper = await mountDashboard()
+    await wrapper.find('.tile-toggle').trigger('click')
+
+    api.failWith = 'D1 is down'
+    await wrapper.find('button[aria-label="Done: Write report"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[role="alert"]').text()).toBe('Couldn\'t save "Write report": D1 is down')
+    expect(wrapper.find('button[aria-label="Done: Write report"]').attributes('aria-pressed')).toBe('false')
+  })
+
   it("opens a task's edit link directly, and goes to the list for one that does not exist", async () => {
     fakeApi({ tasks: [task('t', { name: 'Write report' })], projects: [project('p', { taskIds: ['t'] })] })
     const wrapper = await mountDashboard('/tasks/t/edit')
