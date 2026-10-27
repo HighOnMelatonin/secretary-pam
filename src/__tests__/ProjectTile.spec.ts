@@ -19,7 +19,7 @@ const project: Project = {
   links: [{ label: 'GitHub repo', url: 'https://example.com/repo' }],
 }
 
-const mountTile = (props: { tag?: { id: string; name: string } } = {}) =>
+const mountTile = (props: { tag?: { id: string; name: string }; expanded?: boolean } = {}) =>
   mount(ProjectTile, { props: { project, tasks, ...props }, global: { plugins: [memoryRouter()] } })
 
 describe('ProjectTile', () => {
@@ -50,6 +50,17 @@ describe('ProjectTile', () => {
     await wrapper.find('.tile-toggle').trigger('click')
     expect(wrapper.find('.preview').exists()).toBe(true)
     await wrapper.find('.tile-toggle').trigger('click')
+    expect(wrapper.find('.preview').exists()).toBe(false)
+  })
+
+  it('opens and closes with its expanded prop, and asks to change it when toggled', async () => {
+    const wrapper = mountTile({ expanded: true })
+    expect(wrapper.find('.preview').exists()).toBe(true)
+
+    await wrapper.find('.tile-toggle').trigger('click')
+    expect(wrapper.emitted('update:expanded')).toEqual([[false]])
+
+    await wrapper.setProps({ expanded: false })
     expect(wrapper.find('.preview').exists()).toBe(false)
   })
 

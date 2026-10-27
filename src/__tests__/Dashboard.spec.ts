@@ -495,3 +495,50 @@ describe('Dashboard details pages', () => {
     expect(path(await mountDashboard('/tasks/missing'))).toBe('/')
   })
 })
+
+describe('Dashboard expanding tiles', () => {
+  const expandedTiles = (wrapper: ReturnType<typeof mount>) =>
+    wrapper.findAll('.project-tile.expanded .tile-toggle').map((t) => t.text().replace('▸', '').trim())
+
+  it('expands every tile, then collapses them all', async () => {
+    fakeApi({ projects: [project('a', { name: 'Thesis' }), project('b', { name: 'Internship' })] })
+    const wrapper = await mountDashboard()
+    expect(expandedTiles(wrapper)).toEqual([])
+
+    await button(wrapper, 'Expand all').trigger('click')
+    expect(expandedTiles(wrapper).sort()).toEqual(['Internship', 'Thesis'])
+
+    await button(wrapper, 'Collapse all').trigger('click')
+    expect(expandedTiles(wrapper)).toEqual([])
+  })
+
+  it('offers Collapse all once every tile has been opened by hand', async () => {
+    fakeApi({ projects: [project('a', { name: 'Thesis' }), project('b', { name: 'Internship' })] })
+    const wrapper = await mountDashboard()
+
+    const toggles = wrapper.findAll('.tile-toggle')
+    await toggles[0]!.trigger('click')
+    expect(button(wrapper, 'Expand all').exists()).toBe(true)
+    await toggles[1]!.trigger('click')
+    expect(button(wrapper, 'Collapse all').exists()).toBe(true)
+  })
+
+  it("keeps tiles open after a visit to a project's page", async () => {
+    fakeApi({ projects: [project('a', { name: 'Thesis' })] })
+    const wrapper = await mountDashboard()
+    await button(wrapper, 'Expand all').trigger('click')
+
+    await wrapper.find('a[aria-label="View more of Thesis"]').trigger('click')
+    await flushPromises()
+    wrapper.vm.$router.back()
+    await flushPromises()
+    expect(expandedTiles(wrapper)).toEqual(['Thesis'])
+  })
+
+  it('hides the button when no tiles are showing', async () => {
+    fakeApi({ projects: [project('a', { priority: 'low' })] })
+    localStorage.setItem('pam.projectView', JSON.stringify({ priorities: ['urgent'] }))
+    const wrapper = await mountDashboard()
+    expect(wrapper.find('.toggle-all').exists()).toBe(false)
+  })
+})
