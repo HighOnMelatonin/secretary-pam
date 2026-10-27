@@ -10,6 +10,7 @@ import ProjectForm from './project.vue'
 import TaskForm from './task.vue'
 import TagManager from './tags.vue'
 import Taskbar from './taskbar.vue'
+import UpcomingPanel from './upcomingPanel.vue'
 import ProjectTile from './projectTile.vue'
 import ProjectDetails from './projectDetails.vue'
 import TaskDetails from './taskDetails.vue'
@@ -247,61 +248,51 @@ async function onToggleTask(task: Task) {
       @edit="open({ name: 'edit-task', params: { id: $event.id } })"
     />
 
-    <template v-else-if="projects.length === 0">
-      <article class="empty">
+    <!-- The list: the upcoming tasks, then the projects -->
+    <template v-else>
+      <UpcomingPanel
+        :tasks="tasks"
+        :projects="projects"
+        @edit-task="open({ name: 'edit-task', params: { id: $event.id } })"
+        @toggle-task="onToggleTask"
+      />
+
+      <article v-if="projects.length === 0" class="empty">
         <h2>No projects yet</h2>
         <p>Create a project to start tracking its tasks and deliverables.</p>
         <button @click="open({ name: 'new-project' })">Create a project</button>
       </article>
-    </template>
-
-    <template v-else>
-      <div class="list-heading">
-        <h2>Live projects</h2>
-        <button
-          v-if="visibleProjects.length"
-          type="button"
-          class="secondary outline toggle-all"
-          @click="toggleAll"
-        >
-          {{ allExpanded ? 'Collapse all' : 'Expand all' }}
-        </button>
-      </div>
-
-      <p v-if="liveProjects.length === 0">
-        All projects are archived. <a :href="router.resolve({ name: 'new-project' }).href" @click.prevent="open({ name: 'new-project' })">
-          Create a new one?
-        </a>
-      </p>
 
       <template v-else>
-        <ListControls />
-        <p v-if="visibleProjects.length === 0" class="no-match">
-          No projects match these filters.
-          <button type="button" class="secondary outline" @click="projectView.clearFilters()">Clear filters</button>
+        <div class="list-heading">
+          <h2>Live projects</h2>
+          <button
+            v-if="visibleProjects.length"
+            type="button"
+            class="secondary outline toggle-all"
+            @click="toggleAll"
+          >
+            {{ allExpanded ? 'Collapse all' : 'Expand all' }}
+          </button>
+        </div>
+
+        <p v-if="liveProjects.length === 0">
+          All projects are archived. <a :href="router.resolve({ name: 'new-project' }).href" @click.prevent="open({ name: 'new-project' })">
+            Create a new one?
+          </a>
         </p>
-      </template>
 
-      <div class="project-grid">
-        <ProjectTile
-          v-for="project in visibleProjects"
-          :key="project.id"
-          :project="project"
-          :tasks="tasks"
-          :tags="tagsOf(project)"
-          :expanded="expandedIds.has(project.id)"
-          @update:expanded="setExpanded(project.id, $event)"
-          @edit="open({ name: 'edit-project', params: { id: $event.id } })"
-          @edit-task="open({ name: 'edit-task', params: { id: $event.id } })"
-          @toggle-task="onToggleTask"
-        />
-      </div>
+        <template v-else>
+          <ListControls />
+          <p v-if="visibleProjects.length === 0" class="no-match">
+            No projects match these filters.
+            <button type="button" class="secondary outline" @click="projectView.clearFilters()">Clear filters</button>
+          </p>
+        </template>
 
-      <details v-if="archivedProjects.length" class="archived">
-        <summary>Archived projects ({{ archivedProjects.length }})</summary>
         <div class="project-grid">
           <ProjectTile
-            v-for="project in archivedProjects"
+            v-for="project in visibleProjects"
             :key="project.id"
             :project="project"
             :tasks="tasks"
@@ -313,7 +304,25 @@ async function onToggleTask(task: Task) {
             @toggle-task="onToggleTask"
           />
         </div>
-      </details>
+
+        <details v-if="archivedProjects.length" class="archived">
+          <summary>Archived projects ({{ archivedProjects.length }})</summary>
+          <div class="project-grid">
+            <ProjectTile
+              v-for="project in archivedProjects"
+              :key="project.id"
+              :project="project"
+              :tasks="tasks"
+              :tags="tagsOf(project)"
+              :expanded="expandedIds.has(project.id)"
+              @update:expanded="setExpanded(project.id, $event)"
+              @edit="open({ name: 'edit-project', params: { id: $event.id } })"
+              @edit-task="open({ name: 'edit-task', params: { id: $event.id } })"
+              @toggle-task="onToggleTask"
+            />
+          </div>
+        </details>
+      </template>
     </template>
   </section>
 </template>

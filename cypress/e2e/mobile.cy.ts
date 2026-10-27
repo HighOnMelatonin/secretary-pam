@@ -1,4 +1,4 @@
-import { project, tag, task } from '../support/factories'
+import { daysFromToday, project, tag, task } from '../support/factories'
 
 const tile = (name: string) => cy.contains('.project-tile', name)
 
@@ -37,9 +37,24 @@ describe('On a phone', () => {
       const { bottom } = $save[0]!.getBoundingClientRect()
       expect(bottom).to.be.at.most(740)
     })
-    cy.contains('label', 'Tag').find('select').select('School (SUTD)')
+    cy.contains('label', 'School (SUTD)').find('input').check()
     cy.contains('button', 'Save').click()
     tile('Thesis').find('.project-tag').should('have.text', 'School (SUTD)')
+  })
+
+  it('shows the upcoming tasks above the projects', () => {
+    cy.seed({
+      tasks: [task('t', { name: 'Write report', dueDate: daysFromToday(2) })],
+      projects: [project('p', { name: 'Thesis', taskIds: ['t'] })],
+    })
+    cy.visit('/')
+
+    cy.get('section.upcoming').should('be.visible').contains('.task', 'Write report').should('contain', 'Thesis')
+    cy.get('section.upcoming').then(($panel) => {
+      tile('Thesis').should(($tile) => {
+        expect($panel[0]!.getBoundingClientRect().bottom).to.be.at.most($tile[0]!.getBoundingClientRect().top)
+      })
+    })
   })
 
   it('opens a form from its link, as after a refresh', () => {
