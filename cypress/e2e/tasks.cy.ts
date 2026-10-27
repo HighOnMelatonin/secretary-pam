@@ -61,6 +61,26 @@ describe('Tasks', () => {
       })
   })
 
+  it("won't assign a task due after the project's deadline until one of the dates moves", () => {
+    cy.seed({ projects: [project('p', { name: 'Thesis', deliveryDate: '2026-12-10' })] })
+    cy.visit('/')
+
+    cy.taskbar('Add task')
+    field('Task name').type('Write report')
+    field('Due date').type('2026-12-14')
+    fieldset('Projects').find('select').select('Thesis')
+    cy.get('.date-error').should('contain', "after Thesis's deadline (2026-12-10)")
+    fieldset('Projects').contains('button', 'Assign').should('be.disabled')
+
+    cy.contains('button', 'Extend Thesis to 2026-12-14').click()
+    cy.get('.date-error').should('not.exist')
+    fieldset('Projects').contains('button', 'Assign').click()
+    cy.contains('button', /^Add$/).click()
+
+    tile('Thesis').contains('Due 2026-12-14')
+    cy.request('/api/projects').its('body.0.deliveryDate').should('eq', '2026-12-14')
+  })
+
   it('archives a project once its last task is ticked off, and brings it back when Archive is removed', () => {
     cy.seed({ tasks: [task('t', { name: 'Write report' })], projects: [project('p', { name: 'Thesis', taskIds: ['t'] })] })
     cy.visit('/')

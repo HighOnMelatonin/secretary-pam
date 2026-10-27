@@ -46,6 +46,15 @@ export const useProjectList = defineStore('projectList', () => {
     )
   }
 
+  // Moves the delivery dates of the given projects, by project id
+  async function setDeliveryDates(dates: Record<string, string>) {
+    await Promise.all(
+      projects.value
+        .filter((p) => p.id in dates)
+        .map((p) => saveProject({ ...structuredClone(toRaw(p)), deliveryDate: dates[p.id]! })),
+    )
+  }
+
   // Runs a change to tasks or projects, then archives the projects it completed. Only projects
   // that weren't completed before are archived, so one taken out of the archive stays out.
   async function archivingCompleted(change: () => Promise<void>) {
@@ -59,7 +68,16 @@ export const useProjectList = defineStore('projectList', () => {
     )
   }
 
-  return { projects, liveProjects, archivedProjects, load, saveProject, assignTask, archivingCompleted }
+  return {
+    projects,
+    liveProjects,
+    archivedProjects,
+    load,
+    saveProject,
+    assignTask,
+    setDeliveryDates,
+    archivingCompleted,
+  }
 })
 
 // Lets Vite hot-swap this store when the file changes, instead of keeping the old one

@@ -20,6 +20,7 @@ const existing: Project = {
 }
 
 const savedProject = (wrapper: ReturnType<typeof mount>) => wrapper.emitted<[Project]>('save')?.slice(-1)[0]?.[0]
+const dateInput = (wrapper: ReturnType<typeof mount>) => wrapper.find<HTMLInputElement>('input[type="date"]')
 
 describe('ProjectForm for a new project', () => {
   it('only allows adding once the project has a name', async () => {
@@ -111,6 +112,55 @@ describe('ProjectForm tasks', () => {
     await wrapper.find('form').trigger('submit')
 
     expect(savedProject(wrapper)!.taskIds).toEqual(['t2', 't3'])
+  })
+})
+
+describe("ProjectForm checks its tasks' due dates against the delivery date", () => {
+  const dated: Task[] = [
+    { ...createEmptyTask(), id: 't1', name: 'Write report' },
+    { ...createEmptyTask(), id: 't2', name: 'Review slides', dueDate: '2027-01-10' },
+    { ...createEmptyTask(), id: 't3', name: 'Book room', dueDate: '2027-02-01' },
+  ]
+
+  it('blocks adding a task due after the delivery date, but only once both dates are set', async () => {
+    const wrapper = mount(ProjectForm, { props: { project: existing, tasks: dated } })
+    await selectWithOption(wrapper, 't3').setValue('t3')
+    expect(wrapper.find('.date-error').exists()).toBe(false)
+
+    await dateInput(wrapper).setValue('2027-01-18')
+    expect(wrapper.find('.date-error').text()).toContain(
+      "Book room is due 2027-02-01, after this project's delivery date (2027-01-18).",
+    )
+    expect(button(wrapper, 'Add task').attributes('disabled')).toBeDefined()
+
+    await button(wrapper, 'Extend project to 2027-02-01').trigger('click')
+    expect(dateInput(wrapper).element.value).toBe('2027-02-01')
+    expect(wrapper.find('.date-error').exists()).toBe(false)
+    expect(button(wrapper, 'Add task').attributes('disabled')).toBeUndefined()
+  })
+
+  it("moves the task's due date when the project is saved", async () => {
+    const wrapper = mount(ProjectForm, { props: { project: { ...existing, deliveryDate: '2027-01-18' }, tasks: dated } })
+    await selectWithOption(wrapper, 't3').setValue('t3')
+    await button(wrapper, 'Move Book room to 2027-01-18').trigger('click')
+    await button(wrapper, 'Add task').trigger('click')
+
+    expect(listedIn(wrapper, 'Tasks')).toContain('Book room due date moves to 2027-01-18')
+    await wrapper.find('form').trigger('submit')
+    expect(wrapper.emitted('save')?.slice(-1)[0]?.[1]).toEqual({ t3: '2027-01-18' })
+  })
+
+  it("blocks saving while a task is due after the delivery date", async () => {
+    const wrapper = mount(ProjectForm, { props: { project: existing, tasks: dated } })
+    await dateInput(wrapper).setValue('2027-01-05')
+    expect(wrapper.find('.date-error').text()).toContain('Review slides is due 2027-01-10')
+    expect(button(wrapper, 'Save').attributes('disabled')).toBeDefined()
+    await wrapper.find('form').trigger('submit')
+    expect(savedProject(wrapper)).toBeUndefined()
+
+    await dateInput(wrapper).setValue('')
+    expect(wrapper.find('.date-error').exists()).toBe(false)
+    expect(button(wrapper, 'Save').attributes('disabled')).toBeUndefined()
   })
 })
 

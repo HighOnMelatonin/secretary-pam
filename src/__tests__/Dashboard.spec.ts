@@ -426,6 +426,39 @@ describe('Dashboard editing a task', () => {
     expect(wrapper.find('button[aria-label="Done: Write report"]').attributes('aria-pressed')).toBe('false')
   })
 
+  it("saves the project's extended deadline along with the task", async () => {
+    const api = fakeApi({
+      tasks: [task('t', { name: 'Write report' })],
+      projects: [project('p', { name: 'Thesis', taskIds: ['t'], deliveryDate: '2026-11-30' })],
+    })
+    const wrapper = await mountDashboard('/tasks/t/edit')
+
+    await wrapper.find('input[type="date"]').setValue('2026-12-05')
+    await button(wrapper, 'Extend Thesis to 2026-12-05').trigger('click')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(api.data.projects[0]!.deliveryDate).toBe('2026-12-05')
+    expect(api.data.tasks[0]!.dueDate).toBe('2026-12-05')
+    expect(wrapper.vm.$route.fullPath).toBe('/')
+  })
+
+  it("saves the tasks' moved due dates along with the project", async () => {
+    const api = fakeApi({
+      tasks: [task('t', { name: 'Write report', dueDate: '2026-12-05' })],
+      projects: [project('p', { name: 'Thesis', taskIds: ['t'] })],
+    })
+    const wrapper = await mountDashboard('/projects/p/edit')
+
+    await wrapper.find('input[type="date"]').setValue('2026-11-30')
+    await button(wrapper, 'Move Write report to 2026-11-30').trigger('click')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(api.data.tasks[0]!.dueDate).toBe('2026-11-30')
+    expect(api.data.projects[0]!.deliveryDate).toBe('2026-11-30')
+  })
+
   it("opens a task's edit link directly, and goes to the list for one that does not exist", async () => {
     fakeApi({ tasks: [task('t', { name: 'Write report' })], projects: [project('p', { taskIds: ['t'] })] })
     const wrapper = await mountDashboard('/tasks/t/edit')

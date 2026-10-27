@@ -53,10 +53,11 @@ function toggleAll() {
   expandedIds.value = allExpanded.value ? new Set() : new Set(visibleProjects.value.map((p) => p.id))
 }
 
-// Which form is open: none, a new/existing project, a new/existing task, or the tag list
+// Which form is open: none, a new/existing project, a new/existing task, or the tag list. The
+// optional fields carry a form's unsaved changes when it's reopened after a failed save.
 type Editor =
-  | { kind: 'project'; project?: Project }
-  | { kind: 'task'; task?: Task; projectIds?: string[] }
+  | { kind: 'project'; project?: Project; taskDueDates?: Record<string, string> }
+  | { kind: 'task'; task?: Task; projectIds?: string[]; deadlines?: Record<string, string> }
   | { kind: 'tags' }
   | null
 const editor = ref<Editor>(null)
@@ -150,28 +151,33 @@ watch(
 )
 
 // On failure the form is reopened with the unsaved project/task so no input is lost
-async function onSaveProject(project: Project) {
-  error.value = null
-  try {
-    await projectList.archivingCompleted(() => projectList.saveProject(project))
-    await close()
-  } catch (e) {
-    error.value = `Couldn't save "${project.name}": ${messageOf(e)}`
-    editor.value = { kind: 'project', project }
-  }
-}
-
-async function onSaveTask(task: Task, projectIds: string[]) {
+// along with the due dates or deadlines it moved to fix date clashes
+async function onSaveProject(project: Project, taskDueDates: Record<string, string>) {
   error.value = null
   try {
     await projectList.archivingCompleted(async () => {
+      await taskList.setDueDates(taskDueDates)
+      await projectList.saveProject(project)
+    })
+    await close()
+  } catch (e) {
+    error.value = `Couldn't save "${project.name}": ${messageOf(e)}`
+    editor.value = { kind: 'project', project, taskDueDates }
+  }
+}
+
+async function onSaveTask(task: Task, projectIds: string[], deadlines: Record<string, string>) {
+  error.value = null
+  try {
+    await projectList.archivingCompleted(async () => {
+      await projectList.setDeliveryDates(deadlines)
       await taskList.saveTask(task)
       await projectList.assignTask(task.id, projectIds)
     })
     await close()
   } catch (e) {
     error.value = `Couldn't save "${task.name}": ${messageOf(e)}`
-    editor.value = { kind: 'task', task, projectIds }
+    editor.value = { kind: 'task', task, projectIds, deadlines }
   }
 }
 
@@ -208,6 +214,7 @@ async function onToggleTask(task: Task) {
       :project="editor.project"
       :tasks="tasks"
       :tags="tags"
+      :task-due-dates="editor.taskDueDates"
       @save="onSaveProject"
       @cancel="close"
     />
@@ -217,6 +224,7 @@ async function onToggleTask(task: Task) {
       :available-tasks="tasks"
       :projects="projects"
       :project-ids="editor.projectIds"
+      :deadlines="editor.deadlines"
       @save="onSaveTask"
       @cancel="close"
     />

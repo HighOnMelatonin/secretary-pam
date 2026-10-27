@@ -39,6 +39,11 @@ export function createEmptyProject(): Project {
 
 export const isArchived = (project: Project) => project.tagIds.includes(ARCHIVE_TAG_ID)
 
+// Whether a task due on dueDate would be due after its project's delivery date. Only checked
+// once both dates are set.
+export const isPastDeadline = (dueDate: string | null, deliveryDate: string | null) =>
+  dueDate !== null && deliveryDate !== null && dueDate > deliveryDate
+
 // Whether the project has tasks and every one of them is completed
 export function isCompleted(project: Project, tasks: Task[]) {
   const { completed, total } = completionStatus(project, tasks)

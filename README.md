@@ -15,7 +15,7 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 - **Taskbar** hidden on the left edge of the screen. Hover over it to slide it out over the page, with buttons for **Tags**, **Add task** and **Add project**. On phones and other touch screens these are behind a **+** button in the bottom-right corner instead.
 - **Works on phones**: each form has its own address (such as `/projects/new` or `/tags`), so the back button or gesture closes it, and the forms keep Save and Cancel pinned to the bottom of the screen.
 - **Tags** such as School (SUTD), Work and Personal file projects by area of life. Add, rename and delete them from **Tags** in the taskbar. Renaming a tag renames it on every project, and deleting one removes it from its projects. The Archive tag can be renamed but not deleted.
-- **Tasks** have a name, description, due date, priority, completed flag and relations to other tasks (blocks, blocked by, subtask of, parent of, related to). A task can be assigned to several projects, from either the project form or the task form.
+- **Tasks** have a name, description, due date, priority, completed flag and relations to other tasks (blocks, blocked by, subtask of, parent of, related to). A task can be assigned to several projects, from either the project form or the task form. A task can't be due after the delivery date of a project it's in: once both dates are set, either form points out the clash, offers to extend the project's deadline or move the task's due date, and won't add the task or save until it's fixed.
 
 ## Tech stack
 
@@ -154,6 +154,8 @@ Vue app (Pinia stores)  ──fetch──▶  Worker /api/*  ──SQL──▶ 
 | `DELETE /api/tags/:id` | Delete the tag, removing it from its projects (`400` for the built-in `archive` tag) |
 
 Bodies are the `Project`, `Task` and `Tag` objects from `src/types`. The Worker checks every field and answers `400` with an error message if something is invalid, including a reference to a task or tag that doesn't exist, or a tag name that another tag already has. Each save runs as one transaction, so a failed save changes nothing.
+
+The Worker doesn't check that a task's due date is on or before the delivery dates of its projects. Only the task and project forms enforce that, so a project or task saved straight through the API can break the rule. Its form will then refuse to save until the dates are fixed.
 
 ### Schema
 
