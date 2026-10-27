@@ -13,7 +13,7 @@ import type { Task } from '@/types/task'
 const props = defineProps<{
   project: Project
   tasks: Task[] // all tasks; the project's own are looked up by id
-  tag?: Tag // the project's tag, if it has one
+  tags: Tag[] // the project's tags
 }>()
 
 defineEmits<{
@@ -39,7 +39,7 @@ const status = computed(() => completionStatus(props.project, props.tasks))
     </header>
 
     <div class="meta">
-      <span v-if="tag" class="tag project-tag">{{ tag.name }}</span>
+      <span v-for="tag in tags" :key="tag.id" class="tag project-tag">{{ tag.name }}</span>
       <span class="tag" :class="`priority-${project.priority}`">{{ project.priority }}</span>
       <span v-if="isOverdue" class="tag overdue">overdue</span>
       <small>Due {{ project.deliveryDate ?? 'whenever' }}</small>

@@ -1,5 +1,6 @@
 // Project data model. Like Task, every field is a plain JSON value so a Project
 // can be saved with JSON.stringify and loaded with JSON.parse.
+import { ARCHIVE_TAG_ID } from './tag'
 import type { Priority, Task } from './task'
 
 export interface ReferenceLink {
@@ -15,7 +16,7 @@ export interface Project {
   taskIds: string[] // ids of existing Task objects
   priority: Priority
   links: ReferenceLink[]
-  tagId: string | null // id of an existing Tag, or null for no tag
+  tagIds: string[] // ids of existing Tag objects
 }
 
 export interface CompletionStatus {
@@ -32,8 +33,16 @@ export function createEmptyProject(): Project {
     taskIds: [],
     priority: 'medium',
     links: [],
-    tagId: null,
+    tagIds: [],
   }
+}
+
+export const isArchived = (project: Project) => project.tagIds.includes(ARCHIVE_TAG_ID)
+
+// Whether the project has tasks and every one of them is completed
+export function isCompleted(project: Project, tasks: Task[]) {
+  const { completed, total } = completionStatus(project, tasks)
+  return total > 0 && completed === total
 }
 
 // Looks up the project's task ids in a list of tasks; ids with no matching task are skipped

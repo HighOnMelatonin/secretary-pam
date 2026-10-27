@@ -8,7 +8,7 @@ import type { Tag } from '@/types/tag'
 const props = defineProps<{
   project?: Project // project to edit; a new empty project is used when omitted
   tasks?: Task[] // all existing tasks, used to resolve and link the project's tasks
-  tags?: Tag[] // all tags, to choose the project's tag from
+  tags?: Tag[] // all tags, to choose the project's tags from
 }>()
 
 const emit = defineEmits<{
@@ -97,15 +97,15 @@ function cancel() {
             <option v-for="p in PRIORITIES" :key="p" :value="p">{{ p }}</option>
           </select>
         </label>
-
-        <label>
-          Tag
-          <select v-model="draft.tagId">
-            <option :value="null">No tag</option>
-            <option v-for="t in tags" :key="t.id" :value="t.id">{{ t.name }}</option>
-          </select>
-        </label>
       </div>
+
+      <fieldset v-if="tags?.length" class="tags">
+        <legend>Tags</legend>
+        <label v-for="t in tags" :key="t.id">
+          <input v-model="draft.tagIds" type="checkbox" :value="t.id" />
+          {{ t.name }}
+        </label>
+      </fieldset>
 
       <label>
         Description
@@ -182,16 +182,27 @@ li button {
   gap: 0.5rem;
 }
 
-/* Below Pico's 768px breakpoint, where .grid would put each field on its own line:
-   delivery date and priority share one, and the tag, whose names vary in length, gets its own */
+/* Below Pico's 768px breakpoint, where .grid would put each field on its own line, delivery
+   date and priority still share one */
 @media (max-width: 767px) {
   .grid {
     grid-template-columns: 1fr 1fr;
   }
+}
 
-  .grid > :last-child {
-    grid-column: 1 / -1;
-  }
+/* The tags sit side by side, wrapping onto more lines as needed */
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.5rem;
+}
+
+.tags legend {
+  width: 100%;
+}
+
+.tags label {
+  margin: 0;
 }
 
 @media (max-width: 575px) {

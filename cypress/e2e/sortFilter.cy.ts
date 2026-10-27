@@ -10,8 +10,8 @@ describe('Sorting and filtering projects', () => {
     cy.seed({
       tags: [tag('school', 'School (SUTD)'), tag('work', 'Work')],
       projects: [
-        project('report', { name: 'Report', deliveryDate: '2027-01-01', priority: 'low', tagId: 'work' }),
-        project('thesis', { name: 'Thesis', deliveryDate: '2027-02-01', priority: 'urgent', tagId: 'school' }),
+        project('report', { name: 'Report', deliveryDate: '2027-01-01', priority: 'low', tagIds: ['work'] }),
+        project('thesis', { name: 'Thesis', deliveryDate: '2027-02-01', priority: 'urgent', tagIds: ['school'] }),
         project('gym', { name: 'Gym', priority: 'high' }),
       ],
     })

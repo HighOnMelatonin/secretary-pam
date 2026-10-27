@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import Dashboard from '../components/dashboard.vue'
 import { createEmptyProject, type Project } from '../types/project'
+import { ARCHIVE_TAG_ID } from '../types/tag'
 import { createEmptyTask, type Task } from '../types/task'
 import { fakeApi } from './fakeApi'
 import { button, listedIn, routerAt, selectWithOption } from './helpers'
@@ -58,24 +59,30 @@ describe('Dashboard loading', () => {
 })
 
 describe('Dashboard project list', () => {
-  it('shows live projects soonest first, and hides finished ones', async () => {
+  it('shows live projects soonest first, with archived ones in their own section', async () => {
     fakeApi({
       tasks: [task('done', { completed: true }), task('open')],
       projects: [
         project('later', { deliveryDate: '2027-02-01', taskIds: ['open'] }),
-        project('finished', { taskIds: ['done'] }),
+        project('archived', { taskIds: ['done'], tagIds: [ARCHIVE_TAG_ID] }),
         project('sooner', { deliveryDate: '2026-12-01' }),
       ],
     })
     const wrapper = await mountDashboard()
-    expect(tileNames(wrapper)).toEqual(['Project sooner', 'Project later'])
+    expect(tileNames(wrapper)).toEqual(['Project sooner', 'Project later', 'Project archived'])
+    expect(wrapper.find('.archived summary').text()).toBe('Archived projects (1)')
+    expect(wrapper.find('.archived').text()).toContain('Project archived')
   })
 
-  it('says so when every project is finished', async () => {
-    fakeApi({ tasks: [task('done', { completed: true })], projects: [project('p', { taskIds: ['done'] })] })
+  it('says so when every project is archived', async () => {
+    fakeApi({
+      tasks: [task('done', { completed: true })],
+      projects: [project('p', { taskIds: ['done'], tagIds: [ARCHIVE_TAG_ID] })],
+    })
     const wrapper = await mountDashboard()
-    expect(wrapper.text()).toContain('All projects are completed.')
-    expect(tileNames(wrapper)).toEqual([])
+    expect(wrapper.text()).toContain('All projects are archived.')
+    expect(tileNames(wrapper)).toEqual(['Project p'])
+    expect(wrapper.find('.archived').text()).toContain('Project p')
   })
 })
 
@@ -155,10 +162,13 @@ describe('Dashboard tags', () => {
     { id: 'work', name: 'Work' },
   ]
 
-  it('shows each tile with its tag', async () => {
-    fakeApi({ tags, projects: [project('p', { name: 'Thesis', tagId: 'school' }), project('q', { name: 'Gym' })] })
+  it('shows each tile with its tags', async () => {
+    fakeApi({
+      tags,
+      projects: [project('p', { name: 'Thesis', tagIds: ['work', 'school'] }), project('q', { name: 'Gym' })],
+    })
     const wrapper = await mountDashboard()
-    expect(wrapper.findAll('.project-tag').map((t) => t.text())).toEqual(['School (SUTD)'])
+    expect(wrapper.findAll('.project-tag').map((t) => t.text())).toEqual(['Work', 'School (SUTD)'])
   })
 
   it('tags a project from its form', async () => {
@@ -168,16 +178,16 @@ describe('Dashboard tags', () => {
     await button(wrapper, 'Edit').trigger('click')
 
     await flushPromises()
-    await selectWithOption(wrapper, 'work').setValue('work')
+    await wrapper.find('input[type="checkbox"][value="work"]').setValue(true)
     await wrapper.find('form').trigger('submit')
     await flushPromises()
 
-    expect(api.data.projects[0]!.tagId).toBe('work')
+    expect(api.data.projects[0]!.tagIds).toEqual(['work'])
     expect(wrapper.find('.project-tag').text()).toBe('Work')
   })
 
   it('opens the tag list from the taskbar, and its changes show on the tiles', async () => {
-    fakeApi({ tags, projects: [project('p', { name: 'Thesis', tagId: 'school' })] })
+    fakeApi({ tags, projects: [project('p', { name: 'Thesis', tagIds: ['school'] })] })
     const wrapper = await mountDashboard()
 
     await button(wrapper, 'Tags').trigger('click')
@@ -303,8 +313,8 @@ describe('Dashboard routes', () => {
 
 describe('Dashboard sorting and filtering', () => {
   const projects = [
-    project('report', { name: 'Report', deliveryDate: '2027-01-01', priority: 'low', tagId: 'work' }),
-    project('thesis', { name: 'Thesis', deliveryDate: '2027-02-01', priority: 'urgent', tagId: 'school' }),
+    project('report', { name: 'Report', deliveryDate: '2027-01-01', priority: 'low', tagIds: ['work'] }),
+    project('thesis', { name: 'Thesis', deliveryDate: '2027-02-01', priority: 'urgent', tagIds: ['school'] }),
     project('gym', { name: 'Gym', priority: 'high' }),
   ]
   const tags = [

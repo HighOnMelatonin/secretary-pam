@@ -49,7 +49,7 @@ describe('ProjectForm for a new project', () => {
       taskIds: [],
       priority: 'urgent',
       links: [],
-      tagId: null,
+      tagIds: [],
     })
     expect((wrapper.find('input[placeholder="Project"]').element as HTMLInputElement).value).toBe('')
   })
@@ -62,31 +62,31 @@ describe('ProjectForm for a new project', () => {
   })
 })
 
-describe('ProjectForm tag', () => {
+describe('ProjectForm tags', () => {
   const tags: Tag[] = [
+    { id: 'archive', name: 'Archive' },
     { id: 'school', name: 'School (SUTD)' },
     { id: 'work', name: 'Work' },
   ]
+  const checkbox = (wrapper: ReturnType<typeof mount>, id: string) =>
+    wrapper.find<HTMLInputElement>(`input[type="checkbox"][value="${id}"]`)
 
-  it('offers no tag and every tag, starting with the project’s own', () => {
-    const wrapper = mount(ProjectForm, { props: { project: { ...existing, tagId: 'work' }, tasks, tags } })
-    const select = selectWithOption(wrapper, 'work')
-    expect(select.findAll('option').map((o) => o.text())).toEqual(['No tag', 'School (SUTD)', 'Work'])
-    expect(select.element.value).toBe('work')
+  it('offers every tag, with the project’s own ticked', () => {
+    const wrapper = mount(ProjectForm, { props: { project: { ...existing, tagIds: ['work'] }, tasks, tags } })
+    expect(wrapper.findAll('.tags label').map((l) => l.text())).toEqual(['Archive', 'School (SUTD)', 'Work'])
+    expect(tags.map((t) => checkbox(wrapper, t.id).element.checked)).toEqual([false, false, true])
   })
 
-  it('saves the chosen tag, or null for no tag', async () => {
-    const wrapper = mount(ProjectForm, { props: { project: existing, tasks, tags } })
-    await selectWithOption(wrapper, 'school').setValue('school')
+  it('saves the ticked tags, including adding or removing Archive', async () => {
+    const wrapper = mount(ProjectForm, { props: { project: { ...existing, tagIds: ['work'] }, tasks, tags } })
+    await checkbox(wrapper, 'archive').setValue(true)
     await wrapper.find('form').trigger('submit')
-    expect(savedProject(wrapper)!.tagId).toBe('school')
+    expect(savedProject(wrapper)!.tagIds).toEqual(['work', 'archive'])
 
-    // Picks "No tag" by position: Vue gives its null value no value attribute to select by
-    const select = selectWithOption(wrapper, 'school')
-    select.element.selectedIndex = 0
-    await select.trigger('change')
+    await checkbox(wrapper, 'archive').setValue(false)
+    await checkbox(wrapper, 'work').setValue(false)
     await wrapper.find('form').trigger('submit')
-    expect(savedProject(wrapper)!.tagId).toBeNull()
+    expect(savedProject(wrapper)!.tagIds).toEqual([])
   })
 })
 

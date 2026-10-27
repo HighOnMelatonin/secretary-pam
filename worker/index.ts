@@ -17,7 +17,7 @@ import {
   type TaskRelation,
 } from '../src/types/task'
 import type { Project, ReferenceLink } from '../src/types/project'
-import type { Tag } from '../src/types/tag'
+import { ARCHIVE_TAG_ID, type Tag } from '../src/types/tag'
 import { migrateOnce } from './migrate'
 
 const MAX_BODY_BYTES = 100_000
@@ -48,12 +48,16 @@ interface ProjectRow {
   description: string
   delivery_date: string | null
   priority: Priority
-  tag_id: string | null
 }
 
 interface ProjectTaskRow {
   project_id: string
   task_id: string
+}
+
+interface ProjectTagRow {
+  project_id: string
+  tag_id: string
 }
 
 interface LinkRow {
@@ -124,9 +128,10 @@ function parseTask(body: unknown, id: string): Task {
 
 function parseProject(body: unknown, id: string): Project {
   checkCommon(body, id)
-  const { deliveryDate, taskIds, links, tagId } = body
+  const { deliveryDate, taskIds, links, tagIds } = body
   check(isDateOrNull(deliveryDate), 'deliveryDate must be null or a YYYY-MM-DD date')
-  check(tagId === null || isString(tagId), 'tagId must be null or a tag id')
+  check(Array.isArray(tagIds) && tagIds.every(isString), 'tagIds must be a list of tag ids')
+  check(allDifferent(tagIds), 'tagIds must not list a tag twice')
   check(Array.isArray(taskIds) && taskIds.every(isString), 'taskIds must be a list of task ids')
   check(allDifferent(taskIds), 'taskIds must not list a task twice')
   check(Array.isArray(links) && links.every(isLink), 'links must be a list of { label, url }')
@@ -139,7 +144,7 @@ function parseProject(body: unknown, id: string): Project {
     taskIds,
     priority: body.priority,
     links: links.map((l) => ({ label: l.label, url: l.url })),
-    tagId,
+    tagIds,
   }
 }
 
@@ -196,13 +201,15 @@ async function saveTask(db: D1Database, task: Task): Promise<Task> {
 // Projects
 
 async function listProjects(db: D1Database): Promise<Project[]> {
-  const [projects, projectTasks, links] = (await db.batch([
+  const [projects, projectTasks, links, projectTags] = (await db.batch([
     db.prepare('SELECT * FROM projects ORDER BY created_at, id'),
     db.prepare('SELECT * FROM project_tasks ORDER BY project_id, position'),
     db.prepare('SELECT * FROM project_links ORDER BY project_id, position'),
-  ])) as [D1Result<ProjectRow>, D1Result<ProjectTaskRow>, D1Result<LinkRow>]
+    db.prepare('SELECT * FROM project_tags ORDER BY project_id, position'),
+  ])) as [D1Result<ProjectRow>, D1Result<ProjectTaskRow>, D1Result<LinkRow>, D1Result<ProjectTagRow>]
   const tasksByProject = groupBy(projectTasks.results, (t) => t.project_id)
   const linksByProject = groupBy(links.results, (l) => l.project_id)
+  const tagsByProject = groupBy(projectTags.results, (t) => t.project_id)
 
   return projects.results.map((row) => ({
     id: row.id,
@@ -212,7 +219,7 @@ async function listProjects(db: D1Database): Promise<Project[]> {
     taskIds: (tasksByProject.get(row.id) ?? []).map((t) => t.task_id),
     priority: row.priority,
     links: (linksByProject.get(row.id) ?? []).map((l) => ({ label: l.label, url: l.url })),
-    tagId: row.tag_id,
+    tagIds: (tagsByProject.get(row.id) ?? []).map((t) => t.tag_id),
   }))
 }
 
@@ -221,13 +228,12 @@ async function saveProject(db: D1Database, project: Project): Promise<Project> {
   await db.batch([
     db
       .prepare(
-        `INSERT INTO projects (id, name, description, delivery_date, priority, tag_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        `INSERT INTO projects (id, name, description, delivery_date, priority)
+         VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT (id) DO UPDATE SET name = excluded.name, description = excluded.description,
-           delivery_date = excluded.delivery_date, priority = excluded.priority, tag_id = excluded.tag_id,
-           updated_at = ${NOW}`,
+           delivery_date = excluded.delivery_date, priority = excluded.priority, updated_at = ${NOW}`,
       )
-      .bind(project.id, project.name, project.description, project.deliveryDate, project.priority, project.tagId),
+      .bind(project.id, project.name, project.description, project.deliveryDate, project.priority),
     db.prepare('DELETE FROM project_tasks WHERE project_id = ?1').bind(project.id),
     ...project.taskIds.map((taskId, position) =>
       db
@@ -239,6 +245,12 @@ async function saveProject(db: D1Database, project: Project): Promise<Project> {
       db
         .prepare('INSERT INTO project_links (project_id, position, label, url) VALUES (?1, ?2, ?3, ?4)')
         .bind(project.id, position, link.label, link.url),
+    ),
+    db.prepare('DELETE FROM project_tags WHERE project_id = ?1').bind(project.id),
+    ...project.tagIds.map((tagId, position) =>
+      db
+        .prepare('INSERT INTO project_tags (project_id, tag_id, position) VALUES (?1, ?2, ?3)')
+        .bind(project.id, tagId, position),
     ),
   ])
   return project
@@ -277,7 +289,7 @@ const RESOURCES: Record<string, Resource> = {
     list: listProjects,
     save: (db, id, body) => saveProject(db, parseProject(body, id)),
   },
-  // Deleting a tag leaves its projects untagged
+  // Deleting a tag removes it from its projects
   tags: { table: 'tags', list: listTags, save: (db, id, body) => saveTag(db, parseTag(body, id)) },
 }
 
@@ -312,6 +324,7 @@ export default {
       if (!id && request.method === 'GET') return json(await resource.list(env.DB))
       if (id && request.method === 'PUT') return json(await resource.save(env.DB, id, await readJson(request)))
       if (id && request.method === 'DELETE') {
+        check(!(name === 'tags' && id === ARCHIVE_TAG_ID), 'The Archive tag is built in and cannot be deleted')
         await env.DB.prepare(`DELETE FROM ${resource.table} WHERE id = ?1`).bind(id).run()
         return new Response(null, { status: 204 })
       }
