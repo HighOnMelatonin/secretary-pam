@@ -2,7 +2,7 @@
 // Dashboard tile for one project. Clicking it expands a preview of the project's timeline, tasks
 // and links; each task links to its own page and has an Edit button. At the top, View more opens
 // the project's page and Edit opens the project form.
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import ProjectTimeline from './projectTimeline.vue'
 import TaskRow from './taskRow.vue'
 import { completionStatus, resolveTasks, type Project } from '@/types/project'
@@ -20,7 +20,9 @@ defineEmits<{
   editTask: [task: Task]
 }>()
 
-const expanded = ref(false)
+// v-model:expanded lets the dashboard open or close every tile at once; without it the
+// tile keeps its own state
+const expanded = defineModel<boolean>('expanded', { default: false })
 
 const today = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD in local time
 const isOverdue = (date: string | null) => date !== null && date < today

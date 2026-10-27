@@ -86,6 +86,16 @@ describe('Projects', () => {
     })
   })
 
+  it('expands and collapses every tile at once', () => {
+    cy.seed({ projects: [project('a', { name: 'Thesis' }), project('b', { name: 'Internship' })] })
+    cy.visit('/')
+
+    cy.contains('button', 'Expand all').click()
+    cy.get('.project-tile.expanded').should('have.length', 2)
+    cy.contains('button', 'Collapse all').click()
+    cy.get('.project-tile.expanded').should('not.exist')
+  })
+
   it("opens a project's page from View more, then a task's page from its link, and back retraces the way", () => {
     cy.seed({
       tasks: [

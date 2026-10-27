@@ -32,6 +32,24 @@ const { tags } = storeToRefs(tagList)
 
 const tagOf = (project: Project) => tags.value.find((t) => t.id === project.tagId)
 
+// Ids of the expanded tiles, kept here so Expand all can reach every tile and so tiles stay
+// open after a visit to a project's page
+const expandedIds = ref(new Set<string>())
+const allExpanded = computed(
+  () => visibleProjects.value.length > 0 && visibleProjects.value.every((p) => expandedIds.value.has(p.id)),
+)
+
+function setExpanded(id: string, expanded: boolean) {
+  const ids = new Set(expandedIds.value)
+  if (expanded) ids.add(id)
+  else ids.delete(id)
+  expandedIds.value = ids
+}
+
+function toggleAll() {
+  expandedIds.value = allExpanded.value ? new Set() : new Set(visibleProjects.value.map((p) => p.id))
+}
+
 // Which form is open: none, a new/existing project, a new/existing task, or the tag list
 type Editor =
   | { kind: 'project'; project?: Project }
@@ -214,7 +232,17 @@ async function onSaveTask(task: Task, projectIds: string[]) {
     </template>
 
     <template v-else>
-      <h2 class="heading">Live projects</h2>
+      <div class="list-heading">
+        <h2>Live projects</h2>
+        <button
+          v-if="visibleProjects.length"
+          type="button"
+          class="secondary outline toggle-all"
+          @click="toggleAll"
+        >
+          {{ allExpanded ? 'Collapse all' : 'Expand all' }}
+        </button>
+      </div>
 
       <p v-if="liveProjects.length === 0">
         All projects are completed. <a :href="router.resolve({ name: 'new-project' }).href" @click.prevent="open({ name: 'new-project' })">
@@ -237,6 +265,8 @@ async function onSaveTask(task: Task, projectIds: string[]) {
           :project="project"
           :tasks="tasks"
           :tag="tagOf(project)"
+          :expanded="expandedIds.has(project.id)"
+          @update:expanded="setExpanded(project.id, $event)"
           @edit="open({ name: 'edit-project', params: { id: $event.id } })"
           @edit-task="open({ name: 'edit-task', params: { id: $event.id } })"
         />
@@ -246,8 +276,23 @@ async function onSaveTask(task: Task, projectIds: string[]) {
 </template>
 
 <style scoped>
-.heading {
+.list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+
+.list-heading h2 {
   margin: 0;
+}
+
+.toggle-all {
+  width: auto;
+  margin: 0;
+  padding: 0.3rem 0.9rem;
+  font-size: 0.9rem;
 }
 
 .no-match {
