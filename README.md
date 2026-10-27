@@ -13,6 +13,7 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 - **Task pages** (`/tasks/:id`) show a task's status, priority, due date and description, the projects it is in, and its related tasks. Relations are shown from both sides, so if A blocks B, B's page says it is blocked by A.
 - **Projects** have a name, description, delivery date, priority, any number of tags, tasks and reference links.
 - **Taskbar** hidden on the left edge of the screen. Hover over it to slide it out over the page, with buttons for **Tags**, **Add task** and **Add project**. On phones and other touch screens these are behind a **+** button in the bottom-right corner instead.
+- **Upcoming tasks** in a section at the top of the dashboard, above the projects. It lists every unfinished task that is overdue or due in the next 14 days, from all projects, soonest first, with each task's projects, check mark and **Edit** button. Tasks with no due date, or only in archived projects, are left out. Once the section scrolls out of view, a coral **overdue** counter floats in the top-right corner; click it to scroll back up to it.
 - **Works on phones**: each form has its own address (such as `/projects/new` or `/tags`), so the back button or gesture closes it, and the forms keep Save and Cancel pinned to the bottom of the screen.
 - **Tags** such as School (SUTD), Work and Personal file projects by area of life. Add, rename and delete them from **Tags** in the taskbar. Renaming a tag renames it on every project, and deleting one removes it from its projects. The Archive tag can be renamed but not deleted.
 - **Tasks** have a name, description, due date, priority, completed flag and relations to other tasks (blocks, blocked by, subtask of, parent of, related to). A task can be assigned to several projects, from either the project form or the task form. A task can't be due after the delivery date of a project it's in: once both dates are set, either form points out the clash, offers to extend the project's deadline or move the task's due date, and won't add the task or save until it's fixed.
@@ -81,13 +82,14 @@ src/
     dashboard.vue     main page: loads data, lists projects, opens the forms
     listControls.vue  the sort menu and the tag and urgency filters
     taskbar.vue       the Tags, Add task and Add project buttons: a hidden bar on the left, or a + button on phones
+    upcomingPanel.vue the upcoming tasks section above the projects, and the overdue counter that floats once it scrolls away
     projectTile.vue   one project on the dashboard; expands into a preview
     project.vue       create/edit a project
     task.vue          create/edit a task, including which projects it is in
     tags.vue          add, rename and delete tags
   router/             one route per form, all showing the dashboard, so back closes forms
   stores/             Pinia stores for projects, tasks and tags; they load and save through the API
-  types/              Project, Task and Tag models, shared by the app and the Worker
+  types/              Project, Task and Tag models, shared by the app and the Worker, and which tasks are upcoming
   api.ts              client for the Worker API
   __tests__/          unit tests
 worker/

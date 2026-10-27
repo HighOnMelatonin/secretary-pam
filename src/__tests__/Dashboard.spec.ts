@@ -426,6 +426,28 @@ describe('Dashboard editing a task', () => {
     expect(wrapper.find('button[aria-label="Done: Write report"]').attributes('aria-pressed')).toBe('false')
   })
 
+  it('lists upcoming tasks in the panel, where they can be ticked off or edited', async () => {
+    const today = new Date().toLocaleDateString('en-CA')
+    const api = fakeApi({
+      tasks: [task('t', { name: 'Write report', dueDate: today }), task('u', { name: 'Review slides' })],
+      projects: [project('p', { name: 'Thesis', taskIds: ['t', 'u'] })],
+    })
+    const wrapper = await mountDashboard()
+    const panel = () => wrapper.find('section.upcoming')
+    expect(panel().findAll('.task-name').map((n) => n.text())).toEqual(['Write report'])
+
+    await panel().find('button[aria-label="Edit task Write report"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.$route.fullPath).toBe('/tasks/t/edit')
+    await button(wrapper, 'Cancel').trigger('click')
+    await flushPromises()
+
+    await panel().find('button[aria-label="Done: Write report"]').trigger('click')
+    await flushPromises()
+    expect(api.data.tasks[0]!.completed).toBe(true)
+    expect(panel().text()).toContain('Nothing due in the next 14 days.')
+  })
+
   it("saves the project's extended deadline along with the task", async () => {
     const api = fakeApi({
       tasks: [task('t', { name: 'Write report' })],

@@ -1,4 +1,4 @@
-import { project, task } from '../support/factories'
+import { daysFromToday, project, task } from '../support/factories'
 
 const field = (label: string) => cy.contains('label', label).find('input, select, textarea')
 const tile = (name: string) => cy.contains('.project-tile', name)
@@ -79,6 +79,46 @@ describe('Tasks', () => {
 
     tile('Thesis').contains('Due 2026-12-14')
     cy.request('/api/projects').its('body.0.deliveryDate').should('eq', '2026-12-14')
+  })
+
+  it('lists overdue and upcoming tasks from every project above the projects', () => {
+    cy.viewport(1280, 800)
+    cy.seed({
+      tasks: [
+        task('late', { name: 'Write report', dueDate: daysFromToday(-1) }),
+        task('soon', { name: 'Review slides', dueDate: daysFromToday(3) }),
+        task('far', { name: 'Book room', dueDate: daysFromToday(30) }),
+      ],
+      projects: [project('p', { name: 'Thesis', taskIds: ['late'] }), project('q', { name: 'Website', taskIds: ['soon', 'far'] })],
+    })
+    cy.visit('/')
+
+    cy.get('section.upcoming').within(() => {
+      cy.contains('.group', 'Overdue').should('contain', 'Write report').and('contain', 'Thesis')
+      cy.contains('.group', 'Next 14 days').should('contain', 'Review slides').and('contain', 'Website')
+      cy.contains('Book room').should('not.exist')
+
+      cy.get('button[aria-label="Done: Write report"]').click()
+      cy.contains('.group', 'Overdue').should('not.exist')
+    })
+  })
+
+  it('floats an overdue counter once the upcoming tasks scroll away, which leads back to them', () => {
+    cy.viewport(1280, 800)
+    // Enough projects for the page to scroll well past the panel
+    cy.seed({
+      tasks: [task('late', { name: 'Write report', dueDate: daysFromToday(-1) })],
+      projects: Array.from({ length: 20 }, (_, i) =>
+        project(`p${i}`, { name: `Project ${i}`, taskIds: i === 0 ? ['late'] : [] }),
+      ),
+    })
+    cy.visit('/')
+
+    cy.get('button.overdue-counter').should('not.exist')
+    cy.scrollTo('bottom')
+    cy.get('button.overdue-counter').should('be.visible').and('contain', '1 overdue').click()
+    cy.get('section.upcoming').should('be.visible')
+    cy.get('button.overdue-counter').should('not.exist')
   })
 
   it('archives a project once its last task is ticked off, and brings it back when Archive is removed', () => {
