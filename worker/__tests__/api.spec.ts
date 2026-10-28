@@ -1,19 +1,23 @@
 // Integration tests: HTTP requests through the Worker's entry point, against a real D1
-// database with the tables from migrations/ (emptied before each test by setup.ts).
+// database with the tables from migrations/ (emptied before each test by setup.ts). Each test
+// is signed in to a new account with no tags; auth.spec.ts covers signing in itself.
 import { env, SELF } from 'cloudflare:test'
-import { describe, it, expect } from 'vitest'
+import { beforeEach, describe, it, expect } from 'vitest'
 import type { Project } from '../../src/types/project'
 import type { Tag } from '../../src/types/tag'
 import type { Task } from '../../src/types/task'
+import * as helpers from './helpers'
 
-async function call(method: string, path: string, body?: unknown) {
-  const response = await SELF.fetch(`http://localhost/api/${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
-  })
-  const text = await response.text()
-  return { status: response.status, body: text ? JSON.parse(text) : null }
+let session: string
+
+beforeEach(async () => {
+  session = await helpers.signUp()
+  await env.DB.prepare('DELETE FROM tags').run()
+})
+
+const call = async (method: string, path: string, body?: unknown) => {
+  const { status, body: reply } = await helpers.call(method, path, body, session)
+  return { status, body: reply }
 }
 
 const listTasks = async (): Promise<Task[]> => (await call('GET', 'tasks')).body
@@ -51,6 +55,22 @@ const count = async (table: string) =>
   (await env.DB.prepare(`SELECT count(*) AS n FROM ${table}`).first<{ n: number }>())!.n
 
 describe('routing', () => {
+  it.each([
+    ['GET', 'projects'],
+    ['GET', 'tasks'],
+    ['GET', 'tags'],
+    ['PUT', 'tasks/a'],
+    ['DELETE', 'projects/p'],
+  ])('answers 401 for %s /api/%s when not signed in', async (method, path) => {
+    const response = await helpers.call(method, path, method === 'PUT' ? task('a') : undefined)
+    expect(response.status).toBe(401)
+    expect(await count('tasks')).toBe(0)
+  })
+
+  it('answers 401 for a session cookie that does not exist', async () => {
+    expect((await helpers.call('GET', 'tasks', undefined, 'pam_session=forged')).status).toBe(401)
+  })
+
   it('starts with no projects or tasks', async () => {
     expect(await call('GET', 'projects')).toEqual({ status: 200, body: [] })
     expect(await call('GET', 'tasks')).toEqual({ status: 200, body: [] })
@@ -106,7 +126,7 @@ describe('tasks', () => {
       priority: 'high',
       completed: 1,
     })
-    expect((await env.DB.prepare('SELECT * FROM task_relations').all()).results).toEqual([
+    expect((await env.DB.prepare('SELECT task_id, related_task_id, type, position FROM task_relations').all()).results).toEqual([
       { task_id: 'a', related_task_id: 'b', type: 'blocks', position: 0 },
     ])
   })
@@ -352,7 +372,7 @@ describe('validation', () => {
   ])('rejects a body sent %s', async (_, type) => {
     const response = await SELF.fetch('http://localhost/api/tasks/a', {
       method: 'PUT',
-      headers: type ? { 'Content-Type': type } : {},
+      headers: { Cookie: session, ...(type ? { 'Content-Type': type } : {}) },
       body: JSON.stringify(task('a')),
     })
     expect(response.status).toBe(400)
@@ -362,7 +382,7 @@ describe('validation', () => {
   it('accepts JSON with a charset', async () => {
     const response = await SELF.fetch('http://localhost/api/tasks/a', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      headers: { Cookie: session, 'Content-Type': 'application/json; charset=utf-8' },
       body: JSON.stringify(task('a')),
     })
     expect(response.status).toBe(200)
@@ -448,33 +468,115 @@ describe('deleting', () => {
   })
 })
 
+describe('separate accounts', () => {
+  // Another account, which signed up after this test's own and kept its starting tags
+  const other = async () => {
+    const cookie = await helpers.signUp('other@example.com')
+    return (method: string, path: string, body?: unknown) => helpers.call(method, path, body, cookie)
+  }
+
+  it("doesn't show one account's projects, tasks or tags to another", async () => {
+    await saveTask(task('t'))
+    await saveTag({ id: 'w', name: 'Mine' })
+    await saveProject(project('p', { taskIds: ['t'], tagIds: ['w'] }))
+    const as = await other()
+
+    expect((await as('GET', 'projects')).body).toEqual([])
+    expect((await as('GET', 'tasks')).body).toEqual([])
+    expect((await as('GET', 'tags')).body.map((t: Tag) => t.name)).toEqual(['Archive', 'Personal', 'School (SUTD)', 'Work'])
+  })
+
+  it("keeps each account's ids apart, so saving with the same id doesn't overwrite another's", async () => {
+    await saveTask(task('t', { name: 'Mine' }))
+    const as = await other()
+    expect((await as('PUT', 'tasks/t', task('t', { name: 'Theirs' }))).status).toBe(200)
+
+    expect((await listTasks()).map((t) => t.name)).toEqual(['Mine'])
+    expect((await as('GET', 'tasks')).body.map((t: Task) => t.name)).toEqual(['Theirs'])
+  })
+
+  it("doesn't let one account delete another's rows", async () => {
+    await saveTask(task('t'))
+    await saveProject(project('p'))
+    const as = await other()
+    await as('DELETE', 'tasks/t')
+    await as('DELETE', 'projects/p')
+
+    expect(await listTasks()).toEqual([task('t')])
+    expect(await listProjects()).toEqual([project('p')])
+  })
+
+  it("doesn't let one account refer to another's tasks or tags", async () => {
+    await saveTask(task('t'))
+    await saveTag({ id: 'mine', name: 'Mine' })
+    const as = await other()
+
+    expect((await as('PUT', 'projects/p', project('p', { taskIds: ['t'] }))).status).toBe(400)
+    expect((await as('PUT', 'projects/p', project('p', { tagIds: ['mine'] }))).status).toBe(400)
+    expect((await as('PUT', 'tasks/u', task('u', { relations: [{ taskId: 't', type: 'blocks' }] }))).status).toBe(400)
+  })
+
+  it('lets two accounts have tags with the same name', async () => {
+    await saveTag({ id: 'w', name: 'Work' })
+    expect((await (await other())('GET', 'tags')).body).toContainEqual({ id: 'work', name: 'Work' })
+  })
+})
+
 describe('schema constraints', () => {
-  // These go straight to D1, to check the database protects itself even without the Worker
-  it.each([
-    ["a task priority outside the allowed list", "INSERT INTO tasks (id, name, priority) VALUES ('a', 'A', 'asap')"],
-    ['completed other than 0 or 1', "INSERT INTO tasks (id, name, completed) VALUES ('a', 'A', 2)"],
-    ['a task without a name', "INSERT INTO tasks (id) VALUES ('a')"],
-    ['a project priority outside the allowed list', "INSERT INTO projects (id, name, priority) VALUES ('p', 'P', 'asap')"],
-    ['a project_tasks row for a missing project', "INSERT INTO project_tasks (project_id, task_id, position) VALUES ('missing', 't', 0)"],
-    ['a project_tasks row for a missing task', "INSERT INTO project_tasks (project_id, task_id, position) VALUES ('p', 'missing', 0)"],
-    ['a link for a missing project', "INSERT INTO project_links (project_id, position, label, url) VALUES ('missing', 0, 'A', 'https://a')"],
-    ['a relation type outside the allowed list', "INSERT INTO task_relations (task_id, related_task_id, type, position) VALUES ('t', 'u', 'depends_on', 0)"],
-    ['a task related to itself', "INSERT INTO task_relations (task_id, related_task_id, type, position) VALUES ('t', 't', 'blocks', 0)"],
-    ['a project_tags row for a missing tag', "INSERT INTO project_tags (project_id, tag_id, position) VALUES ('p', 'missing', 0)"],
-    ['a project_tags row for a missing project', "INSERT INTO project_tags (project_id, tag_id, position) VALUES ('missing', 'w', 0)"],
-    ['a tag name that differs only in case', "INSERT INTO tags (id, name) VALUES ('w2', 'WORK')"],
-    ['a tag without a name', "INSERT INTO tags (id) VALUES ('x')"],
-  ])('rejects %s', async (_, sql) => {
+  // These go straight to D1, to check the database protects itself even without the Worker. Users
+  // u1 and u2 each have task t, and u1 also has task u, project p and tag w.
+  beforeEach(async () => {
     await env.DB.batch([
-      env.DB.prepare("INSERT INTO tasks (id, name) VALUES ('t', 'T'), ('u', 'U')"),
-      env.DB.prepare("INSERT INTO projects (id, name) VALUES ('p', 'P')"),
-      env.DB.prepare("INSERT INTO tags (id, name) VALUES ('w', 'Work')"),
+      env.DB.prepare("INSERT INTO users (id, email) VALUES ('u1', 'u1@example.com'), ('u2', 'u2@example.com')"),
+      env.DB.prepare("INSERT INTO tasks (user_id, id, name) VALUES ('u1', 't', 'T'), ('u1', 'u', 'U'), ('u2', 't', 'T')"),
+      env.DB.prepare("INSERT INTO projects (user_id, id, name) VALUES ('u1', 'p', 'P')"),
+      env.DB.prepare("INSERT INTO tags (user_id, id, name) VALUES ('u1', 'w', 'Work')"),
     ])
+  })
+
+  it.each([
+    ["a task priority outside the allowed list", "INSERT INTO tasks (user_id, id, name, priority) VALUES ('u1', 'a', 'A', 'asap')"],
+    ['completed other than 0 or 1', "INSERT INTO tasks (user_id, id, name, completed) VALUES ('u1', 'a', 'A', 2)"],
+    ['a task without a name', "INSERT INTO tasks (user_id, id) VALUES ('u1', 'a')"],
+    ['a task without a user', "INSERT INTO tasks (id, name) VALUES ('a', 'A')"],
+    ['a task for a missing user', "INSERT INTO tasks (user_id, id, name) VALUES ('missing', 'a', 'A')"],
+    ['a project priority outside the allowed list', "INSERT INTO projects (user_id, id, name, priority) VALUES ('u1', 'q', 'Q', 'asap')"],
+    ['a project_tasks row for a missing project', "INSERT INTO project_tasks (user_id, project_id, task_id, position) VALUES ('u1', 'missing', 't', 0)"],
+    ['a project_tasks row for a missing task', "INSERT INTO project_tasks (user_id, project_id, task_id, position) VALUES ('u1', 'p', 'missing', 0)"],
+    ["a project_tasks row for another user's project", "INSERT INTO project_tasks (user_id, project_id, task_id, position) VALUES ('u2', 'p', 't', 0)"],
+    ["a project_tasks row for another user's task", "INSERT INTO project_tasks (user_id, project_id, task_id, position) VALUES ('u1', 'p', 'v', 0)"],
+    ['a link for a missing project', "INSERT INTO project_links (user_id, project_id, position, label, url) VALUES ('u1', 'missing', 0, 'A', 'https://a')"],
+    ['a relation type outside the allowed list', "INSERT INTO task_relations (user_id, task_id, related_task_id, type, position) VALUES ('u1', 't', 'u', 'depends_on', 0)"],
+    ['a task related to itself', "INSERT INTO task_relations (user_id, task_id, related_task_id, type, position) VALUES ('u1', 't', 't', 'blocks', 0)"],
+    ["a relation to another user's task", "INSERT INTO task_relations (user_id, task_id, related_task_id, type, position) VALUES ('u2', 't', 'u', 'blocks', 0)"],
+    ['a project_tags row for a missing tag', "INSERT INTO project_tags (user_id, project_id, tag_id, position) VALUES ('u1', 'p', 'missing', 0)"],
+    ['a project_tags row for a missing project', "INSERT INTO project_tags (user_id, project_id, tag_id, position) VALUES ('u1', 'missing', 'w', 0)"],
+    ['a tag name that differs only in case', "INSERT INTO tags (user_id, id, name) VALUES ('u1', 'w2', 'WORK')"],
+    ['a tag without a name', "INSERT INTO tags (user_id, id) VALUES ('u1', 'x')"],
+    ['a second account with the same email, ignoring case', "INSERT INTO users (id, email) VALUES ('u3', 'U1@example.com')"],
+  ])('rejects %s', async (_, sql) => {
     await expect(env.DB.prepare(sql).run()).rejects.toThrow(/constraint/i)
   })
 
+  it('lets different users use the same ids and tag names', async () => {
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO projects (user_id, id, name) VALUES ('u2', 'p', 'P')"),
+      env.DB.prepare("INSERT INTO tags (user_id, id, name) VALUES ('u2', 'w', 'Work')"),
+      env.DB.prepare("INSERT INTO project_tags (user_id, project_id, tag_id, position) VALUES ('u2', 'p', 'w', 0)"),
+    ])
+    expect(await count('projects')).toBe(2)
+  })
+
+  it("deletes a user's rows along with the user, and only theirs", async () => {
+    await env.DB.prepare("INSERT INTO project_tasks (user_id, project_id, task_id, position) VALUES ('u1', 'p', 't', 0)").run()
+    await env.DB.prepare("DELETE FROM users WHERE id = 'u1'").run()
+    expect(await count('projects')).toBe(0)
+    expect(await count('project_tasks')).toBe(0)
+    expect((await env.DB.prepare('SELECT user_id, id FROM tasks').all()).results).toEqual([{ user_id: 'u2', id: 't' }])
+  })
+
   it('fills in defaults for optional columns', async () => {
-    await env.DB.prepare("INSERT INTO tasks (id, name) VALUES ('a', 'A')").run()
+    await env.DB.prepare("INSERT INTO tasks (user_id, id, name) VALUES ('u1', 'a', 'A')").run()
     const row = await env.DB.prepare("SELECT * FROM tasks WHERE id = 'a'").first<Record<string, unknown>>()
     expect(row).toMatchObject({ description: '', due_date: null, priority: 'medium', completed: 0 })
     expect(row!.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)

@@ -7,6 +7,10 @@ export const MAX_DESCRIPTION_LENGTH = 10_000
 export const MAX_URL_LENGTH = 2_000
 export const MAX_LIST_LENGTH = 500 // tasks, links, tags or relations on one project or task
 
+export const MAX_EMAIL_LENGTH = 254
+export const MIN_PASSWORD_LENGTH = 8
+export const MAX_PASSWORD_LENGTH = 256
+
 // Schemes a reference link may use. Any other, such as javascript: or data:, could run code in
 // the app when the link is clicked.
 export const LINK_PROTOCOLS = ['http:', 'https:', 'mailto:']

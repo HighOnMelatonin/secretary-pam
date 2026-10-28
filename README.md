@@ -6,6 +6,7 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 
 ## Features
 
+- **Accounts**: sign in at `/login`, or create an account at `/signup` with an email and a password of at least 8 characters. Each account has its own projects, tasks and tags, and starts with the example tags. The header shows who is signed in, with a **Sign out** button. Opening any page while signed out goes to the sign-in page first, then on to that page.
 - **Dashboard** of live projects, with **archived projects** in a collapsible section below. When a project's last task is done, it gets the built-in **Archive** tag and moves to that section. Remove the tag in the project's form to bring it back; it stays live until its tasks go from not all done to all done again.
 - **Sort** the projects by delivery date, urgency (most or least urgent first) or % complete, and **filter** them by tag and urgency. The choices are remembered in the browser.
 - **Project tiles** show the project's tags, priority, due date, an overdue tag and task progress. Click a tile to expand a preview of its timeline, tasks and reference links, with an **Edit** button on each task. Click a task's check mark to mark it done or not done. Each task's name links to its page, and **View more** opens the project's page. **Expand all** above the list opens every tile at once (and **Collapse all** closes them), and open tiles stay open after a visit to a project's page.
@@ -87,13 +88,15 @@ src/
     project.vue       create/edit a project
     task.vue          create/edit a task, including which projects it is in
     tags.vue          add, rename and delete tags
+    login.vue         the sign-in and sign-up pages
   router/             one route per form, all showing the dashboard, so back closes forms
-  stores/             Pinia stores for projects, tasks and tags; they load and save through the API
+  stores/             Pinia stores for projects, tasks, tags and the signed-in account; they load and save through the API
   types/              Project, Task and Tag models, shared by the app and the Worker, and which tasks are upcoming
-  api.ts              client for the Worker API
+  api.ts              client for the Worker API, including signing in
   __tests__/          unit tests
 worker/
-  index.ts            the /api routes, reading and writing D1
+  index.ts            the /api routes, reading and writing the signed-in user's rows in D1
+  auth.ts             the /api/auth routes: accounts, passwords and sessions
   migrate.ts          applies migrations/ to the database on the Worker's first request
   __tests__/          integration tests for the API and database
 cypress/
@@ -141,10 +144,23 @@ The app never talks to the database directly. The Pinia stores call the Worker A
 Vue app (Pinia stores)  ──fetch──▶  Worker /api/*  ──SQL──▶  D1
 ```
 
+### Accounts
+
+- **Passwords** are stored only as salted PBKDF2-SHA256 hashes (100,000 iterations, the most the Workers runtime allows).
+- **Signing in** sets a `pam_session` cookie holding a random token, valid for 30 days. The cookie is `HttpOnly` (scripts can't read it), `SameSite=Lax`, `Secure` over https, and only sent to `/api`. D1 stores only the token's SHA-256 hash. Signing out deletes the session, and reloads the page so nothing of the account stays in memory.
+- **Wrong passwords**: a wrong password and an unknown email get the same answer. After 10 failed sign-ins for one email within 15 minutes, that email can't sign in until the failures are 15 minutes old.
+- **Separate data**: every route except `/api/auth/*` answers `401` without a valid session. Every table has a `user_id`, which comes from the session, never from the request. Ids are only unique within an account, so two accounts can use the same id without touching each other's rows, and a project can only list its own account's tasks and tags.
+- **Data from before accounts** (migration `0004`) belongs to the first account that signs up.
+- **Not built yet**: password reset and changing a password. To reset one by hand, delete the account's sessions and set a new hash with `wrangler d1 execute`, or delete the user row, which deletes all of their data.
+
 ### API
 
 | Request | Result |
 |---|---|
+| `POST /api/auth/signup` | Create an account from `{ email, password }` and sign in; returns `{ email }` |
+| `POST /api/auth/login` | Sign in with `{ email, password }`; returns `{ email }` (`401` if wrong, `429` once locked) |
+| `POST /api/auth/logout` | Sign out |
+| `GET /api/auth/me` | `{ email }` of the signed-in account, or `401` |
 | `GET /api/projects` | All projects |
 | `PUT /api/projects/:id` | Create or update the project in the body; returns it |
 | `DELETE /api/projects/:id` | Delete the project |
@@ -155,29 +171,32 @@ Vue app (Pinia stores)  ──fetch──▶  Worker /api/*  ──SQL──▶ 
 | `PUT /api/tags/:id` | Create or rename the tag in the body; returns it |
 | `DELETE /api/tags/:id` | Delete the tag, removing it from its projects (`400` for the built-in `archive` tag) |
 
-Bodies are the `Project`, `Task` and `Tag` objects from `src/types`, sent as `application/json`. The Worker checks every field and answers `400` with an error message if something is invalid, including a reference to a task or tag that doesn't exist, or a tag name that another tag already has. Each save runs as one transaction, so a failed save changes nothing.
+The project, task and tag routes work on the signed-in account's data only. Bodies are the `Project`, `Task` and `Tag` objects from `src/types`, sent as `application/json`. The Worker checks every field and answers `400` with an error message if something is invalid, including a reference to a task or tag that doesn't exist, or a tag name that another tag already has. Each save runs as one transaction, so a failed save changes nothing.
 
-The limits in `src/types/limits.ts` apply to the forms and the API alike: names and link labels up to 200 characters, descriptions up to 10,000, ids up to 100, link URLs up to 2,000, and up to 500 tasks, tags, links or relations on one item. Reference links must start with `http:`, `https:` or `mailto:`, so a `javascript:` link can't run code in the app when clicked. Every value reaches D1 as a bound parameter, never as part of the SQL.
+The limits in `src/types/limits.ts` apply to the forms and the API alike: names and link labels up to 200 characters, descriptions up to 10,000, ids up to 100, link URLs up to 2,000, up to 500 tasks, tags, links or relations on one item, emails up to 254, and passwords from 8 to 256. Reference links must start with `http:`, `https:` or `mailto:`, so a `javascript:` link can't run code in the app when clicked. Every value reaches D1 as a bound parameter, never as part of the SQL.
 
 The Worker doesn't check that a task's due date is on or before the delivery dates of its projects. Only the task and project forms enforce that, so a project or task saved straight through the API can break the rule. Its form will then refuse to save until the dates are fixed.
 
 ### Schema
 
-Defined in the files in `migrations/`. Each field has its own column, and each array is stored in its own table with a `position` column that keeps its order.
+Defined in the files in `migrations/`. Each field has its own column, and each array is stored in its own table with a `position` column that keeps its order. Every data table starts with `user_id`, and its keys include it: a project is keyed by `(user_id, id)`, and `project_tasks` refers to `tasks` by `(user_id, task_id)`, so a row can only ever point at rows of the same account.
 
 | Table | Holds | Columns |
 |---|---|---|
-| `projects` | `Project` | `id`, `name`, `description`, `delivery_date`, `priority`, `created_at`, `updated_at` (and `tag_id`, unused since `0003`) |
-| `tasks` | `Task` | `id`, `name`, `description`, `due_date`, `priority`, `completed`, `created_at`, `updated_at` |
-| `project_tasks` | `Project.taskIds` | `project_id` → `projects`, `task_id` → `tasks`, `position` |
-| `project_links` | `Project.links` | `project_id` → `projects`, `position`, `label`, `url` |
-| `project_tags` | `Project.tagIds` | `project_id` → `projects`, `tag_id` → `tags`, `position` |
-| `task_relations` | `Task.relations` | `task_id` → `tasks`, `related_task_id` → `tasks`, `type`, `position` |
-| `tags` | `Tag` | `id`, `name`, `created_at`, `updated_at` |
+| `users` | Accounts | `id`, `email` (unique, ignoring case), `password_hash`, `created_at` |
+| `sessions` | Signed-in browsers | `id` (SHA-256 of the cookie's token), `user_id` → `users`, `expires_at`, `created_at` |
+| `login_failures` | Failed sign-ins | `email`, `at` |
+| `projects` | `Project` | `user_id` → `users`, `id`, `name`, `description`, `delivery_date`, `priority`, `created_at`, `updated_at` |
+| `tasks` | `Task` | `user_id` → `users`, `id`, `name`, `description`, `due_date`, `priority`, `completed`, `created_at`, `updated_at` |
+| `project_tasks` | `Project.taskIds` | `user_id`, `project_id` → `projects`, `task_id` → `tasks`, `position` |
+| `project_links` | `Project.links` | `user_id`, `project_id` → `projects`, `position`, `label`, `url` |
+| `project_tags` | `Project.tagIds` | `user_id`, `project_id` → `projects`, `tag_id` → `tags`, `position` |
+| `task_relations` | `Task.relations` | `user_id`, `task_id` → `tasks`, `related_task_id` → `tasks`, `type`, `position` |
+| `tags` | `Tag` | `user_id` → `users`, `id`, `name`, `created_at`, `updated_at` |
 
 - `project_tasks` links projects to tasks. A task can be in several projects.
-- All foreign keys cascade on delete. Deleting a task removes it from its projects and from other tasks' relations, deleting a project removes its links and tags, and deleting a tag removes it from its projects.
-- Tag names are unique, ignoring case. A new database starts with the tags School (SUTD), Work and Personal, plus the built-in Archive tag (id `archive`).
+- All foreign keys cascade on delete. Deleting a task removes it from its projects and from other tasks' relations, deleting a project removes its links and tags, deleting a tag removes it from its projects, and deleting a user removes their sessions and all of their data.
+- Tag names are unique within an account, ignoring case. A new account starts with the tags School (SUTD), Work and Personal, plus the built-in Archive tag (id `archive`).
 - `CHECK` constraints limit `priority` to `low`, `medium`, `high` or `urgent`; relation `type` to `blocks`, `blocked_by`, `subtask_of`, `parent_of` or `related_to`; and `completed` to `0` or `1`.
 - Dates are ISO 8601 strings such as `2026-10-25`. Timestamps are UTC, such as `2026-10-25T15:08:26.123Z`.
 
@@ -219,7 +238,7 @@ The `packageManager` field in `package.json` makes Cloudflare's build use pnpm 1
 
 ### Security
 
-The API has no login of its own, so anyone with the URL can read and change the data. Put the Worker behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-public-app/) and allow only your own email. You can enable it from the Worker's Settings → Domains & Routes in the dashboard.
+Pam has its own accounts (see [Accounts](#accounts)), and anyone who can reach it can create one. To choose who can reach it, put the Worker behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-public-app/) and allow only the emails you want. You can enable it from the Worker's Settings → Domains & Routes in the dashboard. Access only covers the hostnames you add to it, so also turn off the `workers.dev` route and Preview URLs (or add them to Access), or they stay open to everyone.
 
 ## Testing
 
@@ -228,12 +247,12 @@ There are three layers of tests:
 | Layer | Command | Where | What it covers |
 |---|---|---|---|
 | Unit | `pnpm test:unit` | `src/__tests__/` | Components, stores, models and the API client in a simulated browser (jsdom). `fetch` is replaced by an in-memory fake API (`fakeApi.ts`), so no server or database is needed. |
-| Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers routing, saving and reading every field, tags, migrations, validation, transactions, cascading deletes and the schema's constraints. The database is emptied before every test. |
+| Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers signing up and in, sessions, keeping accounts' data apart, routing, saving and reading every field, tags, migrations, validation, transactions, cascading deletes and the schema's constraints. The database is emptied before every test. |
 | End-to-end | `pnpm test:e2e` | `cypress/e2e/` | The production build in a real browser (Cypress), with the Worker and a local D1 database. Covers creating and editing projects and tasks, managing tags, the tile preview, sorting, and how errors are shown. |
 
 `pnpm test` runs the unit and integration tests together.
 
-End-to-end tests use their own database in `.wrangler/e2e-state`, so they never touch the data you use with `pnpm dev`. Each test clears it and adds the data it needs through the API, using the commands in `cypress/support/commands.ts`. `pnpm test:e2e` builds the app first. `pnpm test:e2e:dev` opens the Cypress app against the dev server instead, which is quicker for writing tests.
+End-to-end tests use their own database in `.wrangler/e2e-state`, so they never touch the data you use with `pnpm dev`. Each test signs in to a test account (`e2e@example.com`, created the first time), clears its data and adds the data it needs through the API, using the commands in `cypress/support/commands.ts`. `pnpm test:e2e` builds the app first. `pnpm test:e2e:dev` opens the Cypress app against the dev server instead, which is quicker for writing tests.
 
 If Cypress fails to start with `bad option: --smoke-test`, the `ELECTRON_RUN_AS_NODE` environment variable is set. Some editor extensions set it for the processes they start. Unset it, or run the tests from a normal terminal.
 
