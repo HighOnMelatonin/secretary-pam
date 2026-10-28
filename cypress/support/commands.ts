@@ -1,6 +1,7 @@
 /// <reference types="cypress" />
 // Commands that set up data through the real API, so each test starts from a known state.
-// The e2e server keeps its data in .wrangler/e2e-state, separate from `pnpm dev`.
+// The e2e server keeps its data in .wrangler/e2e-state, separate from `pnpm dev`. Tests run as
+// the account below, which is created the first time it is needed.
 import type { Project as ProjectData } from '../../src/types/project'
 import type { Tag as TagData } from '../../src/types/tag'
 import type { Task as TaskData } from '../../src/types/task'
@@ -8,8 +9,11 @@ import type { Task as TaskData } from '../../src/types/task'
 declare global {
   namespace Cypress {
     interface Chainable {
-      // Deletes every project, task and tag, including the starting tags
+      // Signs in to the test account (creating it if needed), then deletes its every project, task
+      // and tag, including the starting tags
       resetData(): Chainable<void>
+      // Signs the browser in to the test account, creating it if it doesn't exist yet
+      signIn(): Chainable<void>
       // Saves the tags and tasks, then the projects (projects can only refer to ones that exist)
       seed(data: { tags?: TagData[]; tasks?: TaskData[]; projects?: ProjectData[] }): Chainable<void>
       // Opens the hidden taskbar on the left from its strip and clicks one of its buttons
@@ -18,9 +22,20 @@ declare global {
   }
 }
 
+export const TEST_ACCOUNT = { email: 'e2e@example.com', password: 'e2e test password' }
+
 const apiPath = (resource: string, id: string) => `/api/${resource}/${encodeURIComponent(id)}`
 
+// The session cookie from the response is kept by the browser, so later requests and visits are
+// signed in
+Cypress.Commands.add('signIn', () => {
+  cy.request({ method: 'POST', url: '/api/auth/login', body: TEST_ACCOUNT, failOnStatusCode: false }).then(({ status }) => {
+    if (status !== 200) cy.request('POST', '/api/auth/signup', TEST_ACCOUNT)
+  })
+})
+
 Cypress.Commands.add('resetData', () => {
+  cy.signIn()
   for (const resource of ['projects', 'tasks', 'tags']) {
     cy.request<{ id: string }[]>(`/api/${resource}`).then(({ body }) => {
       for (const item of body) {

@@ -1,9 +1,10 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
 
 import { flushPromises, mount } from '@vue/test-utils'
-import { createPinia } from 'pinia'
+import { createPinia, setActivePinia } from 'pinia'
 import App from '../App.vue'
-import { routerAt } from './helpers'
+import { browser, useSession } from '../stores/session'
+import { button, routerAt } from './helpers'
 
 // Stands in for the Worker API: every list request returns no items
 function stubEmptyApi() {
@@ -24,6 +25,28 @@ describe('App', () => {
     expect(fetch).toHaveBeenCalledWith('/api/projects', undefined)
     expect(fetch).toHaveBeenCalledWith('/api/tasks', undefined)
     expect(wrapper.text()).toContain('Create a project')
+  })
+
+  it('shows who is signed in, with a button to sign out', async () => {
+    stubEmptyApi()
+    const load = vi.spyOn(browser, 'load').mockImplementation(() => {})
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useSession().account = { email: 'me@example.com' }
+    const wrapper = mount(App, { global: { plugins: [pinia, await routerAt()] } })
+
+    expect(wrapper.find('.account').text()).toContain('me@example.com')
+    await button(wrapper, 'Sign out').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenCalledWith('/api/auth/logout', { method: 'POST' })
+    expect(load).toHaveBeenCalledWith('/login')
+    load.mockRestore()
+  })
+
+  it('shows no account or Sign out button when signed out', async () => {
+    stubEmptyApi()
+    const wrapper = mount(App, { global: { plugins: [createPinia(), await routerAt()] } })
+    expect(wrapper.find('.account').exists()).toBe(false)
   })
 
   it('shows an error when the projects cannot be loaded', async () => {

@@ -188,6 +188,23 @@ describe('ProjectForm reference links', () => {
     expect(button(wrapper, 'Add link').attributes('disabled')).toBeDefined()
   })
 
+  it.each(['javascript:alert(1)', 'data:text/html,hi', 'example.com'])('refuses to add the link %s', async (url) => {
+    const wrapper = mount(ProjectForm, { props: { tasks } })
+    await wrapper.find('input[placeholder="https://"]').setValue(url)
+    await button(wrapper, 'Add link').trigger('click')
+
+    expect(wrapper.find('[role="alert"]').text()).toContain('https://')
+    await wrapper.find('input[placeholder="Project"]').setValue('Thesis')
+    await wrapper.find('form').trigger('submit')
+    expect(savedProject(wrapper)!.links).toEqual([])
+  })
+
+  it('does not make a stored unsafe link clickable', () => {
+    const project = { ...existing, links: [{ label: 'Bad', url: 'javascript:alert(1)' }] }
+    const wrapper = mount(ProjectForm, { props: { project, tasks } })
+    expect(wrapper.find('a').attributes('href')).toBeUndefined()
+  })
+
   it('opens links in a new tab and removes them', async () => {
     const wrapper = mount(ProjectForm, { props: { project: existing, tasks } })
     const link = wrapper.find('a[href="https://example.com/repo"]')
