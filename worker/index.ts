@@ -8,6 +8,19 @@
 //
 // and the same for /api/tasks and /api/tags. Each object is split across its own table and
 // the tables holding its arrays when saved, and put back together when read.
+//
+// Every value from a request is passed to D1 as a bound parameter (?1, ?2, ...), never written
+// into the SQL itself, so it can't change what a query does. The only SQL built from variables
+// uses constants: NOW, and table names from RESOURCES.
+import {
+  isSafeUrl,
+  LINK_PROTOCOLS,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_ID_LENGTH,
+  MAX_LIST_LENGTH,
+  MAX_NAME_LENGTH,
+  MAX_URL_LENGTH,
+} from '../src/types/limits'
 import {
   PRIORITIES,
   RELATION_TYPES,
@@ -81,15 +94,27 @@ function check(condition: boolean, message: string): asserts condition {
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 const isString = (value: unknown): value is string => typeof value === 'string'
+const isId = (value: unknown): value is string => isString(value) && value.length <= MAX_ID_LENGTH
 const isDateOrNull = (value: unknown): value is string | null =>
   value === null || (isString(value) && /^\d{4}-\d{2}-\d{2}$/.test(value))
+const isList = (value: unknown): value is unknown[] => Array.isArray(value) && value.length <= MAX_LIST_LENGTH
 const oneOf = <T>(values: readonly T[], value: unknown): value is T =>
   (values as readonly unknown[]).includes(value)
 const allDifferent = (values: unknown[]) => new Set(values).size === values.length
 const isRelation = (value: unknown): value is TaskRelation =>
-  isObject(value) && isString(value.taskId) && oneOf(RELATION_TYPES, value.type)
+  isObject(value) && isId(value.taskId) && oneOf(RELATION_TYPES, value.type)
 const isLink = (value: unknown): value is ReferenceLink =>
-  isObject(value) && isString(value.label) && isString(value.url)
+  isObject(value) &&
+  isString(value.label) &&
+  value.label.length <= MAX_NAME_LENGTH &&
+  isString(value.url) &&
+  value.url.length <= MAX_URL_LENGTH &&
+  isSafeUrl(value.url)
+
+function checkName(name: unknown): asserts name is string {
+  check(isString(name) && name.trim() !== '', 'name must be a non-empty string')
+  check(name.length <= MAX_NAME_LENGTH, `name must be at most ${MAX_NAME_LENGTH} characters`)
+}
 
 // Fields that projects and tasks share
 function checkCommon(
@@ -98,8 +123,11 @@ function checkCommon(
 ): asserts body is Record<string, unknown> & { name: string; description: string; priority: Priority } {
   check(isObject(body), 'Body must be a JSON object')
   check(body.id === id, 'id must match the URL')
-  check(isString(body.name) && body.name.trim() !== '', 'name must be a non-empty string')
-  check(isString(body.description), 'description must be a string')
+  checkName(body.name)
+  check(
+    isString(body.description) && body.description.length <= MAX_DESCRIPTION_LENGTH,
+    `description must be a string of at most ${MAX_DESCRIPTION_LENGTH} characters`,
+  )
   check(oneOf(PRIORITIES, body.priority), `priority must be one of ${PRIORITIES.join(', ')}`)
 }
 
@@ -109,8 +137,8 @@ function parseTask(body: unknown, id: string): Task {
   check(isDateOrNull(dueDate), 'dueDate must be null or a YYYY-MM-DD date')
   check(typeof completed === 'boolean', 'completed must be true or false')
   check(
-    Array.isArray(relations) && relations.every(isRelation),
-    `relations must be a list of { taskId, type } with type one of ${RELATION_TYPES.join(', ')}`,
+    isList(relations) && relations.every(isRelation),
+    `relations must be a list of at most ${MAX_LIST_LENGTH} { taskId, type } with type one of ${RELATION_TYPES.join(', ')}`,
   )
   check(allDifferent(relations.map((r) => r.taskId)), 'relations must not list a task twice')
   check(relations.every((r) => r.taskId !== id), 'a task cannot be related to itself')
@@ -130,11 +158,14 @@ function parseProject(body: unknown, id: string): Project {
   checkCommon(body, id)
   const { deliveryDate, taskIds, links, tagIds } = body
   check(isDateOrNull(deliveryDate), 'deliveryDate must be null or a YYYY-MM-DD date')
-  check(Array.isArray(tagIds) && tagIds.every(isString), 'tagIds must be a list of tag ids')
+  check(isList(tagIds) && tagIds.every(isId), `tagIds must be a list of at most ${MAX_LIST_LENGTH} tag ids`)
   check(allDifferent(tagIds), 'tagIds must not list a tag twice')
-  check(Array.isArray(taskIds) && taskIds.every(isString), 'taskIds must be a list of task ids')
+  check(isList(taskIds) && taskIds.every(isId), `taskIds must be a list of at most ${MAX_LIST_LENGTH} task ids`)
   check(allDifferent(taskIds), 'taskIds must not list a task twice')
-  check(Array.isArray(links) && links.every(isLink), 'links must be a list of { label, url }')
+  check(
+    isList(links) && links.every(isLink),
+    `links must be a list of at most ${MAX_LIST_LENGTH} { label, url }, with url starting ${LINK_PROTOCOLS.join(', ')}`,
+  )
 
   return {
     id,
@@ -151,7 +182,7 @@ function parseProject(body: unknown, id: string): Project {
 function parseTag(body: unknown, id: string): Tag {
   check(isObject(body), 'Body must be a JSON object')
   check(body.id === id, 'id must match the URL')
-  check(isString(body.name) && body.name.trim() !== '', 'name must be a non-empty string')
+  checkName(body.name)
   return { id, name: body.name.trim() }
 }
 
@@ -301,7 +332,11 @@ function error(status: number, message: string) {
   return json({ error: message }, status)
 }
 
+// Only JSON is accepted, so a form on another site (which can't send JSON without the browser
+// asking this Worker's permission first) can't save anything
 async function readJson(request: Request): Promise<unknown> {
+  const type = request.headers.get('Content-Type') ?? ''
+  check(type.split(';')[0]!.trim().toLowerCase() === 'application/json', 'Body must be sent as application/json')
   const text = await request.text()
   check(text.length <= MAX_BODY_BYTES, 'Body too large')
   try {
@@ -311,15 +346,26 @@ async function readJson(request: Request): Promise<unknown> {
   }
 }
 
+function decodeId(rawId: string) {
+  let id: string
+  try {
+    id = decodeURIComponent(rawId)
+  } catch {
+    throw new BadRequest('The id in the URL is not correctly encoded') // e.g. a stray "%"
+  }
+  check(id.length <= MAX_ID_LENGTH, `id must be at most ${MAX_ID_LENGTH} characters`)
+  return id
+}
+
 export default {
   async fetch(request, env) {
     // e.g. "/api/tasks/abc" -> ["", "api", "tasks", "abc"]
     const [, api, name, rawId, ...rest] = new URL(request.url).pathname.split('/')
     const resource = name !== undefined && Object.hasOwn(RESOURCES, name) ? RESOURCES[name] : undefined
     if (api !== 'api' || !resource || rest.length > 0) return error(404, 'Not found')
-    const id = rawId ? decodeURIComponent(rawId) : undefined
 
     try {
+      const id = rawId ? decodeId(rawId) : undefined
       await migrateOnce(env.DB)
       if (!id && request.method === 'GET') return json(await resource.list(env.DB))
       if (id && request.method === 'PUT') return json(await resource.save(env.DB, id, await readJson(request)))

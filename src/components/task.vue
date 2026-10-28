@@ -12,6 +12,7 @@ import {
   type Task,
 } from '@/types/task'
 import { isPastDeadline, type Project } from '@/types/project'
+import { MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH } from '@/types/limits'
 
 const props = defineProps<{
   task?: Task // task to edit; a new empty task is used when omitted
@@ -144,7 +145,7 @@ function cancel() {
     <form @submit.prevent="save">
       <label>
         Task name
-        <input v-model="draft.name" placeholder="Task" required />
+        <input v-model="draft.name" placeholder="Task" required :maxlength="MAX_NAME_LENGTH" />
       </label>
 
       <div class="grid">
@@ -167,7 +168,12 @@ function cancel() {
 
       <label>
         Description
-        <textarea v-model="draft.description" rows="4" placeholder="What needs to be delivered?" />
+        <textarea
+          v-model="draft.description"
+          rows="4"
+          placeholder="What needs to be delivered?"
+          :maxlength="MAX_DESCRIPTION_LENGTH"
+        />
       </label>
 
       <fieldset>

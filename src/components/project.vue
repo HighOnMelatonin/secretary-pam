@@ -6,6 +6,13 @@ import { computed, ref, toRaw, watch } from 'vue'
 import { PRIORITIES, type Task } from '@/types/task'
 import { completionStatus, createEmptyProject, isPastDeadline, resolveTasks, type Project } from '@/types/project'
 import type { Tag } from '@/types/tag'
+import {
+  isSafeUrl,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_NAME_LENGTH,
+  MAX_URL_LENGTH,
+  safeHref,
+} from '@/types/limits'
 
 const props = defineProps<{
   project?: Project // project to edit; a new empty project is used when omitted
@@ -78,10 +85,17 @@ function removeTask(id: string) {
 // Reference links
 const newLinkLabel = ref('')
 const newLinkUrl = ref('')
+const linkError = ref<string | null>(null)
+watch(newLinkUrl, () => (linkError.value = null))
 
+// Only web and email links, so a link can't run code (e.g. javascript:) when clicked
 function addLink() {
   const url = newLinkUrl.value.trim()
   if (!url) return
+  if (!isSafeUrl(url)) {
+    linkError.value = 'Links must be full web or email addresses, starting with http://, https:// or mailto:'
+    return
+  }
   draft.value.links.push({ label: newLinkLabel.value.trim() || url, url })
   newLinkLabel.value = ''
   newLinkUrl.value = ''
@@ -115,7 +129,7 @@ function cancel() {
     <form @submit.prevent="save">
       <label>
         Project name
-        <input v-model="draft.name" placeholder="Project" required />
+        <input v-model="draft.name" placeholder="Project" required :maxlength="MAX_NAME_LENGTH" />
       </label>
 
       <div class="grid">
@@ -146,7 +160,12 @@ function cancel() {
 
       <label>
         Description
-        <textarea v-model="draft.description" rows="4" placeholder="What does this project deliver?" />
+        <textarea
+          v-model="draft.description"
+          rows="4"
+          placeholder="What does this project deliver?"
+          :maxlength="MAX_DESCRIPTION_LENGTH"
+        />
       </label>
 
       <fieldset>
@@ -192,17 +211,24 @@ function cancel() {
         <legend>Reference links</legend>
         <ul v-if="draft.links.length">
           <li v-for="(link, i) in draft.links" :key="link.url">
-            <a :href="link.url" target="_blank" rel="noopener noreferrer">{{ link.label }}</a>
+            <a :href="safeHref(link.url)" target="_blank" rel="noopener noreferrer">{{ link.label }}</a>
             <button type="button" class="secondary outline" @click="removeLink(i)">Remove</button>
           </li>
         </ul>
         <p v-else><small>No reference links.</small></p>
 
         <div role="group">
-          <input v-model="newLinkLabel" placeholder="Label (e.g. GitHub repo)" />
-          <input v-model="newLinkUrl" type="url" placeholder="https://" @keydown.enter.prevent="addLink" />
+          <input v-model="newLinkLabel" placeholder="Label (e.g. GitHub repo)" :maxlength="MAX_NAME_LENGTH" />
+          <input
+            v-model="newLinkUrl"
+            type="url"
+            placeholder="https://"
+            :maxlength="MAX_URL_LENGTH"
+            @keydown.enter.prevent="addLink"
+          />
           <button type="button" :disabled="!newLinkUrl.trim()" @click="addLink">Add link</button>
         </div>
+        <p v-if="linkError" class="error" role="alert">{{ linkError }}</p>
       </fieldset>
 
       <div class="actions">

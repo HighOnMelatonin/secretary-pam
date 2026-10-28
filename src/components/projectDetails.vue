@@ -7,6 +7,7 @@ import { computed } from 'vue'
 import ProjectTimeline from './projectTimeline.vue'
 import TaskRow from './taskRow.vue'
 import { completionStatus, resolveTasks, type Project } from '@/types/project'
+import { safeHref } from '@/types/limits'
 import type { Tag } from '@/types/tag'
 import type { Task } from '@/types/task'
 
@@ -77,7 +78,7 @@ const status = computed(() => completionStatus(props.project, props.tasks))
         <h3 class="section-heading">Reference links</h3>
         <ul class="plain-list">
           <li v-for="link in project.links" :key="link.url">
-            <a :href="link.url" target="_blank" rel="noopener noreferrer">{{ link.label }}</a>
+            <a :href="safeHref(link.url)" target="_blank" rel="noopener noreferrer">{{ link.label }}</a>
           </li>
         </ul>
       </section>

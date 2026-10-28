@@ -6,6 +6,7 @@ import { storeToRefs } from 'pinia'
 import { useProjectList } from '@/stores/projectList'
 import { useTagList } from '@/stores/tagList'
 import { ARCHIVE_TAG_ID, createEmptyTag, type Tag } from '@/types/tag'
+import { MAX_NAME_LENGTH } from '@/types/limits'
 
 defineEmits<{
   close: []
@@ -80,6 +81,7 @@ async function add() {
           <input
             :value="nameOf(tag)"
             :aria-label="`Name of ${tag.name}`"
+            :maxlength="MAX_NAME_LENGTH"
             @input="drafts[tag.id] = ($event.target as HTMLInputElement).value"
           />
           <button type="submit" :disabled="!canRename(tag)">Rename</button>
@@ -97,7 +99,7 @@ async function add() {
     <p v-else><small>No tags yet.</small></p>
 
     <form role="group" @submit.prevent="add">
-      <input v-model="newName" placeholder="New tag (e.g. Hobbies)" aria-label="New tag name" />
+      <input v-model="newName" placeholder="New tag (e.g. Hobbies)" aria-label="New tag name" :maxlength="MAX_NAME_LENGTH" />
       <button type="submit" :disabled="!newName.trim()">Add tag</button>
     </form>
   </article>

@@ -295,6 +295,9 @@ describe('validation', () => {
     ['a relation with an unknown type', { relations: [{ taskId: 'b', type: 'depends_on' }] }],
     ['the same task related twice', { relations: [{ taskId: 'b', type: 'blocks' }, { taskId: 'b', type: 'related_to' }] }],
     ['a relation to itself', { relations: [{ taskId: 'a', type: 'blocks' }] }],
+    ['a name over 200 characters', { name: 'x'.repeat(201) }],
+    ['a description over 10,000 characters', { description: 'x'.repeat(10_001) }],
+    ['over 500 relations', { relations: Array.from({ length: 501 }, (_, i) => ({ taskId: `t${i}`, type: 'blocks' })) }],
   ])('rejects a task with %s', async (_, fields) => {
     await saveTask(task('b'))
     const response = await call('PUT', 'tasks/a', { ...task('a'), ...fields })
@@ -309,6 +312,12 @@ describe('validation', () => {
     ['taskIds that are not strings', { taskIds: [1] }],
     ['the same task twice', { taskIds: ['t', 't'] }],
     ['a link without a url', { links: [{ label: 'Repo' }] }],
+    ['a javascript: link', { links: [{ label: 'Repo', url: 'javascript:alert(document.cookie)' }] }],
+    ['a javascript: link hidden by case and whitespace', { links: [{ label: 'Repo', url: ' JavaScript:alert(1)' }] }],
+    ['a data: link', { links: [{ label: 'Repo', url: 'data:text/html,<script>alert(1)</script>' }] }],
+    ['a link that is not a full URL', { links: [{ label: 'Repo', url: 'example.com' }] }],
+    ['a link url over 2,000 characters', { links: [{ label: 'Repo', url: `https://example.com/${'x'.repeat(2_000)}` }] }],
+    ['a link label over 200 characters', { links: [{ label: 'x'.repeat(201), url: 'https://example.com' }] }],
   ])('rejects a project with %s', async (_, fields) => {
     await saveTask(task('t'))
     const response = await call('PUT', 'projects/p', { ...project('p'), ...fields })
@@ -325,6 +334,57 @@ describe('validation', () => {
   ])('rejects a body that %s', async (_, body) => {
     expect((await call('PUT', 'tasks/a', body)).status).toBe(400)
     expect(await listTasks()).toEqual([])
+  })
+
+  it('accepts http, https and mailto links', async () => {
+    const links = [
+      { label: 'Web', url: 'http://example.com' },
+      { label: 'Secure', url: 'https://example.com/a?b=c#d' },
+      { label: 'Email', url: 'mailto:me@example.com' },
+    ]
+    expect((await saveProject(project('p', { links }))).status).toBe(200)
+  })
+
+  it.each<[string, string | undefined]>([
+    ['as a form', 'application/x-www-form-urlencoded'],
+    ['as plain text', 'text/plain'],
+    ['with no type', undefined],
+  ])('rejects a body sent %s', async (_, type) => {
+    const response = await SELF.fetch('http://localhost/api/tasks/a', {
+      method: 'PUT',
+      headers: type ? { 'Content-Type': type } : {},
+      body: JSON.stringify(task('a')),
+    })
+    expect(response.status).toBe(400)
+    expect(await listTasks()).toEqual([])
+  })
+
+  it('accepts JSON with a charset', async () => {
+    const response = await SELF.fetch('http://localhost/api/tasks/a', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify(task('a')),
+    })
+    expect(response.status).toBe(200)
+  })
+
+  it.each([
+    ['is not correctly encoded', 'tasks/%E0%A4%A'],
+    ['is over 100 characters', `tasks/${'x'.repeat(101)}`],
+  ])('answers 400 for an id that %s', async (_, path) => {
+    expect((await call('DELETE', path)).status).toBe(400)
+  })
+
+  it('stores text that looks like SQL as it is, without running it', async () => {
+    const name = "'); DROP TABLE tasks; --"
+    await saveTask(task('a', { name, description: "' OR 1=1 --" }))
+    await saveTask(task("b' OR '1'='1"))
+    await call('DELETE', `tasks/${encodeURIComponent("x' OR '1'='1")}`)
+
+    expect((await listTasks()).map((t) => [t.id, t.name])).toEqual([
+      ['a', name],
+      ["b' OR '1'='1", "Task b' OR '1'='1"],
+    ])
   })
 
   it('rejects a relation to a task that does not exist', async () => {

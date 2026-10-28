@@ -155,7 +155,9 @@ Vue app (Pinia stores)  ──fetch──▶  Worker /api/*  ──SQL──▶ 
 | `PUT /api/tags/:id` | Create or rename the tag in the body; returns it |
 | `DELETE /api/tags/:id` | Delete the tag, removing it from its projects (`400` for the built-in `archive` tag) |
 
-Bodies are the `Project`, `Task` and `Tag` objects from `src/types`. The Worker checks every field and answers `400` with an error message if something is invalid, including a reference to a task or tag that doesn't exist, or a tag name that another tag already has. Each save runs as one transaction, so a failed save changes nothing.
+Bodies are the `Project`, `Task` and `Tag` objects from `src/types`, sent as `application/json`. The Worker checks every field and answers `400` with an error message if something is invalid, including a reference to a task or tag that doesn't exist, or a tag name that another tag already has. Each save runs as one transaction, so a failed save changes nothing.
+
+The limits in `src/types/limits.ts` apply to the forms and the API alike: names and link labels up to 200 characters, descriptions up to 10,000, ids up to 100, link URLs up to 2,000, and up to 500 tasks, tags, links or relations on one item. Reference links must start with `http:`, `https:` or `mailto:`, so a `javascript:` link can't run code in the app when clicked. Every value reaches D1 as a bound parameter, never as part of the SQL.
 
 The Worker doesn't check that a task's due date is on or before the delivery dates of its projects. Only the task and project forms enforce that, so a project or task saved straight through the API can break the rule. Its form will then refuse to save until the dates are fixed.
 
