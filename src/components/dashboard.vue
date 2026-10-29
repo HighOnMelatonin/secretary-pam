@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Main page: lists live projects, with archived ones in a section below, or prompts the user to
-// create one. Shown for every route;
+// create one; or, at /calendar, shows the calendar instead of the list. Shown for every route;
 // the route says which form or details page, if any, is open in place of the list (see
 // router/index.ts).
 import { computed, onMounted, ref, watch } from 'vue'
@@ -15,6 +15,7 @@ import ProjectTile from './projectTile.vue'
 import ProjectDetails from './projectDetails.vue'
 import TaskDetails from './taskDetails.vue'
 import ListControls from './listControls.vue'
+import CalendarView from './calendarView.vue'
 import { useProjectView } from '@/stores/projectView'
 import { useProjectList } from '@/stores/projectList'
 import { useTagList } from '@/stores/tagList'
@@ -121,22 +122,30 @@ function close() {
 }
 
 const loading = ref(true)
-// Set when projects or tasks couldn't be loaded, so an empty list isn't shown as "no projects"
-const loadFailed = ref(false)
+// Why each store couldn't be loaded, if it couldn't. The calendar shows whatever did load; every
+// other view needs all of it, so an empty list isn't shown as "no projects".
+const loadErrors = ref<Record<'projects' | 'tasks' | 'tags', string | null>>({ projects: null, tasks: null, tags: null })
+const loadFailed = computed(() => Object.values(loadErrors.value).some((e) => e !== null))
 const error = ref<string | null>(null)
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 onMounted(async () => {
-  try {
-    await Promise.all([projectList.load(), taskList.load(), tagList.load()])
-  } catch (e) {
-    loadFailed.value = true
-    error.value = `Couldn't load your projects: ${messageOf(e)}`
-  } finally {
-    loading.value = false
-  }
+  const stores = ['projects', 'tasks', 'tags'] as const
+  const results = await Promise.allSettled([projectList.load(), taskList.load(), tagList.load()])
+  results.forEach((result, i) => {
+    if (result.status === 'rejected') loadErrors.value[stores[i]!] = messageOf(result.reason)
+  })
+  const failure = Object.values(loadErrors.value).find((e) => e !== null)
+  if (failure) error.value = `Couldn't load your projects: ${failure}`
+  loading.value = false
 })
+
+// For the calendar, which keeps a source's items when another source fails
+const calendarSources = computed(() => ({
+  task: { loading: loading.value, error: loadErrors.value.tasks },
+  project: { loading: loading.value, error: loadErrors.value.projects },
+}))
 
 // Follows the route once the data has loaded, since an edit link or details page needs its
 // project or task. A link to one that doesn't exist goes back to the list.
@@ -146,7 +155,8 @@ watch(
     if (loading.value) return
     editor.value = editorForRoute()
     if (!editor.value) openedInApp = false
-    if (route.name !== 'dashboard' && !editor.value && !page.value) router.replace({ name: 'dashboard' })
+    const isList = route.name === 'dashboard' || route.name === 'calendar'
+    if (!isList && !editor.value && !page.value) router.replace({ name: 'dashboard' })
   },
   { immediate: true },
 )
@@ -208,7 +218,7 @@ async function onToggleTask(task: Task) {
 
     <p v-if="loading" aria-busy="true">Loading your projects…</p>
 
-    <p v-else-if="loadFailed">Reload the page to try again.</p>
+    <p v-else-if="loadFailed && route.name !== 'calendar'">Reload the page to try again.</p>
 
     <ProjectForm
       v-else-if="editor?.kind === 'project'"
@@ -246,6 +256,16 @@ async function onToggleTask(task: Task) {
       :tasks="tasks"
       :projects="projects"
       @edit="open({ name: 'edit-task', params: { id: $event.id } })"
+    />
+
+    <CalendarView
+      v-else-if="route.name === 'calendar'"
+      :tasks="tasks"
+      :projects="projects"
+      :tags="tags"
+      :sources="calendarSources"
+      @edit-task="open({ name: 'edit-task', params: { id: $event.id } })"
+      @toggle-task="onToggleTask"
     />
 
     <!-- The list: the upcoming tasks, then the projects -->

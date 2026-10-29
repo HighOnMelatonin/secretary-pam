@@ -45,6 +45,9 @@ export function tagStyle(tag: Tag) {
 // project back. It can be renamed but not deleted.
 export const ARCHIVE_TAG_ID = 'archive'
 
+// Stands for "no tags" in a tag filter, beside the tags' own ids
+export const NO_TAG = ''
+
 export function createEmptyTag(): Tag {
   return { id: crypto.randomUUID(), name: '', color: DEFAULT_TAG_COLOR }
 }

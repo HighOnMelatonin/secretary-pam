@@ -15,6 +15,7 @@ declare module 'vue-router' {
 
 export const routes: RouteRecordRaw[] = [
   { path: '/', name: 'dashboard', component: Dashboard },
+  { path: '/calendar', name: 'calendar', component: Dashboard }, // ?month=YYYY-MM
   { path: '/login', name: 'login', component: Login, props: { mode: 'login' }, meta: { public: true } },
   { path: '/signup', name: 'signup', component: Login, props: { mode: 'signup' }, meta: { public: true } },
   { path: '/projects/new', name: 'new-project', component: Dashboard },

@@ -175,6 +175,35 @@
   font-size: 0.9rem;
 }
 
+/* Filter chips (tagFilter.vue, listControls.vue): toggles shaped like the badges, sized by
+   .compact, and filled when on with the accent of the badges they filter by, plus a tick so the
+   state doesn't rest on colour alone */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.chip {
+  border: 1px solid var(--pam-cream-muted);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--pam-cream);
+}
+
+.chip[aria-pressed='true']::before {
+  content: '✓ ';
+  content: '✓ ' / ''; /* the empty alt text keeps screen readers from reading it; aria-pressed says it */
+}
+
+/* Filled with the tag's colour (from tagStyle()), or indigo for No tag. A tag's colour can be as
+   dark as the page, so the cream border marks the chip's edge */
+.tag-chip[aria-pressed='true'] {
+  border-color: var(--pam-cream);
+  background: var(--pam-tag-fill, var(--pam-indigo));
+  color: var(--pam-tag-text, var(--pam-cream));
+}
+
 /* A heading with its buttons at the other end, e.g. Live projects and Expand all. The buttons
    wrap under the heading when there isn't room beside it. */
 .heading-row {

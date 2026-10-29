@@ -16,12 +16,16 @@ export function fakeApi(initial: { projects?: Project[]; tasks?: Task[]; tags?: 
     data,
     // When set, every request fails with a 500 and this error message
     failWith: null as string | null,
+    // When set too, only requests for this resource (e.g. 'tasks') fail
+    failOn: null as string | null,
     // Each request as "METHOD /path", in order
     requests: [] as string[],
     fetch: vi.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? 'GET'
       api.requests.push(`${method} ${url}`)
-      if (api.failWith) return Response.json({ error: api.failWith }, { status: 500 })
+      if (api.failWith && (!api.failOn || url.startsWith(`/api/${api.failOn}`))) {
+        return Response.json({ error: api.failWith }, { status: 500 })
+      }
 
       const [, , resource, rawId] = url.split('/') as [string, string, keyof typeof data, string?]
       const items: { id: string }[] = data[resource]

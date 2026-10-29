@@ -38,7 +38,7 @@ describe('Tags', () => {
 
     cy.taskbar('Tags')
     tagRow('Work').should('contain', 'Used by 2 projects')
-    tagRow('Work').find('input').clear().type('Internship')
+    tagRow('Work').find('input[aria-label="Name of Work"]').clear().type('Internship')
     tagRow('Work').contains('button', 'Rename').click()
     cy.contains('button', 'Done').click()
 
@@ -54,8 +54,13 @@ describe('Tags', () => {
 
     cy.taskbar('Tags')
     tagRow('Work').find('.color-swatch').should('have.text', '#343ca6')
-    // The browser's own picker can't be driven, so the colour is set the way the picker sets it
-    tagRow('Work').find('input[type="color"]').invoke('val', '#f5d76e').trigger('input').trigger('change')
+    // The browser's own picker can't be driven, so the colour is set the way the picker sets it.
+    // Its input is hidden behind the Choose colour button, hence force.
+    tagRow('Work')
+      .find('input[type="color"]')
+      .invoke('val', '#f5d76e')
+      .trigger('input', { force: true })
+      .trigger('change', { force: true })
     tagRow('Work').find('.color-swatch').should('have.text', '#f5d76e')
     cy.request('/api/tags').its('body').should('deep.include', { id: 'work', name: 'Work', color: '#f5d76e' })
     cy.contains('button', 'Done').click()

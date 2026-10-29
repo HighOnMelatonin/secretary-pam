@@ -47,6 +47,27 @@ describe('App', () => {
     stubEmptyApi()
     const wrapper = mount(App, { global: { plugins: [createPinia(), await routerAt()] } })
     expect(wrapper.find('.account').exists()).toBe(false)
+    expect(wrapper.find('.app-nav').exists()).toBe(false)
+  })
+
+  it('links to the projects and the calendar from the header, marking the open one', async () => {
+    stubEmptyApi()
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useSession().account = { email: 'me@example.com' }
+    const router = await routerAt()
+    const wrapper = mount(App, { global: { plugins: [pinia, router] } })
+    const links = () => wrapper.findAll('.app-nav a').map((a) => [a.text(), a.attributes('href'), a.attributes('aria-current')])
+    expect(links()).toEqual([
+      ['Projects', '/', 'page'],
+      ['Calendar', '/calendar', undefined],
+    ])
+
+    await wrapper.findAll('.app-nav a')[1]!.trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('calendar')
+    expect(links()[1]![2]).toBe('page')
+    expect(wrapper.find('#calendar-heading').exists()).toBe(true)
   })
 
   it('shows an error when the projects cannot be loaded', async () => {

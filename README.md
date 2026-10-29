@@ -10,6 +10,7 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 - **Dashboard** of live projects, with **archived projects** in a collapsible section below. When a project's last task is done, it gets the built-in **Archive** tag and moves to that section. Remove the tag in the project's form to bring it back; it stays live until its tasks go from not all done to all done again.
 - **Sort** the projects by delivery date, urgency (most or least urgent first) or % complete, and **filter** them by tag and urgency. The choices are remembered in the browser.
 - **Project tiles** show the project's tags, priority, due date, an overdue tag and task progress. Click a tile to expand a preview of its timeline, tasks and reference links, with an **Edit** button on each task. Click a task's check mark to mark it done or not done. Each task's name links to its page, and **View more** opens the project's page. **Expand all** above the list opens every tile at once (and **Collapse all** closes them), and open tiles stay open after a visit to a project's page.
+- **Calendar** (`/calendar`, linked from **Calendar** in the header, with **Projects** leading back) shows a month of unfinished tasks on their due dates and live projects' delivery dates as flags. Each is a chip in the colour of its tag (a task takes the first tag of the first live project it's in; untagged things are grey), with cream or green text, whichever reads better, and links to its page. A day shows up to three chips, then **+N more** to expand it. Overdue chips get a coral ring, and today a cream ring, as on a project's timeline. **‹**, **Today** and **›** move between months, and the month is kept in the address (`?month=2026-11`), so going back after an edit returns to it and the link can be shared. The week can start on Monday or Sunday (remembered in the browser), and the chips can be filtered by tag. Below the grid, **No due date** opens the tasks that have none. On phones the grid is compact, with a dot per item, and tapping a day lists its tasks below with their check marks, **Edit** buttons and projects. Completed tasks and archived projects aren't shown. It is view-only for now: dates are changed in the forms.
 - **Project pages** (`/projects/:id`) use the whole screen for one project: its details and progress, its timeline, every task with its description, and its reference links.
 - **Task pages** (`/tasks/:id`) show a task's status, priority, due date and description, the projects it is in, and its related tasks. Relations are shown from both sides, so if A blocks B, B's page says it is blocked by A.
 - **Projects** have a name, description, delivery date, priority, any number of tags, tasks and reference links.
@@ -101,6 +102,11 @@ src/
   components/
     dashboard.vue     main page: loads data, lists projects, opens the forms
     listControls.vue  the sort menu and the tag and urgency filters
+    tagFilter.vue     the tag filter's chips, shared by listControls and the calendar
+    calendarView.vue  the calendar at /calendar: its toolbar, the month in the URL, and the selected day on phones
+    calendarGrid.vue  a month as a table of weeks, full or compact
+    calendarDay.vue   one day of the grid (with data-date): its chips, or its dots in the compact grid
+    undatedTray.vue   the tasks with no due date, below the calendar
     taskbar.vue       the Tags, Add task and Add project buttons: a hidden bar on the left, or a + button on phones
     upcomingPanel.vue the upcoming tasks section above the projects, and the overdue counter that floats once it scrolls away
     projectTile.vue   one project on the dashboard; expands into a preview
@@ -108,9 +114,10 @@ src/
     task.vue          create/edit a task, including which projects it is in
     tags.vue          add, rename, recolour and delete tags
     login.vue         the sign-in and sign-up pages
-  router/             one route per form, all showing the dashboard, so back closes forms
+  router/             one route per form and the calendar, all showing the dashboard, so back closes forms
   stores/             Pinia stores for projects, tasks, tags and the signed-in account; they load and save through the API
-  types/              Project, Task and Tag models, shared by the app and the Worker, and which tasks are upcoming
+  types/              Project, Task and Tag models, shared by the app and the Worker, which tasks are upcoming,
+                      and the calendar's items, dates and month grid (calendar.ts)
   api.ts              client for the Worker API, including signing in
   __tests__/          unit tests
 worker/
@@ -267,7 +274,7 @@ There are three layers of tests:
 |---|---|---|---|
 | Unit | `pnpm test:unit` | `src/__tests__/` | Components, stores, models and the API client in a simulated browser (jsdom). `fetch` is replaced by an in-memory fake API (`fakeApi.ts`), so no server or database is needed. |
 | Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers signing up and in, sessions, keeping accounts' data apart, routing, saving and reading every field, tags, migrations, validation, transactions, cascading deletes and the schema's constraints. The database is emptied before every test. |
-| End-to-end | `pnpm test:e2e` | `cypress/e2e/` | The production build in a real browser (Cypress), with the Worker and a local D1 database. Covers creating and editing projects and tasks, managing tags, the tile preview, sorting, and how errors are shown. |
+| End-to-end | `pnpm test:e2e` | `cypress/e2e/` | The production build in a real browser (Cypress), with the Worker and a local D1 database. Covers creating and editing projects and tasks, managing tags, the tile preview, sorting, the calendar, and how errors are shown. |
 
 `pnpm test` runs the unit and integration tests together.
 
@@ -282,7 +289,9 @@ Planned, not built yet:
 - Task list view
 - Project list view, including completed projects
 - Messages
-- Settings and profile
+- Settings and profile (the calendar's week start would move there from the browser's storage)
+- **Rescheduling from the calendar**: drag a chip to another day on wide screens; on phones (where drag and drop doesn't work) tap it, then **Move to…** with a date picker. Dragging a task from **No due date** onto a day gives it that date. Saves through `taskList.setDueDates`, showing the move straight away and undoing it if the save fails. Items already carry `editable` (false for now) to decide what can be moved. Before this, the rule that a task can't be due after a project's delivery date (only checked in the forms today) moves into a shared function that the Worker enforces too, since a task can be in several projects, and moving a delivery date earlier goes through the same clash fixes the project form offers.
+- **Google Calendar, both ways**: OAuth and token refresh in the Worker, tokens stored per account in D1, the client secret set with `wrangler secret`. Tasks get a `googleEventId`, with the event's etag and update time to detect conflicting edits. Events come in through a third adapter beside `taskToItems` and `projectToItems` in `src/types/calendar.ts`, which already asks for items by date range (as Google's API does), keeps a loading and error state per source, places timed events after all-day ones, and has room for time zones and Google's exclusive end dates on all-day events.
 
 ## Editor setup
 
