@@ -125,7 +125,7 @@ function cancel() {
 </script>
 
 <template>
-  <article class="project-container">
+  <article class="project-container edit-form">
     <form @submit.prevent="save">
       <label>
         Project name
@@ -176,7 +176,7 @@ function cancel() {
           <li v-for="task in projectTasks" :key="task.id">
             <span>
               <!-- On one line, so the space between the name and the note is kept -->
-              <span :class="{ done: task.completed }">{{ task.name }}</span> <small v-if="taskDueDates[task.id]" class="pending">due date moves to {{ taskDueDates[task.id] }}</small>
+              <span :class="{ struck: task.completed }">{{ task.name }}</span> <small v-if="taskDueDates[task.id]" class="pending">due date moves to {{ taskDueDates[task.id] }}</small>
             </span>
             <button type="button" class="secondary outline" @click="removeTask(task.id)">Remove</button>
           </li>
@@ -197,10 +197,10 @@ function cancel() {
             ({{ draft.deliveryDate }}). Extend the project's deadline or move the task's due date.
           </p>
           <div class="date-fixes">
-            <button type="button" class="secondary" @click="extendDeadline(task)">
+            <button type="button" class="secondary compact" @click="extendDeadline(task)">
               Extend project to {{ dueDateOf(task) }}
             </button>
-            <button type="button" class="secondary outline" @click="moveDueDate(task)">
+            <button type="button" class="secondary outline compact" @click="moveDueDate(task)">
               Move {{ task.name }} to {{ draft.deliveryDate }}
             </button>
           </div>
@@ -240,41 +240,8 @@ function cancel() {
 </template>
 
 <style scoped>
-li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-li button {
-  width: auto;
-  margin: 0;
-  padding: 0.25rem 0.75rem;
-}
-
-.done {
-  text-decoration: line-through;
-  opacity: 0.7;
-}
-
-.pending {
-  margin-left: 0.5rem;
-  color: var(--pico-muted-color);
-}
-
-.actions {
-  display: flex;
-  gap: 0.5rem;
-}
-
-/* Below Pico's 768px breakpoint, where .grid would put each field on its own line, delivery
-   date and priority still share one */
-@media (max-width: 767px) {
-  .grid {
-    grid-template-columns: 1fr 1fr;
-  }
-}
+/* The lists, the sticky Save and Cancel and the date fields' layout are shared with the task
+   form (.edit-form in main.css) */
 
 /* The tags sit side by side, wrapping onto more lines as needed */
 .tags {
@@ -291,25 +258,4 @@ li button {
   margin: 0;
 }
 
-@media (max-width: 575px) {
-  fieldset ul {
-    padding-left: 0;
-  }
-
-  /* Save and Cancel stay at the bottom of the screen while the long form scrolls */
-  .actions {
-    position: sticky;
-    bottom: 0;
-    z-index: 1;
-    margin: 0 calc(var(--pico-block-spacing-horizontal) * -1) calc(var(--pico-block-spacing-vertical) * -1);
-    padding: 0.75rem var(--pico-block-spacing-horizontal) calc(0.75rem + env(safe-area-inset-bottom));
-    border-top: 1px solid var(--pico-muted-border-color);
-    border-radius: 0 0 var(--pico-border-radius) var(--pico-border-radius);
-    background: var(--pico-card-background-color);
-  }
-
-  .actions button {
-    margin: 0;
-  }
-}
 </style>

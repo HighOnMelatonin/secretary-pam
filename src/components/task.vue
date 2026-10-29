@@ -141,7 +141,7 @@ function cancel() {
 </script>
 
 <template>
-  <article class="task-container">
+  <article class="task-container edit-form">
     <form @submit.prevent="save">
       <label>
         Task name
@@ -203,10 +203,10 @@ function cancel() {
             Extend the project's deadline or move the task's due date.
           </p>
           <div class="date-fixes">
-            <button type="button" class="secondary" @click="extendDeadline(project)">
+            <button type="button" class="secondary compact" @click="extendDeadline(project)">
               Extend {{ project.name }} to {{ draft.dueDate }}
             </button>
-            <button type="button" class="secondary outline" @click="moveDueDate(project)">
+            <button type="button" class="secondary outline compact" @click="moveDueDate(project)">
               Move task to {{ deadlineOf(project) }}
             </button>
           </div>
@@ -247,58 +247,3 @@ function cancel() {
     </form>
   </article>
 </template>
-
-<style scoped>
-li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-li button {
-  width: auto;
-  margin: 0;
-  padding: 0.25rem 0.75rem;
-}
-
-.pending {
-  margin-left: 0.5rem;
-  color: var(--pico-muted-color);
-}
-
-.actions {
-  display: flex;
-  gap: 0.5rem;
-}
-
-/* Below Pico's 768px breakpoint, where .grid would put each field on its own line:
-   due date and priority share one */
-@media (max-width: 767px) {
-  .grid {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-@media (max-width: 575px) {
-  fieldset ul {
-    padding-left: 0;
-  }
-
-  /* Add/Save and Cancel stay at the bottom of the screen while the long form scrolls */
-  .actions {
-    position: sticky;
-    bottom: 0;
-    z-index: 1;
-    margin: 0 calc(var(--pico-block-spacing-horizontal) * -1) calc(var(--pico-block-spacing-vertical) * -1);
-    padding: 0.75rem var(--pico-block-spacing-horizontal) calc(0.75rem + env(safe-area-inset-bottom));
-    border-top: 1px solid var(--pico-muted-border-color);
-    border-radius: 0 0 var(--pico-border-radius) var(--pico-border-radius);
-    background: var(--pico-card-background-color);
-  }
-
-  .actions button {
-    margin: 0;
-  }
-}
-</style>

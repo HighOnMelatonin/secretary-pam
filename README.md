@@ -10,13 +10,14 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 - **Dashboard** of live projects, with **archived projects** in a collapsible section below. When a project's last task is done, it gets the built-in **Archive** tag and moves to that section. Remove the tag in the project's form to bring it back; it stays live until its tasks go from not all done to all done again.
 - **Sort** the projects by delivery date, urgency (most or least urgent first) or % complete, and **filter** them by tag and urgency. The choices are remembered in the browser.
 - **Project tiles** show the project's tags, priority, due date, an overdue tag and task progress. Click a tile to expand a preview of its timeline, tasks and reference links, with an **Edit** button on each task. Click a task's check mark to mark it done or not done. Each task's name links to its page, and **View more** opens the project's page. **Expand all** above the list opens every tile at once (and **Collapse all** closes them), and open tiles stay open after a visit to a project's page.
+- **Calendar** (`/calendar`, linked from **Calendar** in the header, with **Projects** leading back) shows a month of unfinished tasks on their due dates and live projects' delivery dates as flags. Each is a chip in the colour of its tag (a task takes the first tag of the first live project it's in; untagged things are grey), with cream or green text, whichever reads better, and links to its page. A day shows up to three chips, then **+N more** to expand it. Overdue chips get a coral ring, and today a cream ring, as on a project's timeline. **‹**, **Today** and **›** move between months, and the month is kept in the address (`?month=2026-11`), so going back after an edit returns to it and the link can be shared. The week can start on Monday or Sunday (remembered in the browser), and the chips can be filtered by tag. Below the grid, **No due date** opens the tasks that have none. On phones the grid is compact, with a dot per item, and tapping a day lists its tasks below with their check marks, **Edit** buttons and projects. Completed tasks and archived projects aren't shown. It is view-only for now: dates are changed in the forms.
 - **Project pages** (`/projects/:id`) use the whole screen for one project: its details and progress, its timeline, every task with its description, and its reference links.
 - **Task pages** (`/tasks/:id`) show a task's status, priority, due date and description, the projects it is in, and its related tasks. Relations are shown from both sides, so if A blocks B, B's page says it is blocked by A.
 - **Projects** have a name, description, delivery date, priority, any number of tags, tasks and reference links.
 - **Taskbar** hidden on the left edge of the screen. Hover over it to slide it out over the page, with buttons for **Tags**, **Add task** and **Add project**. On phones and other touch screens these are behind a **+** button in the bottom-right corner instead.
-- **Upcoming tasks** in a section at the top of the dashboard, above the projects. It lists every unfinished task that is overdue or due in the next 14 days, from all projects, soonest first, with each task's projects, check mark and **Edit** button. Tasks with no due date, or only in archived projects, are left out. Once the section scrolls out of view, a coral **overdue** counter floats in the top-right corner; click it to scroll back up to it.
+- **Upcoming tasks** in a section at the top of the dashboard, above the projects. It lists every unfinished task that is overdue or due in the next 14 days, from all projects, soonest first, with each task's projects, check mark and **Edit** button. Tasks with no due date, or only in archived projects, are left out. **Show fewer** collapses the section to its first two tasks (and **Show all** expands it again); the browser remembers which. Once the section scrolls out of view, a coral **overdue** counter floats in the top-right corner; click it to scroll back up to it.
 - **Works on phones**: each form has its own address (such as `/projects/new` or `/tags`), so the back button or gesture closes it, and the forms keep Save and Cancel pinned to the bottom of the screen.
-- **Tags** such as School (SUTD), Work and Personal file projects by area of life. Add, rename and delete them from **Tags** in the taskbar. Renaming a tag renames it on every project, and deleting one removes it from its projects. The Archive tag can be renamed but not deleted.
+- **Tags** such as School (SUTD), Work and Personal file projects by area of life. Add, rename, recolour and delete them from **Tags** in the taskbar. Each tag shows its colour beside a **Choose colour** button, which opens the browser's colour picker: any colour can be chosen, and it fills the tag's badges and filter chip, with cream or green text, whichever is easier to read on it. Tags start indigo. Renaming a tag renames it on every project, and deleting one removes it from its projects. The Archive tag can be renamed but not deleted.
 - **Tasks** have a name, description, due date, priority, completed flag and relations to other tasks (blocks, blocked by, subtask of, parent of, related to). A task can be assigned to several projects, from either the project form or the task form. A task can't be due after the delivery date of a project it's in: once both dates are set, either form points out the clash, offers to extend the project's deadline or move the task's due date, and won't add the task or save until it's fixed.
 
 ## Tech stack
@@ -40,14 +41,16 @@ A dark theme: [Pico CSS](https://picocss.com/) recoloured in `src/assets/css/mai
 | Forest green | `#204030` | `--pam-green` | Page background, form fields, and text on cream or coral fills |
 | Raised green | `#2a5040` | `--pam-green-raised` | Cards (project tiles, forms), the taskbar and menus |
 | Cream | `#faefe0` | `--pam-cream` | Text, primary buttons, progress bars |
-| Indigo (accent) | `#343ca6` | `--pam-indigo` | Categories: project tag badges, selected tag filters |
+| Indigo (accent) | `#343ca6` | `--pam-indigo` | Categories: project tag badges, selected tag filters (the default tag colour) |
 | Coral (accent) | `#e69e7a` | `--pam-coral` | Needs attention: urgent and overdue badges, selected urgency filters |
+
+Tags are indigo unless given a colour of their own, which can be any colour (`Tag.color`, a `#rrggbb` code). A tag's badge and its selected filter chip are filled with it, and their text is cream or forest green, whichever contrasts more with the fill (`textColorOn` in `src/types/tag.ts`). `tagStyle(tag)` sets both as the CSS variables `--pam-tag-fill` and `--pam-tag-text`, which the styles fall back from to indigo and cream.
 
 Three shades are derived from these: `--pam-green-line` (`#3d6652`) for borders and secondary buttons, `--pam-cream-muted` (cream at 68%) for secondary text, and `--pam-cream-faint` (cream at 14%) for focus rings.
 
 ### Accents
 
-The accents carry meaning, so keep them to their jobs: **indigo** says which area of life something belongs to, and **coral** says it needs attention. Using them for decoration would blur that.
+The accents carry meaning, so keep them to their jobs: **indigo** (or a tag's own colour) says which area of life something belongs to, and **coral** says it needs attention. Using them for decoration would blur that.
 
 Their contrast with the rest of the palette decides how they can be used:
 
@@ -73,7 +76,24 @@ Priority badges get louder as the priority rises, and overdue is the loudest:
 | high | cream outline |
 | urgent | coral outline |
 | overdue | coral fill |
-| project tag (e.g. Work) | indigo fill, in the case it was typed |
+| project tag (e.g. Work) | filled with the tag's colour (indigo by default), in the case it was typed |
+
+### Shared styles
+
+Styles used in more than one place live in `main.css`, and each component keeps only its own layout in a `<style scoped>` block, so its class names can't clash with another's. Reuse these rather than restyling a copy:
+
+| Class | For |
+|---|---|
+| `.small` | Buttons among a row's or tile's content: Edit, View more, Choose colour |
+| `.compact` | Buttons beside a heading or among a list's controls: Expand all, Show fewer, Clear filters, filter chips, a date clash's fixes |
+| `.heading-row` | A heading with its buttons at the other end, wrapping under it when narrow; `.page-header` adds the no-wrap version for a project or task page's title |
+| `.tag` and its variants | Badges: priorities, overdue, and `.project-tag` coloured by `tagStyle()` |
+| `.meta` | The row of a project's or task's badges and due date |
+| `.section-heading`, `.plain-list` | Small uppercase headings, and lists without bullets |
+| `.struck` | A completed task's name |
+| `.details-page` | Project and task pages: their description, divided sections and `.columns` |
+| `.edit-form` | Project and task forms: the lists of added items, pending date notes, and Save and Cancel kept at the bottom on phones |
+| `.error`, `.date-error` | Error messages, and a date clash with its fixes |
 
 ## Project structure
 
@@ -82,16 +102,22 @@ src/
   components/
     dashboard.vue     main page: loads data, lists projects, opens the forms
     listControls.vue  the sort menu and the tag and urgency filters
+    tagFilter.vue     the tag filter's chips, shared by listControls and the calendar
+    calendarView.vue  the calendar at /calendar: its toolbar, the month in the URL, and the selected day on phones
+    calendarGrid.vue  a month as a table of weeks, full or compact
+    calendarDay.vue   one day of the grid (with data-date): its chips, or its dots in the compact grid
+    undatedTray.vue   the tasks with no due date, below the calendar
     taskbar.vue       the Tags, Add task and Add project buttons: a hidden bar on the left, or a + button on phones
     upcomingPanel.vue the upcoming tasks section above the projects, and the overdue counter that floats once it scrolls away
     projectTile.vue   one project on the dashboard; expands into a preview
     project.vue       create/edit a project
     task.vue          create/edit a task, including which projects it is in
-    tags.vue          add, rename and delete tags
+    tags.vue          add, rename, recolour and delete tags
     login.vue         the sign-in and sign-up pages
-  router/             one route per form, all showing the dashboard, so back closes forms
+  router/             one route per form and the calendar, all showing the dashboard, so back closes forms
   stores/             Pinia stores for projects, tasks, tags and the signed-in account; they load and save through the API
-  types/              Project, Task and Tag models, shared by the app and the Worker, and which tasks are upcoming
+  types/              Project, Task and Tag models, shared by the app and the Worker, which tasks are upcoming,
+                      and the calendar's items, dates and month grid (calendar.ts)
   api.ts              client for the Worker API, including signing in
   __tests__/          unit tests
 worker/
@@ -168,7 +194,7 @@ Vue app (Pinia stores)  ──fetch──▶  Worker /api/*  ──SQL──▶ 
 | `PUT /api/tasks/:id` | Create or update the task in the body; returns it |
 | `DELETE /api/tasks/:id` | Delete the task, removing it from projects and relations |
 | `GET /api/tags` | All tags, by name |
-| `PUT /api/tags/:id` | Create or rename the tag in the body; returns it |
+| `PUT /api/tags/:id` | Create, rename or recolour the tag in the body; returns it. `color` is a `#rrggbb` code (stored in lower case); leaving it out keeps an existing tag's colour, or makes a new one indigo |
 | `DELETE /api/tags/:id` | Delete the tag, removing it from its projects (`400` for the built-in `archive` tag) |
 
 The project, task and tag routes work on the signed-in account's data only. Bodies are the `Project`, `Task` and `Tag` objects from `src/types`, sent as `application/json`. The Worker checks every field and answers `400` with an error message if something is invalid, including a reference to a task or tag that doesn't exist, or a tag name that another tag already has. Each save runs as one transaction, so a failed save changes nothing.
@@ -192,7 +218,7 @@ Defined in the files in `migrations/`. Each field has its own column, and each a
 | `project_links` | `Project.links` | `user_id`, `project_id` → `projects`, `position`, `label`, `url` |
 | `project_tags` | `Project.tagIds` | `user_id`, `project_id` → `projects`, `tag_id` → `tags`, `position` |
 | `task_relations` | `Task.relations` | `user_id`, `task_id` → `tasks`, `related_task_id` → `tasks`, `type`, `position` |
-| `tags` | `Tag` | `user_id` → `users`, `id`, `name`, `created_at`, `updated_at` |
+| `tags` | `Tag` | `user_id` → `users`, `id`, `name`, `color`, `created_at`, `updated_at` |
 
 - `project_tasks` links projects to tasks. A task can be in several projects.
 - All foreign keys cascade on delete. Deleting a task removes it from its projects and from other tasks' relations, deleting a project removes its links and tags, deleting a tag removes it from its projects, and deleting a user removes their sessions and all of their data.
@@ -248,7 +274,7 @@ There are three layers of tests:
 |---|---|---|---|
 | Unit | `pnpm test:unit` | `src/__tests__/` | Components, stores, models and the API client in a simulated browser (jsdom). `fetch` is replaced by an in-memory fake API (`fakeApi.ts`), so no server or database is needed. |
 | Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers signing up and in, sessions, keeping accounts' data apart, routing, saving and reading every field, tags, migrations, validation, transactions, cascading deletes and the schema's constraints. The database is emptied before every test. |
-| End-to-end | `pnpm test:e2e` | `cypress/e2e/` | The production build in a real browser (Cypress), with the Worker and a local D1 database. Covers creating and editing projects and tasks, managing tags, the tile preview, sorting, and how errors are shown. |
+| End-to-end | `pnpm test:e2e` | `cypress/e2e/` | The production build in a real browser (Cypress), with the Worker and a local D1 database. Covers creating and editing projects and tasks, managing tags, the tile preview, sorting, the calendar, and how errors are shown. |
 
 `pnpm test` runs the unit and integration tests together.
 
@@ -263,7 +289,9 @@ Planned, not built yet:
 - Task list view
 - Project list view, including completed projects
 - Messages
-- Settings and profile
+- Settings and profile (the calendar's week start would move there from the browser's storage)
+- **Rescheduling from the calendar**: drag a chip to another day on wide screens; on phones (where drag and drop doesn't work) tap it, then **Move to…** with a date picker. Dragging a task from **No due date** onto a day gives it that date. Saves through `taskList.setDueDates`, showing the move straight away and undoing it if the save fails. Items already carry `editable` (false for now) to decide what can be moved. Before this, the rule that a task can't be due after a project's delivery date (only checked in the forms today) moves into a shared function that the Worker enforces too, since a task can be in several projects, and moving a delivery date earlier goes through the same clash fixes the project form offers.
+- **Google Calendar, both ways**: OAuth and token refresh in the Worker, tokens stored per account in D1, the client secret set with `wrangler secret`. Tasks get a `googleEventId`, with the event's etag and update time to detect conflicting edits. Events come in through a third adapter beside `taskToItems` and `projectToItems` in `src/types/calendar.ts`, which already asks for items by date range (as Google's API does), keeps a loading and error state per source, places timed events after all-day ones, and has room for time zones and Google's exclusive end dates on all-day events.
 
 ## Editor setup
 

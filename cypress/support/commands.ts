@@ -5,6 +5,7 @@
 import type { Project as ProjectData } from '../../src/types/project'
 import type { Tag as TagData } from '../../src/types/tag'
 import type { Task as TaskData } from '../../src/types/task'
+import { tag } from './factories'
 
 declare global {
   namespace Cypress {
@@ -39,8 +40,8 @@ Cypress.Commands.add('resetData', () => {
   for (const resource of ['projects', 'tasks', 'tags']) {
     cy.request<{ id: string }[]>(`/api/${resource}`).then(({ body }) => {
       for (const item of body) {
-        // The built-in Archive tag can't be deleted, so it's put back to its own name instead
-        if (resource === 'tags' && item.id === 'archive') cy.request('PUT', apiPath('tags', 'archive'), { id: 'archive', name: 'Archive' })
+        // The built-in Archive tag can't be deleted, so it's put back to its own name and colour instead
+        if (resource === 'tags' && item.id === 'archive') cy.request('PUT', apiPath('tags', 'archive'), tag('archive', 'Archive'))
         else cy.request('DELETE', apiPath(resource, item.id))
       }
     })

@@ -25,11 +25,11 @@ const related = computed(() => relatedTasks(props.task, props.tasks))
 </script>
 
 <template>
-  <article class="task-page">
+  <article class="task-page details-page">
     <RouterLink :to="{ name: 'dashboard' }" class="back-link">← Live projects</RouterLink>
 
-    <header class="page-header">
-      <h2 :class="{ done: task.completed }">
+    <header class="heading-row page-header">
+      <h2 :class="{ struck: task.completed }">
         {{ task.name }}<span v-if="task.completed" class="sr-only"> (completed)</span>
       </h2>
       <button type="button" class="secondary outline" @click="$emit('edit', task)">Edit</button>
@@ -62,7 +62,7 @@ const related = computed(() => relatedTasks(props.task, props.tasks))
             <span class="relation-type">{{ relationLabel(relation.type) }}</span>
             <RouterLink
               :to="{ name: 'task', params: { id: relation.task.id } }"
-              :class="{ done: relation.task.completed }"
+              :class="{ struck: relation.task.completed }"
             >
               {{ relation.task.name }}<span v-if="relation.task.completed" class="sr-only"> (completed)</span>
             </RouterLink>
@@ -75,35 +75,13 @@ const related = computed(() => relatedTasks(props.task, props.tasks))
 </template>
 
 <style scoped>
-.done {
-  text-decoration: line-through;
-  opacity: 0.7;
-}
-
 .done-tag {
   border-color: var(--pam-cream);
   color: var(--pam-cream);
 }
 
-.description {
-  max-width: 48rem;
-  color: var(--pico-muted-color);
-  white-space: pre-line;
-  overflow-wrap: anywhere;
-}
-
-.task-page section {
-  margin: 0;
-  padding-block: 1.25rem;
-  border-top: 1px solid var(--pico-muted-border-color);
-}
-
-/* Projects beside the related tasks on wide screens, above them on narrow ones */
-.columns {
-  display: grid;
-  column-gap: 2rem;
-}
-
+/* Projects beside the related tasks on wide screens, above them on narrow ones (.columns and
+   the sections are styled with the project page's, as .details-page in main.css) */
 @media (min-width: 768px) {
   .columns {
     grid-template-columns: repeat(2, minmax(0, 1fr));

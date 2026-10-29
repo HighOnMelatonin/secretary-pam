@@ -8,7 +8,7 @@ import ProjectTimeline from './projectTimeline.vue'
 import TaskRow from './taskRow.vue'
 import { completionStatus, resolveTasks, type Project } from '@/types/project'
 import { safeHref } from '@/types/limits'
-import type { Tag } from '@/types/tag'
+import { tagStyle, type Tag } from '@/types/tag'
 import type { Task } from '@/types/task'
 
 const props = defineProps<{
@@ -31,16 +31,16 @@ const status = computed(() => completionStatus(props.project, props.tasks))
 </script>
 
 <template>
-  <article class="project-page">
+  <article class="project-page details-page">
     <RouterLink :to="{ name: 'dashboard' }" class="back-link">← Live projects</RouterLink>
 
-    <header class="page-header">
+    <header class="heading-row page-header">
       <h2>{{ project.name }}</h2>
       <button type="button" class="secondary outline" @click="$emit('edit', project)">Edit</button>
     </header>
 
     <div class="meta">
-      <span v-for="tag in tags" :key="tag.id" class="tag project-tag">{{ tag.name }}</span>
+      <span v-for="tag in tags" :key="tag.id" class="tag project-tag" :style="tagStyle(tag)">{{ tag.name }}</span>
       <span class="tag" :class="`priority-${project.priority}`">{{ project.priority }}</span>
       <span v-if="isOverdue" class="tag overdue">overdue</span>
       <small>Due {{ project.deliveryDate ?? 'whenever' }}</small>
@@ -100,28 +100,12 @@ const status = computed(() => completionStatus(props.project, props.tasks))
   color: var(--pico-muted-color);
 }
 
-.description {
-  max-width: 48rem;
-  color: var(--pico-muted-color);
-  white-space: pre-line;
-}
-
-.project-page section {
-  margin: 0;
-  padding-block: 1.25rem;
-  border-top: 1px solid var(--pico-muted-border-color);
-}
-
 .timeline-section {
   min-width: 0; /* so a long timeline scrolls inside the page instead of widening it */
 }
 
-/* Tasks beside the reference links on wide screens, above them on narrow ones */
-.columns {
-  display: grid;
-  column-gap: 2rem;
-}
-
+/* Tasks beside the reference links on wide screens, above them on narrow ones (.columns and
+   the sections are styled with the task page's, as .details-page in main.css) */
 @media (min-width: 768px) {
   .columns.with-links {
     grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);

@@ -2,6 +2,7 @@
 // has already applied migrations/ to with wrangler's own migration code.
 import { applyD1Migrations, env } from 'cloudflare:test'
 import { describe, it, expect } from 'vitest'
+import type { Tag } from '../../src/types/tag'
 import { migrate } from '../migrate'
 import { call, signUp } from './helpers'
 
@@ -53,6 +54,7 @@ describe('migrate', () => {
       '0002_add_tags.sql',
       '0003_project_tags_and_archive.sql',
       '0004_users.sql',
+      '0005_tag_colors.sql',
     ])
     expect((await call('GET', 'projects', undefined, await signUp())).body).toEqual([])
   })
@@ -62,10 +64,10 @@ describe('migrate', () => {
     await migrate(env.DB)
 
     expect((await call('GET', 'tags', undefined, await signUp())).body).toEqual([
-      { id: 'archive', name: 'Archive' },
-      { id: 'personal', name: 'Personal' },
-      { id: 'school', name: 'School (SUTD)' },
-      { id: 'work', name: 'Work' },
+      { id: 'archive', name: 'Archive', color: '#343ca6' },
+      { id: 'personal', name: 'Personal', color: '#343ca6' },
+      { id: 'school', name: 'School (SUTD)', color: '#343ca6' },
+      { id: 'work', name: 'Work', color: '#343ca6' },
     ])
   })
 
@@ -96,7 +98,7 @@ describe('migrate', () => {
       ['empty', []],
       ['untagged', ['archive']],
     ])
-    expect((await call('GET', 'tags', undefined, session)).body).toContainEqual({ id: 'archive', name: 'Archive (completed)' })
+    expect((await call('GET', 'tags', undefined, session)).body).toContainEqual({ id: 'archive', name: 'Archive (completed)', color: '#343ca6' })
   })
 
   it('keeps every field and array of the data from before accounts, for the first account (0004)', async () => {
@@ -141,6 +143,22 @@ describe('migrate', () => {
       'work',
     ])
     expect((await call('GET', 'tasks', undefined, await signUp('other@example.com'))).body).toEqual([])
+  })
+
+  it('makes every existing tag indigo, the colour tags had before (0005)', async () => {
+    await databaseBefore(4)
+    await env.DB.prepare("INSERT INTO tags (user_id, id, name) VALUES ('original', 'mine', 'Mine')").run()
+
+    await migrate(env.DB)
+
+    const tags: Tag[] = (await call('GET', 'tags', undefined, await signUp())).body
+    expect(tags.map((t) => [t.id, t.color])).toEqual([
+      ['archive', '#343ca6'],
+      ['mine', '#343ca6'],
+      ['personal', '#343ca6'],
+      ['school', '#343ca6'],
+      ['work', '#343ca6'],
+    ])
   })
 
   it('skips migrations that wrangler already applied', async () => {

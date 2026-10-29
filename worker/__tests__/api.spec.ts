@@ -49,7 +49,8 @@ const project = (id: string, fields: Partial<Project> = {}): Project => ({
 })
 
 const listTags = async (): Promise<Tag[]> => (await call('GET', 'tags')).body
-const saveTag = (tag: Tag) => call('PUT', `tags/${tag.id}`, tag)
+// color may be left out, as the API allows
+const saveTag = (tag: Omit<Tag, 'color'> & { color?: string }) => call('PUT', `tags/${tag.id}`, tag)
 
 const count = async (table: string) =>
   (await env.DB.prepare(`SELECT count(*) AS n FROM ${table}`).first<{ n: number }>())!.n
@@ -216,7 +217,7 @@ describe('projects', () => {
 describe('tags', () => {
   it('stores tags and lists them by name, ignoring case', async () => {
     await saveTag({ id: 'w', name: 'work' })
-    expect(await saveTag({ id: 's', name: 'School (SUTD)' })).toEqual({ status: 200, body: { id: 's', name: 'School (SUTD)' } })
+    expect(await saveTag({ id: 's', name: 'School (SUTD)' })).toEqual({ status: 200, body: { id: 's', name: 'School (SUTD)', color: '#343ca6' } })
     await saveTag({ id: 'p', name: 'Personal' })
 
     expect((await listTags()).map((t) => t.name)).toEqual(['Personal', 'School (SUTD)', 'work'])
@@ -224,8 +225,15 @@ describe('tags', () => {
 
   it('trims names and renames a tag when saved again', async () => {
     await saveTag({ id: 'w', name: 'Work' })
-    expect((await saveTag({ id: 'w', name: '  Job  ' })).body).toEqual({ id: 'w', name: 'Job' })
-    expect(await listTags()).toEqual([{ id: 'w', name: 'Job' }])
+    expect((await saveTag({ id: 'w', name: '  Job  ' })).body).toEqual({ id: 'w', name: 'Job', color: '#343ca6' })
+    expect(await listTags()).toEqual([{ id: 'w', name: 'Job', color: '#343ca6' }])
+  })
+
+  it('stores a colour, and keeps it when a save leaves the colour out', async () => {
+    expect((await saveTag({ id: 'w', name: 'Work', color: '#17646a' })).body).toEqual({ id: 'w', name: 'Work', color: '#17646a' })
+    expect((await saveTag({ id: 'w', name: 'Work', color: '#F5D76E' })).body.color).toBe('#f5d76e') // stored in lower case
+    expect((await saveTag({ id: 'w', name: 'Job' })).body).toEqual({ id: 'w', name: 'Job', color: '#f5d76e' })
+    expect(await listTags()).toEqual([{ id: 'w', name: 'Job', color: '#f5d76e' }])
   })
 
   it('rejects a name another tag already has, ignoring case', async () => {
@@ -237,16 +245,18 @@ describe('tags', () => {
       body: { error: 'There is already a tag with that name' },
     })
     expect((await saveTag({ id: 'p', name: 'work' })).status).toBe(400)
-    expect(await listTags()).toEqual([
-      { id: 'p', name: 'Personal' },
-      { id: 'w', name: 'Work' },
-    ])
+    expect((await listTags()).map((t) => t.name)).toEqual(['Personal', 'Work'])
   })
 
   it.each<[string, unknown]>([
     ['a blank name', { id: 't', name: '  ' }],
     ['no name', { id: 't' }],
     ['an id that does not match the URL', { id: 'other', name: 'Work' }],
+    ['a colour name', { id: 't', name: 'Work', color: 'red' }],
+    ['a short hex colour', { id: 't', name: 'Work', color: '#fff' }],
+    ['a hex colour without its #', { id: 't', name: 'Work', color: '343ca6' }],
+    ['CSS after the colour', { id: 't', name: 'Work', color: '#343ca6; background: url(x)' }],
+    ['a colour that is not a string', { id: 't', name: 'Work', color: 0x343ca6 }],
   ])('rejects a tag with %s', async (_, body) => {
     expect((await call('PUT', 'tags/t', body)).status).toBe(400)
     expect(await listTags()).toEqual([])
@@ -289,7 +299,7 @@ describe('tags', () => {
 
     expect((await call('DELETE', 'tags/w')).status).toBe(204)
 
-    expect(await listTags()).toEqual([{ id: 's', name: 'School' }])
+    expect((await listTags()).map((t) => t.id)).toEqual(['s'])
     expect(await listProjects()).toEqual([project('p', { tagIds: ['s'] })])
   })
 
@@ -300,7 +310,7 @@ describe('tags', () => {
       body: { error: 'The Archive tag is built in and cannot be deleted' },
     })
     expect((await saveTag({ id: 'archive', name: 'Done' })).status).toBe(200)
-    expect(await listTags()).toEqual([{ id: 'archive', name: 'Done' }])
+    expect(await listTags()).toEqual([{ id: 'archive', name: 'Done', color: '#343ca6' }])
   })
 })
 
@@ -518,7 +528,7 @@ describe('separate accounts', () => {
 
   it('lets two accounts have tags with the same name', async () => {
     await saveTag({ id: 'w', name: 'Work' })
-    expect((await (await other())('GET', 'tags')).body).toContainEqual({ id: 'work', name: 'Work' })
+    expect((await (await other())('GET', 'tags')).body).toContainEqual({ id: 'work', name: 'Work', color: '#343ca6' })
   })
 })
 

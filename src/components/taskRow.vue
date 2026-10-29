@@ -34,7 +34,7 @@ const isOverdue = (date: string | null) => date !== null && date < today
     </button>
     <span class="task-body">
       <span class="task-line">
-        <RouterLink :to="{ name: 'task', params: { id: task.id } }" class="task-name">
+        <RouterLink :to="{ name: 'task', params: { id: task.id } }" class="task-name" :class="{ struck: task.completed }">
           {{ task.name }}<span v-if="task.completed" class="sr-only"> (completed)</span>
         </RouterLink>
         <span class="tag" :class="`priority-${task.priority}`">{{ task.priority }}</span>
@@ -118,14 +118,6 @@ const isOverdue = (date: string | null) => date !== null && date < today
 .task-edit {
   flex: none;
   align-self: center;
-  width: auto;
   margin: 0 0 0 auto;
-  padding: 0.2rem 0.75rem;
-  font-size: 0.85rem;
-}
-
-.task.done .task-name {
-  text-decoration: line-through;
-  opacity: 0.7;
 }
 </style>

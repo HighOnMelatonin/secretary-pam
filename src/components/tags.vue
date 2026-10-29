@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// Lists the tags with a field to rename or delete each one, and a field to add a new one.
-// Changes are saved straight away through the tag store, with any error shown at the top.
+// Lists the tags with a field to rename or delete each one and its colour with a button to
+// change it, and a field to add a new one (which starts indigo). Changes are saved straight away
+// through the tag store, with any error shown at the top.
 import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useProjectList } from '@/stores/projectList'
 import { useTagList } from '@/stores/tagList'
-import { ARCHIVE_TAG_ID, createEmptyTag, type Tag } from '@/types/tag'
+import { ARCHIVE_TAG_ID, createEmptyTag, tagStyle, type Tag } from '@/types/tag'
 import { MAX_NAME_LENGTH } from '@/types/limits'
 
 defineEmits<{
@@ -55,6 +56,27 @@ async function remove(tag: Tag) {
   }
 }
 
+// Colours being picked but not saved yet, by tag id. The swatch follows the picker as it moves,
+// and the colour is saved once the picker is closed on it; if that fails, the swatch goes back.
+const colorDrafts = ref<Record<string, string>>({})
+const colorOf = (tag: Tag) => colorDrafts.value[tag.id] ?? tag.color
+
+// Opens the browser's colour picker for the input after the button. Browsers without showPicker
+// open it on a click instead.
+function openPicker(event: MouseEvent) {
+  const input = (event.currentTarget as HTMLElement).nextElementSibling as HTMLInputElement
+  if (typeof input.showPicker === 'function') input.showPicker()
+  else input.click()
+}
+
+async function recolor(tag: Tag) {
+  const color = colorOf(tag)
+  if (color !== tag.color) {
+    await attempt(() => tagList.saveTag({ ...tag, color }), `Couldn't change the colour of "${tag.name}"`)
+  }
+  delete colorDrafts.value[tag.id]
+}
+
 const newName = ref('')
 
 async function add() {
@@ -68,7 +90,7 @@ async function add() {
 
 <template>
   <article class="tag-manager">
-    <header class="heading">
+    <header class="heading-row">
       <h2>Tags</h2>
       <button type="button" class="secondary" @click="$emit('close')">Done</button>
     </header>
@@ -89,6 +111,28 @@ async function add() {
             Delete
           </button>
         </form>
+        <div class="color-row">
+          <span class="tag project-tag color-swatch" :style="tagStyle({ ...tag, color: colorOf(tag) })">
+            {{ colorOf(tag) }}
+          </span>
+          <button
+            type="button"
+            class="secondary outline small"
+            :aria-label="`Choose colour for ${tag.name}`"
+            @click="openPicker"
+          >
+            Choose colour
+          </button>
+          <input
+            type="color"
+            class="sr-only"
+            tabindex="-1"
+            aria-hidden="true"
+            :value="colorOf(tag)"
+            @input="colorDrafts[tag.id] = ($event.target as HTMLInputElement).value"
+            @change="recolor(tag)"
+          />
+        </div>
         <small>
           Used by {{ projectsText(projectCount(tag)) }}<template v-if="tag.id === ARCHIVE_TAG_ID">.
             Built in: completed projects get it automatically, and removing it from a project brings the
@@ -106,22 +150,6 @@ async function add() {
 </template>
 
 <style scoped>
-.heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.heading h2 {
-  margin: 0;
-}
-
-.heading button {
-  width: auto;
-  margin: 0;
-}
-
 .tag-list {
   padding: 0;
   margin-block: 1.5rem;
@@ -138,6 +166,25 @@ async function add() {
 
 .tag-list small {
   color: var(--pico-muted-color);
+}
+
+/* The tag's colour, shown as a badge with its hex code, then the button that opens the
+   browser's colour picker. The picker's own input is hidden after the button, so the picker
+   opens beside it. */
+.color-row {
+  position: relative; /* holds the hidden input */
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+.color-swatch {
+  min-width: 6.5rem;
+  text-align: center;
+  font-family: ui-monospace, Consolas, monospace;
+  text-transform: uppercase;
 }
 
 form button {

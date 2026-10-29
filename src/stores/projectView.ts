@@ -3,6 +3,7 @@
 import { computed, ref, watch } from 'vue'
 import { acceptHMRUpdate, defineStore } from 'pinia'
 import { completionStatus, type Project } from '@/types/project'
+import { NO_TAG } from '@/types/tag'
 import { PRIORITIES, type Priority } from '@/types/task'
 import { useProjectList } from './projectList'
 import { useTagList } from './tagList'
@@ -17,7 +18,7 @@ export const SORTS = {
 export type SortKey = keyof typeof SORTS
 
 // Stands for "projects with no tags" in the tag filter
-export const NO_TAG = ''
+export { NO_TAG } from '@/types/tag'
 
 const STORAGE_KEY = 'pam.projectView'
 
