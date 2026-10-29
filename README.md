@@ -294,7 +294,17 @@ Planned, not built yet:
 - Messages
 - Settings and profile (the calendar's week start would move there from the browser's storage)
 - **Rescheduling from the calendar**: drag a chip to another day on wide screens; on phones (where drag and drop doesn't work) tap it, then **Move to…** with a date picker. Dragging a task from **No due date** onto a day gives it that date. Saves through `taskList.setDueDates`, showing the move straight away and undoing it if the save fails. Items already carry `editable` (false for now) to decide what can be moved. Before this, the rule that a task can't be due after a project's delivery date (only checked in the forms today) moves into a shared function that the Worker enforces too, since a task can be in several projects, and moving a delivery date earlier goes through the same clash fixes the project form offers.
-- **Google Calendar, both ways**: OAuth and token refresh in the Worker, tokens stored per account in D1, the client secret set with `wrangler secret`. Tasks get a `googleEventId`, with the event's etag and update time to detect conflicting edits. Events come in through a third adapter beside `taskToItems` and `projectToItems` in `src/types/calendar.ts`, which already asks for items by date range (as Google's API does), keeps a loading and error state per source, places timed events after all-day ones, and has room for time zones and Google's exclusive end dates on all-day events.
+- **Google Calendar, both ways**: show upcoming Google Calendar events in Pam, and keep tasks and events in step. OAuth and token refresh in the Worker, tokens stored per account in D1, the client secret set with `wrangler secret`. Tasks get a `googleEventId`, with the event's etag and update time to detect conflicting edits. Events come in through a third adapter beside `taskToItems` and `projectToItems` in `src/types/calendar.ts`, which already asks for items by date range (as Google's API does), keeps a loading and error state per source, places timed events after all-day ones, and has room for time zones and Google's exclusive end dates on all-day events.
+- **Logo**: a logo for Pam, to make it look the part.
+- **LLM layer**: summarise what needs doing, quickly pick out the high priority tasks, and explain how tasks relate to each other.
+- **Android app**: Pam on Android, for home screen widgets and notifications.
+- **Data analytics**: track how Pam is used over time: the rate tasks and projects are created, the rate tasks are completed, and the number of tasks per project.
+- **Team Pam**: a collaborative Pam for group projects. Scope out the use cases first.
+
+Maintenance:
+
+- Code review: check there's nothing unnecessary in the code, and that its structure and links between parts make sense
+- A second code review, later on
 
 ## Editor setup
 
