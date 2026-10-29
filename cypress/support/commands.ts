@@ -55,8 +55,8 @@ Cypress.Commands.add('taskbar', (action) => {
 
 Cypress.Commands.add('seed',({ tags = [], tasks = [], projects = [] }) => {
   for (const tag of tags) cy.request('PUT', apiPath('tags', tag.id), tag)
-  for (const task of tasks) cy.request('PUT', apiPath('tasks', task.id), task)
-  for (const project of projects) cy.request('PUT', apiPath('projects', project.id), project)
+  for (const task of tasks) cy.request('PUT', apiPath('tasks', task.id), { task })
+  for (const project of projects) cy.request('PUT', apiPath('projects', project.id), { project })
 })
 
 export {}

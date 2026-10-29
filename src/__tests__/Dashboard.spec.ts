@@ -204,7 +204,7 @@ describe('Dashboard tags', () => {
 })
 
 describe('Dashboard creating a task', () => {
-  it('saves the task, then adds it to the chosen project', async () => {
+  it('saves the task into the chosen project with one request', async () => {
     const api = fakeApi({ projects: [project('p', { name: 'Thesis' })] })
     const wrapper = await mountDashboard()
 
@@ -218,7 +218,7 @@ describe('Dashboard creating a task', () => {
     await flushPromises()
 
     const taskId = api.data.tasks[0]!.id
-    expect(api.requests.filter((r) => r.startsWith('PUT'))).toEqual([`PUT /api/tasks/${taskId}`, 'PUT /api/projects/p'])
+    expect(api.requests.filter((r) => r.startsWith('PUT'))).toEqual([`PUT /api/tasks/${taskId}`])
     expect(api.data.projects[0]!.taskIds).toEqual([taskId])
     expect(wrapper.text()).toContain('0 of 1 tasks completed')
   })
@@ -240,6 +240,29 @@ describe('Dashboard creating a task', () => {
     expect(wrapper.find('[role="alert"]').text()).toBe('Couldn\'t save "Write report": D1 is down')
     expect((wrapper.find('input[placeholder="Task"]').element as HTMLInputElement).value).toBe('Write report')
     expect(listedIn(wrapper, 'Projects')).toEqual(['Thesis'])
+  })
+
+  it('shows the clash the Worker refuses, keeping the form as it was', async () => {
+    const api = fakeApi({ projects: [project('p', { name: 'Thesis', deliveryDate: '2026-12-10' })] })
+    const wrapper = await mountDashboard()
+
+    await button(wrapper, 'Add task').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[placeholder="Task"]').setValue('Write report')
+    await wrapper.find('input[type="date"]').setValue('2026-12-08')
+    await selectWithOption(wrapper, 'p').setValue('p')
+    await button(wrapper, 'Assign').trigger('click')
+    // Moved earlier elsewhere, say on another device, after this page loaded it
+    api.data.projects[0]!.deliveryDate = '2026-12-01'
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.find('[role="alert"]').text()).toBe(
+      'Couldn\'t save "Write report": "Write report" is due 2026-12-08, after "Thesis"\'s delivery date (2026-12-01)',
+    )
+    expect((wrapper.find('input[placeholder="Task"]').element as HTMLInputElement).value).toBe('Write report')
+    expect(listedIn(wrapper, 'Projects')).toEqual(['Thesis'])
+    expect(api.data.tasks).toEqual([])
   })
 })
 

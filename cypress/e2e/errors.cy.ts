@@ -39,7 +39,7 @@ describe('Errors', () => {
     cy.seed({ projects: [project('p', { name: 'Thesis' })] })
     // A real validation error from the Worker, for a body the form itself would never send
     cy.intercept('PUT', '/api/projects/p', (req) => {
-      req.body = { ...req.body, priority: 'asap' }
+      req.body = { ...req.body, project: { ...req.body.project, priority: 'asap' } }
     })
     cy.visit('/')
 

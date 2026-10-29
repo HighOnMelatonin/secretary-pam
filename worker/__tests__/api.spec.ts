@@ -3,6 +3,7 @@
 // is signed in to a new account with no tags; auth.spec.ts covers signing in itself.
 import { env, SELF } from 'cloudflare:test'
 import { beforeEach, describe, it, expect } from 'vitest'
+import type { ProjectSave, TaskSave } from '../../src/types/operations'
 import type { Project } from '../../src/types/project'
 import type { Tag } from '../../src/types/tag'
 import type { Task } from '../../src/types/task'
@@ -22,8 +23,12 @@ const call = async (method: string, path: string, body?: unknown) => {
 
 const listTasks = async (): Promise<Task[]> => (await call('GET', 'tasks')).body
 const listProjects = async (): Promise<Project[]> => (await call('GET', 'projects')).body
-const saveTask = (task: Task) => call('PUT', `tasks/${task.id}`, task)
-const saveProject = (project: Project) => call('PUT', `projects/${project.id}`, project)
+// Saves with no extras, replying with the Changes
+const saveTask = (task: Task) => call('PUT', `tasks/${task.id}`, { task })
+const saveProject = (project: Project) => call('PUT', `projects/${project.id}`, { project })
+// Saves with extras as well
+const planTask = (save: TaskSave) => call('PUT', `tasks/${save.task.id}`, save)
+const planProject = (save: ProjectSave) => call('PUT', `projects/${save.project.id}`, save)
 
 const task = (id: string, fields: Partial<Task> = {}): Task => ({
   id,
@@ -63,7 +68,7 @@ describe('routing', () => {
     ['PUT', 'tasks/a'],
     ['DELETE', 'projects/p'],
   ])('answers 401 for %s /api/%s when not signed in', async (method, path) => {
-    const response = await helpers.call(method, path, method === 'PUT' ? task('a') : undefined)
+    const response = await helpers.call(method, path, method === 'PUT' ? { task: task('a') } : undefined)
     expect(response.status).toBe(401)
     expect(await count('tasks')).toBe(0)
   })
@@ -92,7 +97,7 @@ describe('routing', () => {
 
   it('decodes ids in the URL', async () => {
     const t = task('id with spaces/and slash')
-    expect((await call('PUT', `tasks/${encodeURIComponent(t.id)}`, t)).status).toBe(200)
+    expect((await call('PUT', `tasks/${encodeURIComponent(t.id)}`, { task: t })).status).toBe(200)
     expect(await listTasks()).toEqual([t])
   })
 })
@@ -113,7 +118,7 @@ describe('tasks', () => {
       completed: true,
     })
 
-    expect(await saveTask(t)).toEqual({ status: 200, body: t })
+    expect(await saveTask(t)).toEqual({ status: 200, body: { tasks: [t], projects: [] } })
     expect((await listTasks()).find((x) => x.id === 'a')).toEqual(t)
   })
 
@@ -133,8 +138,8 @@ describe('tasks', () => {
   })
 
   it('drops fields that are not part of a task', async () => {
-    const response = await call('PUT', 'tasks/a', { ...task('a'), extra: 'ignored' })
-    expect(response.body).toEqual(task('a'))
+    const response = await call('PUT', 'tasks/a', { task: { ...task('a'), extra: 'ignored' } })
+    expect(response.body).toEqual({ tasks: [task('a')], projects: [] })
   })
 
   it('lists tasks in the order they were created, and updating keeps that order', async () => {
@@ -166,9 +171,10 @@ describe('tasks', () => {
   })
 
   it('keeps a task in its projects when the task is updated', async () => {
+    await saveTag({ id: 'archive', name: 'Archive' }) // completing the task archives the project
     await saveTask(task('a'))
     await saveProject(project('p', { taskIds: ['a'] }))
-    await saveTask(task('a', { name: 'Renamed', completed: true }))
+    expect((await saveTask(task('a', { name: 'Renamed', completed: true }))).status).toBe(200)
 
     expect((await listProjects())[0]!.taskIds).toEqual(['a'])
   })
@@ -190,7 +196,7 @@ describe('projects', () => {
       ],
     })
 
-    expect(await saveProject(p)).toEqual({ status: 200, body: p })
+    expect(await saveProject(p)).toEqual({ status: 200, body: { tasks: [], projects: [p] } })
     expect(await listProjects()).toEqual([p])
   })
 
@@ -280,7 +286,7 @@ describe('tags', () => {
     ['no tag list', undefined],
   ])('rejects a project with %s', async (_, tagIds) => {
     await saveTag({ id: 'w', name: 'Work' })
-    expect((await call('PUT', 'projects/p', { ...project('p'), tagIds })).status).toBe(400)
+    expect((await call('PUT', 'projects/p', { project: { ...project('p'), tagIds } })).status).toBe(400)
     expect(await listProjects()).toEqual([])
   })
 
@@ -330,7 +336,7 @@ describe('validation', () => {
     ['over 500 relations', { relations: Array.from({ length: 501 }, (_, i) => ({ taskId: `t${i}`, type: 'blocks' })) }],
   ])('rejects a task with %s', async (_, fields) => {
     await saveTask(task('b'))
-    const response = await call('PUT', 'tasks/a', { ...task('a'), ...fields })
+    const response = await call('PUT', 'tasks/a', { task: { ...task('a'), ...fields } })
     expect(response.status).toBe(400)
     expect(response.body.error).toEqual(expect.any(String))
     expect((await listTasks()).map((t) => t.id)).toEqual(['b'])
@@ -350,17 +356,17 @@ describe('validation', () => {
     ['a link label over 200 characters', { links: [{ label: 'x'.repeat(201), url: 'https://example.com' }] }],
   ])('rejects a project with %s', async (_, fields) => {
     await saveTask(task('t'))
-    const response = await call('PUT', 'projects/p', { ...project('p'), ...fields })
+    const response = await call('PUT', 'projects/p', { project: { ...project('p'), ...fields } })
     expect(response.status).toBe(400)
     expect(await listProjects()).toEqual([])
   })
 
   it.each<[string, unknown]>([
     ['is not JSON', 'not json'],
-    ['is a JSON array', [task('a')]],
+    ['is a JSON array', [{ task: task('a') }]],
     ['is null', 'null'],
-    ['has an id that does not match the URL', task('other')],
-    ['is larger than 100 KB', task('a', { description: 'x'.repeat(100_001) })],
+    ['has an id that does not match the URL', { task: task('other') }],
+    ['is larger than 100 KB', { task: task('a', { description: 'x'.repeat(100_001) }) }],
   ])('rejects a body that %s', async (_, body) => {
     expect((await call('PUT', 'tasks/a', body)).status).toBe(400)
     expect(await listTasks()).toEqual([])
@@ -383,7 +389,7 @@ describe('validation', () => {
     const response = await SELF.fetch('http://localhost/api/tasks/a', {
       method: 'PUT',
       headers: { Cookie: session, ...(type ? { 'Content-Type': type } : {}) },
-      body: JSON.stringify(task('a')),
+      body: JSON.stringify({ task: task('a') }),
     })
     expect(response.status).toBe(400)
     expect(await listTasks()).toEqual([])
@@ -393,7 +399,7 @@ describe('validation', () => {
     const response = await SELF.fetch('http://localhost/api/tasks/a', {
       method: 'PUT',
       headers: { Cookie: session, 'Content-Type': 'application/json; charset=utf-8' },
-      body: JSON.stringify(task('a')),
+      body: JSON.stringify({ task: task('a') }),
     })
     expect(response.status).toBe(200)
   })
@@ -478,6 +484,162 @@ describe('deleting', () => {
   })
 })
 
+describe('archiving completed projects', () => {
+  // Project p has a completed task a and an open task b
+  beforeEach(async () => {
+    await saveTag({ id: 'archive', name: 'Archive' })
+    await saveTask(task('a', { completed: true }))
+    await saveTask(task('b'))
+    await saveProject(project('p', { taskIds: ['a', 'b'] }))
+  })
+
+  it('archives a project when its last task is completed, in the reply and when listed', async () => {
+    const done = task('b', { completed: true })
+    const archived = project('p', { taskIds: ['a', 'b'], tagIds: ['archive'] })
+
+    expect(await planTask({ task: done })).toEqual({ status: 200, body: { tasks: [done], projects: [archived] } })
+    expect(await listProjects()).toEqual([archived])
+    expect(await listTasks()).toEqual([task('a', { completed: true }), done])
+  })
+
+  it('leaves a project out of the archive once it is taken out by hand', async () => {
+    await planTask({ task: task('b', { completed: true }) })
+    const unarchived = project('p', { taskIds: ['a', 'b'] })
+    expect(await planProject({ project: unarchived })).toEqual({ status: 200, body: { tasks: [], projects: [unarchived] } })
+
+    // Saving one of its completed tasks again doesn't put it back
+    expect((await planTask({ task: task('b', { name: 'Renamed', completed: true }) })).body.projects).toEqual([])
+    expect(await listProjects()).toEqual([unarchived])
+  })
+})
+
+describe('moving a task between projects', () => {
+  // Task t is in p1; task u is in p1 and p2; p3 is empty
+  beforeEach(async () => {
+    await saveTask(task('t'))
+    await saveTask(task('u'))
+    await saveProject(project('p1', { taskIds: ['u', 't'] }))
+    await saveProject(project('p2', { taskIds: ['u'] }))
+    await saveProject(project('p3'))
+  })
+
+  const stored = async () => ({ tasks: await listTasks(), projects: await listProjects() })
+
+  it("changes the other projects' task lists in the same save", async () => {
+    const t = task('t', { name: 'Renamed' })
+    const moved = [project('p1', { taskIds: ['u'] }), project('p2', { taskIds: ['u', 't'] }), project('p3', { taskIds: ['t'] })]
+
+    expect(await planTask({ task: t, projectIds: ['p2', 'p3'] })).toEqual({ status: 200, body: { tasks: [t], projects: moved } })
+    expect(await stored()).toEqual({ tasks: [t, task('u')], projects: moved })
+  })
+
+  it('rejects a project that does not exist, saving nothing', async () => {
+    const before = await stored()
+    expect(await planTask({ task: task('t', { name: 'Renamed' }), projectIds: ['p2', 'missing'] })).toEqual({
+      status: 400,
+      body: { error: 'Unknown project: missing' },
+    })
+    expect(await stored()).toEqual(before)
+  })
+
+  it.each<[string, Record<string, unknown>]>([
+    ['projectIds that are not a list', { projectIds: 'p2' }],
+    ['projectIds that are not strings', { projectIds: [2] }],
+    ['the same project twice', { projectIds: ['p2', 'p2'] }],
+    ['over 500 projectIds', { projectIds: Array.from({ length: 501 }, (_, i) => `p${i}`) }],
+    ['deliveryDates that are a list', { deliveryDates: ['2026-12-10'] }],
+    ['a delivery date in another format', { deliveryDates: { p2: '10/12/2026' } }],
+    ['a delivery date for a project that does not exist', { deliveryDates: { missing: null } }],
+    ['a task that is not valid', { task: { ...task('t'), priority: 'asap' } }],
+    ['a task whose id does not match the URL', { task: task('other') }],
+  ])('rejects a task save with %s, saving nothing', async (_, fields) => {
+    const before = await stored()
+    const response = await call('PUT', 'tasks/t', { task: task('t', { name: 'Renamed' }), ...fields })
+    expect(response.status).toBe(400)
+    expect(response.body.error).toEqual(expect.any(String))
+    expect(await stored()).toEqual(before)
+  })
+
+  it.each<[string, Record<string, unknown>]>([
+    ['dueDates that are a list', { dueDates: ['2026-12-10'] }],
+    ['a due date in another format', { dueDates: { t: 'tomorrow' } }],
+    ['a due date for a task that does not exist', { dueDates: { missing: null } }],
+    ['a project that is not valid', { project: { ...project('p3'), taskIds: 't' } }],
+  ])('rejects a project save with %s, saving nothing', async (_, fields) => {
+    const before = await stored()
+    expect((await call('PUT', 'projects/p3', { project: project('p3', { name: 'Renamed' }), ...fields })).status).toBe(400)
+    expect(await stored()).toEqual(before)
+  })
+})
+
+describe('due dates after a delivery date', () => {
+  // Task t is due four days after project p's delivery date, and isn't in it yet
+  const t = task('t', { name: 'Draft', dueDate: '2026-12-14' })
+  const p = project('p', { name: 'Thesis', deliveryDate: '2026-12-10' })
+  const clash = { taskId: 't', projectId: 'p', dueDate: '2026-12-14', deliveryDate: '2026-12-10' }
+
+  beforeEach(async () => {
+    await saveTask(t)
+    await saveProject(p)
+  })
+
+  it('refuses to add the task to the project, naming the clash and saving nothing', async () => {
+    expect(await planTask({ task: { ...t, name: 'Write report' }, projectIds: ['p'] })).toEqual({
+      status: 409,
+      body: { error: `"Write report" is due 2026-12-14, after "Thesis"'s delivery date (2026-12-10)`, clashes: [clash] },
+    })
+    expect(await listTasks()).toEqual([t])
+    expect(await listProjects()).toEqual([p])
+  })
+
+  it('refuses to add the task from the project side too', async () => {
+    expect(await planProject({ project: { ...p, name: 'Final thesis', taskIds: ['t'] } })).toEqual({
+      status: 409,
+      body: { error: `"Draft" is due 2026-12-14, after "Final thesis"'s delivery date (2026-12-10)`, clashes: [clash] },
+    })
+    expect(await listProjects()).toEqual([p])
+  })
+
+  it('saves both when a task save moves the delivery date as well', async () => {
+    const moved = { ...p, deliveryDate: '2026-12-14', taskIds: ['t'] }
+    expect(await planTask({ task: t, projectIds: ['p'], deliveryDates: { p: '2026-12-14' } })).toEqual({
+      status: 200,
+      body: { tasks: [t], projects: [moved] },
+    })
+    expect(await listTasks()).toEqual([t])
+    expect(await listProjects()).toEqual([moved])
+  })
+
+  it('saves both when a project save moves the due date as well', async () => {
+    const withTask = { ...p, taskIds: ['t'] }
+    const earlier = { ...t, dueDate: '2026-12-10' }
+    expect(await planProject({ project: withTask, dueDates: { t: '2026-12-10' } })).toEqual({
+      status: 200,
+      body: { tasks: [earlier], projects: [withTask] },
+    })
+    expect(await listTasks()).toEqual([earlier])
+    expect(await listProjects()).toEqual([withTask])
+  })
+})
+
+describe('bare bodies', () => {
+  it('refuses a bare task, saving nothing', async () => {
+    expect(await call('PUT', 'tasks/t', task('t'))).toEqual({
+      status: 400,
+      body: { error: 'Body must be { task, projectIds?, deliveryDates? }' },
+    })
+    expect(await listTasks()).toEqual([])
+  })
+
+  it('refuses a bare project, saving nothing', async () => {
+    expect(await call('PUT', 'projects/p', project('p'))).toEqual({
+      status: 400,
+      body: { error: 'Body must be { project, dueDates? }' },
+    })
+    expect(await listProjects()).toEqual([])
+  })
+})
+
 describe('separate accounts', () => {
   // Another account, which signed up after this test's own and kept its starting tags
   const other = async () => {
@@ -499,7 +661,7 @@ describe('separate accounts', () => {
   it("keeps each account's ids apart, so saving with the same id doesn't overwrite another's", async () => {
     await saveTask(task('t', { name: 'Mine' }))
     const as = await other()
-    expect((await as('PUT', 'tasks/t', task('t', { name: 'Theirs' }))).status).toBe(200)
+    expect((await as('PUT', 'tasks/t', { task: task('t', { name: 'Theirs' }) })).status).toBe(200)
 
     expect((await listTasks()).map((t) => t.name)).toEqual(['Mine'])
     expect((await as('GET', 'tasks')).body.map((t: Task) => t.name)).toEqual(['Theirs'])
@@ -521,9 +683,9 @@ describe('separate accounts', () => {
     await saveTag({ id: 'mine', name: 'Mine' })
     const as = await other()
 
-    expect((await as('PUT', 'projects/p', project('p', { taskIds: ['t'] }))).status).toBe(400)
-    expect((await as('PUT', 'projects/p', project('p', { tagIds: ['mine'] }))).status).toBe(400)
-    expect((await as('PUT', 'tasks/u', task('u', { relations: [{ taskId: 't', type: 'blocks' }] }))).status).toBe(400)
+    expect((await as('PUT', 'projects/p', { project: project('p', { taskIds: ['t'] }) })).status).toBe(400)
+    expect((await as('PUT', 'projects/p', { project: project('p', { tagIds: ['mine'] }) })).status).toBe(400)
+    expect((await as('PUT', 'tasks/u', { task: task('u', { relations: [{ taskId: 't', type: 'blocks' }] }) })).status).toBe(400)
   })
 
   it('lets two accounts have tags with the same name', async () => {

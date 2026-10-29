@@ -99,8 +99,9 @@ describe('Projects', () => {
   it("opens a project's page from View more, then a task's page from its link, and back retraces the way", () => {
     cy.seed({
       tasks: [
-        task('t1', { name: 'Write report', description: 'Chapters 1 to 3', relations: [{ taskId: 't2', type: 'blocks' }] }),
+        // t2 first, since t1's relation can only refer to a task that exists
         task('t2', { name: 'Review slides' }),
+        task('t1', { name: 'Write report', description: 'Chapters 1 to 3', relations: [{ taskId: 't2', type: 'blocks' }] }),
       ],
       projects: [project('p', { name: 'Thesis', description: 'Final year project', taskIds: ['t1', 't2'] })],
     })
