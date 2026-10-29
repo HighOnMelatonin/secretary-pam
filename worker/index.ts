@@ -3,12 +3,23 @@
 // from the built Vue app (see wrangler.jsonc).
 //
 //   GET    /api/projects       -> Project[]
-//   PUT    /api/projects/:id   -> saves the Project in the body, returns it
+//   PUT    /api/projects/:id   -> saves { project, dueDates? }, returns the Changes it made
 //   DELETE /api/projects/:id   -> 204
+//   GET    /api/tasks          -> Task[]
+//   PUT    /api/tasks/:id      -> saves { task, projectIds?, deliveryDates? }, returns the Changes it made
+//   DELETE /api/tasks/:id      -> 204
+//   GET    /api/tags           -> Tag[]
+//   PUT    /api/tags/:id       -> saves the Tag in the body, returns it
+//   DELETE /api/tags/:id       -> 204
 //
-// and the same for /api/tasks and /api/tags, plus the sign-in routes in auth.ts. Each object is
-// split across its own table and the tables holding its arrays when saved, and put back together
-// when read.
+// plus the sign-in routes in auth.ts. Each object is split across its own table and the tables
+// holding its arrays when saved, and put back together when read.
+//
+// Saving a task or project applies the scheduling rules in src/types/operations.ts: a save that
+// makes a task due after a project's delivery date is refused with 409 and the clashes, and a
+// project whose last task is completed is archived. The Changes ({ tasks, projects }) are every
+// task and project whose stored value changed. A bare Task or Project is also accepted, as sent
+// by clients from before the rules: it is saved the same way, and the reply is the saved entity.
 //
 // Every route but /api/auth needs a signed-in user, and only reads and writes that user's rows:
 // every query has a user_id, which comes from the session, never from the request.
@@ -35,7 +46,16 @@ import {
 } from '../src/types/task'
 import type { Project, ReferenceLink } from '../src/types/project'
 import { ARCHIVE_TAG_ID, DEFAULT_TAG_COLOR, isHexColor, type Tag } from '../src/types/tag'
-import { UnknownReference, type Changes } from '../src/types/operations'
+import {
+  planProjectSave,
+  planTaskSave,
+  UnknownReference,
+  type Changes,
+  type Plan,
+  type ProjectSave,
+  type State,
+  type TaskSave,
+} from '../src/types/operations'
 import type { Clash } from '../src/types/rules'
 import { currentUser, handleAuth, HttpError } from './auth'
 import { migrateOnce } from './migrate'
@@ -119,6 +139,11 @@ const isId = (value: unknown): value is string => isString(value) && value.lengt
 const isDateOrNull = (value: unknown): value is string | null =>
   value === null || (isString(value) && /^\d{4}-\d{2}-\d{2}$/.test(value))
 const isList = (value: unknown): value is unknown[] => Array.isArray(value) && value.length <= MAX_LIST_LENGTH
+// An object from ids to dates, as in deliveryDates and dueDates
+const isDateMap = (value: unknown): value is Record<string, string | null> =>
+  isObject(value) &&
+  Object.keys(value).length <= MAX_LIST_LENGTH &&
+  Object.entries(value).every(([id, date]) => isId(id) && isDateOrNull(date))
 const oneOf = <T>(values: readonly T[], value: unknown): value is T =>
   (values as readonly unknown[]).includes(value)
 const allDifferent = (values: unknown[]) => new Set(values).size === values.length
@@ -200,6 +225,33 @@ function parseProject(body: unknown, id: string): Project {
   }
 }
 
+// A task save: { task, projectIds?, deliveryDates? }, or a bare Task from a client older than the
+// rules (recognised by having no `task`), which is saved with no extras and answered with the task
+function parseTaskSave(body: unknown, id: string): { save: TaskSave; legacy: boolean } {
+  check(isObject(body), 'Body must be a JSON object')
+  if (!Object.hasOwn(body, 'task')) return { save: { task: parseTask(body, id) }, legacy: true }
+  const { projectIds, deliveryDates } = body
+  check(
+    projectIds === undefined || (isList(projectIds) && projectIds.every(isId)),
+    `projectIds must be a list of at most ${MAX_LIST_LENGTH} project ids`,
+  )
+  check(projectIds === undefined || allDifferent(projectIds), 'projectIds must not list a project twice')
+  check(
+    deliveryDates === undefined || isDateMap(deliveryDates),
+    'deliveryDates must map project ids to null or a YYYY-MM-DD date',
+  )
+  return { save: { task: parseTask(body.task, id), projectIds, deliveryDates }, legacy: false }
+}
+
+// A project save: { project, dueDates? }, or a bare Project, as for tasks
+function parseProjectSave(body: unknown, id: string): { save: ProjectSave; legacy: boolean } {
+  check(isObject(body), 'Body must be a JSON object')
+  if (!Object.hasOwn(body, 'project')) return { save: { project: parseProject(body, id) }, legacy: true }
+  const { dueDates } = body
+  check(dueDates === undefined || isDateMap(dueDates), 'dueDates must map task ids to null or a YYYY-MM-DD date')
+  return { save: { project: parseProject(body.project, id), dueDates }, legacy: false }
+}
+
 // A tag to save. color may be left out, as by clients from before tags had colours: a new tag
 // is then indigo and an existing one keeps its colour.
 type TagBody = Omit<Tag, 'color'> & { color?: string }
@@ -255,12 +307,6 @@ function taskStatements(db: D1Database, userId: string, task: Task): D1PreparedS
         .bind(userId, task.id, relation.taskId, relation.type, position),
     ),
   ]
-}
-
-// Runs as one transaction
-async function saveTask(db: D1Database, userId: string, task: Task): Promise<Task> {
-  await db.batch(taskStatements(db, userId, task))
-  return task
 }
 
 // Projects
@@ -320,12 +366,6 @@ function projectStatements(db: D1Database, userId: string, project: Project): D1
   ]
 }
 
-// Runs as one transaction, like saveTask
-async function saveProject(db: D1Database, userId: string, project: Project): Promise<Project> {
-  await db.batch(projectStatements(db, userId, project))
-  return project
-}
-
 // Saves several tasks and projects as one transaction, since D1 has no BEGIN/COMMIT and a batch
 // is its only atomic unit. Tasks go first because project_tasks rows reference them.
 async function writeChanges(db: D1Database, userId: string, { tasks, projects }: Changes): Promise<void> {
@@ -333,6 +373,38 @@ async function writeChanges(db: D1Database, userId: string, { tasks, projects }:
     ...tasks.flatMap((task) => taskStatements(db, userId, task)),
     ...projects.flatMap((project) => projectStatements(db, userId, project)),
   ])
+}
+
+// Plans a save against the user's stored tasks and projects, then writes everything it changes as
+// one batch. `saving` holds the task or project being saved, so a clash calls it by its new name.
+//
+// The read and the batch are not one transaction (D1 has no interactive transactions), so when
+// two devices save at once, one can plan against data the other is changing, and lose that
+// update. That's acceptable for now.
+async function saveWithRules(
+  db: D1Database,
+  userId: string,
+  plan: (state: State) => Plan,
+  saving: State,
+): Promise<Changes> {
+  const [tasks, projects] = await Promise.all([listTasks(db, userId), listProjects(db, userId)])
+  const result = plan({ tasks, projects })
+  if (!result.ok) {
+    const message = clashMessage(result.clashes[0]!, [...tasks, ...saving.tasks], [...projects, ...saving.projects])
+    throw new Conflict(message, result.clashes)
+  }
+  await writeChanges(db, userId, result.changes)
+  return result.changes
+}
+
+// e.g. "Write report" is due 2026-12-14, after "Thesis"'s delivery date (2026-12-10). The last
+// task or project with the id gives its name.
+function clashMessage(clash: Clash, tasks: Task[], projects: Project[]) {
+  const name = (items: { id: string; name: string }[], id: string) => items.findLast((i) => i.id === id)?.name ?? id
+  return (
+    `"${name(tasks, clash.taskId)}" is due ${clash.dueDate}, ` +
+    `after "${name(projects, clash.projectId)}"'s delivery date (${clash.deliveryDate})`
+  )
 }
 
 // Tags
@@ -370,12 +442,22 @@ const RESOURCES: Record<string, Resource> = {
   tasks: {
     table: 'tasks',
     list: listTasks,
-    save: (db, userId, id, body) => saveTask(db, userId, parseTask(body, id)),
+    async save(db, userId, id, body) {
+      const { save, legacy } = parseTaskSave(body, id)
+      const saving = { tasks: [save.task], projects: [] }
+      const changes = await saveWithRules(db, userId, (state) => planTaskSave(state, save), saving)
+      return legacy ? changes.tasks.find((t) => t.id === id) : changes
+    },
   },
   projects: {
     table: 'projects',
     list: listProjects,
-    save: (db, userId, id, body) => saveProject(db, userId, parseProject(body, id)),
+    async save(db, userId, id, body) {
+      const { save, legacy } = parseProjectSave(body, id)
+      const saving = { tasks: [], projects: [save.project] }
+      const changes = await saveWithRules(db, userId, (state) => planProjectSave(state, save), saving)
+      return legacy ? changes.projects.find((p) => p.id === id) : changes
+    },
   },
   // Deleting a tag removes it from its projects
   tags: {

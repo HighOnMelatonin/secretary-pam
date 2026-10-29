@@ -3,6 +3,7 @@
 // is signed in to a new account with no tags; auth.spec.ts covers signing in itself.
 import { env, SELF } from 'cloudflare:test'
 import { beforeEach, describe, it, expect } from 'vitest'
+import type { ProjectSave, TaskSave } from '../../src/types/operations'
 import type { Project } from '../../src/types/project'
 import type { Tag } from '../../src/types/tag'
 import type { Task } from '../../src/types/task'
@@ -24,6 +25,9 @@ const listTasks = async (): Promise<Task[]> => (await call('GET', 'tasks')).body
 const listProjects = async (): Promise<Project[]> => (await call('GET', 'projects')).body
 const saveTask = (task: Task) => call('PUT', `tasks/${task.id}`, task)
 const saveProject = (project: Project) => call('PUT', `projects/${project.id}`, project)
+// Saves in the shape that applies the scheduling rules with extras, replying with the Changes
+const planTask = (save: TaskSave) => call('PUT', `tasks/${save.task.id}`, save)
+const planProject = (save: ProjectSave) => call('PUT', `projects/${save.project.id}`, save)
 
 const task = (id: string, fields: Partial<Task> = {}): Task => ({
   id,
@@ -166,9 +170,10 @@ describe('tasks', () => {
   })
 
   it('keeps a task in its projects when the task is updated', async () => {
+    await saveTag({ id: 'archive', name: 'Archive' }) // completing the task archives the project
     await saveTask(task('a'))
     await saveProject(project('p', { taskIds: ['a'] }))
-    await saveTask(task('a', { name: 'Renamed', completed: true }))
+    expect((await saveTask(task('a', { name: 'Renamed', completed: true }))).status).toBe(200)
 
     expect((await listProjects())[0]!.taskIds).toEqual(['a'])
   })
@@ -475,6 +480,174 @@ describe('deleting', () => {
 
   it('answers 204 for an id that does not exist', async () => {
     expect((await call('DELETE', 'tasks/missing')).status).toBe(204)
+  })
+})
+
+describe('archiving completed projects', () => {
+  // Project p has a completed task a and an open task b
+  beforeEach(async () => {
+    await saveTag({ id: 'archive', name: 'Archive' })
+    await saveTask(task('a', { completed: true }))
+    await saveTask(task('b'))
+    await saveProject(project('p', { taskIds: ['a', 'b'] }))
+  })
+
+  it('archives a project when its last task is completed, in the reply and when listed', async () => {
+    const done = task('b', { completed: true })
+    const archived = project('p', { taskIds: ['a', 'b'], tagIds: ['archive'] })
+
+    expect(await planTask({ task: done })).toEqual({ status: 200, body: { tasks: [done], projects: [archived] } })
+    expect(await listProjects()).toEqual([archived])
+    expect(await listTasks()).toEqual([task('a', { completed: true }), done])
+  })
+
+  it('leaves a project out of the archive once it is taken out by hand', async () => {
+    await planTask({ task: task('b', { completed: true }) })
+    const unarchived = project('p', { taskIds: ['a', 'b'] })
+    expect(await planProject({ project: unarchived })).toEqual({ status: 200, body: { tasks: [], projects: [unarchived] } })
+
+    // Saving one of its completed tasks again doesn't put it back
+    expect((await planTask({ task: task('b', { name: 'Renamed', completed: true }) })).body.projects).toEqual([])
+    expect(await listProjects()).toEqual([unarchived])
+  })
+})
+
+describe('moving a task between projects', () => {
+  // Task t is in p1; task u is in p1 and p2; p3 is empty
+  beforeEach(async () => {
+    await saveTask(task('t'))
+    await saveTask(task('u'))
+    await saveProject(project('p1', { taskIds: ['u', 't'] }))
+    await saveProject(project('p2', { taskIds: ['u'] }))
+    await saveProject(project('p3'))
+  })
+
+  const stored = async () => ({ tasks: await listTasks(), projects: await listProjects() })
+
+  it("changes the other projects' task lists in the same save", async () => {
+    const t = task('t', { name: 'Renamed' })
+    const moved = [project('p1', { taskIds: ['u'] }), project('p2', { taskIds: ['u', 't'] }), project('p3', { taskIds: ['t'] })]
+
+    expect(await planTask({ task: t, projectIds: ['p2', 'p3'] })).toEqual({ status: 200, body: { tasks: [t], projects: moved } })
+    expect(await stored()).toEqual({ tasks: [t, task('u')], projects: moved })
+  })
+
+  it('rejects a project that does not exist, saving nothing', async () => {
+    const before = await stored()
+    expect(await planTask({ task: task('t', { name: 'Renamed' }), projectIds: ['p2', 'missing'] })).toEqual({
+      status: 400,
+      body: { error: 'Unknown project: missing' },
+    })
+    expect(await stored()).toEqual(before)
+  })
+
+  it.each<[string, Record<string, unknown>]>([
+    ['projectIds that are not a list', { projectIds: 'p2' }],
+    ['projectIds that are not strings', { projectIds: [2] }],
+    ['the same project twice', { projectIds: ['p2', 'p2'] }],
+    ['over 500 projectIds', { projectIds: Array.from({ length: 501 }, (_, i) => `p${i}`) }],
+    ['deliveryDates that are a list', { deliveryDates: ['2026-12-10'] }],
+    ['a delivery date in another format', { deliveryDates: { p2: '10/12/2026' } }],
+    ['a delivery date for a project that does not exist', { deliveryDates: { missing: null } }],
+    ['a task that is not valid', { task: { ...task('t'), priority: 'asap' } }],
+    ['a task whose id does not match the URL', { task: task('other') }],
+  ])('rejects a task save with %s, saving nothing', async (_, fields) => {
+    const before = await stored()
+    const response = await call('PUT', 'tasks/t', { task: task('t', { name: 'Renamed' }), ...fields })
+    expect(response.status).toBe(400)
+    expect(response.body.error).toEqual(expect.any(String))
+    expect(await stored()).toEqual(before)
+  })
+
+  it.each<[string, Record<string, unknown>]>([
+    ['dueDates that are a list', { dueDates: ['2026-12-10'] }],
+    ['a due date in another format', { dueDates: { t: 'tomorrow' } }],
+    ['a due date for a task that does not exist', { dueDates: { missing: null } }],
+    ['a project that is not valid', { project: { ...project('p3'), taskIds: 't' } }],
+  ])('rejects a project save with %s, saving nothing', async (_, fields) => {
+    const before = await stored()
+    expect((await call('PUT', 'projects/p3', { project: project('p3', { name: 'Renamed' }), ...fields })).status).toBe(400)
+    expect(await stored()).toEqual(before)
+  })
+})
+
+describe('due dates after a delivery date', () => {
+  // Task t is due four days after project p's delivery date, and isn't in it yet
+  const t = task('t', { name: 'Draft', dueDate: '2026-12-14' })
+  const p = project('p', { name: 'Thesis', deliveryDate: '2026-12-10' })
+  const clash = { taskId: 't', projectId: 'p', dueDate: '2026-12-14', deliveryDate: '2026-12-10' }
+
+  beforeEach(async () => {
+    await saveTask(t)
+    await saveProject(p)
+  })
+
+  it('refuses to add the task to the project, naming the clash and saving nothing', async () => {
+    expect(await planTask({ task: { ...t, name: 'Write report' }, projectIds: ['p'] })).toEqual({
+      status: 409,
+      body: { error: `"Write report" is due 2026-12-14, after "Thesis"'s delivery date (2026-12-10)`, clashes: [clash] },
+    })
+    expect(await listTasks()).toEqual([t])
+    expect(await listProjects()).toEqual([p])
+  })
+
+  it('refuses to add the task from the project side too', async () => {
+    expect(await planProject({ project: { ...p, name: 'Final thesis', taskIds: ['t'] } })).toEqual({
+      status: 409,
+      body: { error: `"Draft" is due 2026-12-14, after "Final thesis"'s delivery date (2026-12-10)`, clashes: [clash] },
+    })
+    expect(await listProjects()).toEqual([p])
+  })
+
+  it('saves both when a task save moves the delivery date as well', async () => {
+    const moved = { ...p, deliveryDate: '2026-12-14', taskIds: ['t'] }
+    expect(await planTask({ task: t, projectIds: ['p'], deliveryDates: { p: '2026-12-14' } })).toEqual({
+      status: 200,
+      body: { tasks: [t], projects: [moved] },
+    })
+    expect(await listTasks()).toEqual([t])
+    expect(await listProjects()).toEqual([moved])
+  })
+
+  it('saves both when a project save moves the due date as well', async () => {
+    const withTask = { ...p, taskIds: ['t'] }
+    const earlier = { ...t, dueDate: '2026-12-10' }
+    expect(await planProject({ project: withTask, dueDates: { t: '2026-12-10' } })).toEqual({
+      status: 200,
+      body: { tasks: [earlier], projects: [withTask] },
+    })
+    expect(await listTasks()).toEqual([earlier])
+    expect(await listProjects()).toEqual([withTask])
+  })
+})
+
+describe('bare bodies from older clients', () => {
+  beforeEach(async () => {
+    await saveTag({ id: 'archive', name: 'Archive' })
+  })
+
+  it('answers with the saved task, and still archives the project it completes', async () => {
+    await saveTask(task('t'))
+    await saveProject(project('p', { taskIds: ['t'] }))
+    const done = task('t', { completed: true })
+
+    expect(await saveTask(done)).toEqual({ status: 200, body: done })
+    expect(await listProjects()).toEqual([project('p', { taskIds: ['t'], tagIds: ['archive'] })])
+  })
+
+  it('answers with the saved project as archived when its tasks are all completed', async () => {
+    await saveTask(task('t', { completed: true }))
+    const archived = project('p', { taskIds: ['t'], tagIds: ['archive'] })
+
+    expect(await saveProject(project('p', { taskIds: ['t'] }))).toEqual({ status: 200, body: archived })
+    expect(await listProjects()).toEqual([archived])
+  })
+
+  it('still refuses a clash', async () => {
+    await saveTask(task('t', { dueDate: '2026-12-14' }))
+    const response = await saveProject(project('p', { deliveryDate: '2026-12-10', taskIds: ['t'] }))
+    expect(response.status).toBe(409)
+    expect(await listProjects()).toEqual([])
   })
 })
 
