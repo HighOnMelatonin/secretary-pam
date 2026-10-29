@@ -104,7 +104,20 @@ describe('UpcomingPanel', () => {
     await wrapper.vm.$nextTick()
   }
 
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    localStorage.clear()
+  })
+
+  const shownTasks = (wrapper: ReturnType<typeof mount>) =>
+    wrapper.findAll('.group').map((s) => [s.find('h3').text(), s.findAll('.task-name').map((n) => n.text())])
+  const toggle = (wrapper: ReturnType<typeof mount>) => wrapper.find('button.collapse-toggle')
+  // Two overdue and two coming up, besides the one too far off
+  const manyTasks = [
+    ...tasks,
+    task('Print poster', { dueDate: addDays(today, -1) }),
+    task('Send invites', { dueDate: addDays(today, 5) }),
+  ]
 
   it('lists overdue and upcoming tasks with their projects', () => {
     const wrapper = mountPanel()
@@ -123,6 +136,61 @@ describe('UpcomingPanel', () => {
     const wrapper = mountPanel({ tasks: [tasks[2]!] })
     expect(wrapper.findAll('.group')).toEqual([])
     expect(wrapper.text()).toContain('Nothing due in the next 14 days.')
+  })
+
+  it('collapses to the first two tasks, keeping their headings, and expands again', async () => {
+    const wrapper = mountPanel({ tasks: manyTasks })
+    expect(toggle(wrapper).text()).toBe('Show fewer')
+    expect(toggle(wrapper).attributes('aria-expanded')).toBe('true')
+    expect(toggle(wrapper).attributes('aria-controls')).toBe('upcoming-tasks')
+
+    await toggle(wrapper).trigger('click')
+    expect(shownTasks(wrapper)).toEqual([['Overdue', ['Write report', 'Print poster']]])
+    expect(toggle(wrapper).text()).toBe('Show all 4')
+    expect(toggle(wrapper).attributes('aria-expanded')).toBe('false')
+    expect(wrapper.find('.more').text()).toBe('2 more hidden')
+
+    await toggle(wrapper).trigger('click')
+    expect(shownTasks(wrapper)).toEqual([
+      ['Overdue', ['Write report', 'Print poster']],
+      ['Next 14 days', ['Review slides', 'Send invites']],
+    ])
+    expect(wrapper.find('.more').exists()).toBe(false)
+  })
+
+  it('fills a collapsed preview from the next section when fewer than two are overdue', async () => {
+    const wrapper = mountPanel({ tasks: [...tasks, task('Send invites', { dueDate: addDays(today, 5) })] })
+    await toggle(wrapper).trigger('click')
+    expect(shownTasks(wrapper)).toEqual([
+      ['Overdue', ['Write report']],
+      ['Next 14 days', ['Review slides']],
+    ])
+  })
+
+  it('offers no collapse button when there are no more than two tasks', () => {
+    expect(toggle(mountPanel()).exists()).toBe(false)
+  })
+
+  it('remembers being collapsed, and shows every task once there are only two again', async () => {
+    await toggle(mountPanel({ tasks: manyTasks })).trigger('click')
+    expect(localStorage.getItem('pam.upcomingCollapsed')).toBe('true')
+
+    const wrapper = mountPanel({ tasks: manyTasks })
+    expect(toggle(wrapper).text()).toBe('Show all 4')
+    await wrapper.setProps({ tasks })
+    expect(shownTasks(wrapper)).toEqual([
+      ['Overdue', ['Write report']],
+      ['Next 14 days', ['Review slides']],
+    ])
+    expect(wrapper.find('.more').exists()).toBe(false)
+  })
+
+  it('starts expanded when storage is blocked', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked')
+    })
+    expect(toggle(mountPanel({ tasks: manyTasks })).text()).toBe('Show fewer')
+    vi.restoreAllMocks()
   })
 
   it('emits toggleTask from a check mark, and editTask from Edit', async () => {

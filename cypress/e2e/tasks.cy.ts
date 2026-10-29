@@ -103,6 +103,31 @@ describe('Tasks', () => {
     })
   })
 
+  it('collapses the upcoming tasks to the first two, and stays collapsed after a reload', () => {
+    cy.seed({
+      tasks: [
+        task('late', { name: 'Write report', dueDate: daysFromToday(-1) }),
+        task('soon', { name: 'Review slides', dueDate: daysFromToday(3) }),
+        task('later', { name: 'Send invites', dueDate: daysFromToday(5) }),
+      ],
+    })
+    cy.visit('/')
+
+    cy.get('section.upcoming').within(() => {
+      cy.contains('button', 'Show fewer').click()
+      cy.get('.task-name').should('have.length', 2)
+      cy.contains('Send invites').should('not.exist')
+      cy.contains('1 more hidden')
+    })
+
+    cy.reload()
+    cy.get('section.upcoming').within(() => {
+      cy.get('.task-name').should('have.length', 2)
+      cy.contains('button', 'Show all 3').click()
+      cy.contains('Send invites')
+    })
+  })
+
   it('floats an overdue counter once the upcoming tasks scroll away, which leads back to them', () => {
     cy.viewport(1280, 800)
     // Enough projects for the page to scroll well past the panel
