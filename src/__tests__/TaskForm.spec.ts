@@ -75,6 +75,19 @@ describe('TaskForm project assignment', () => {
     expect(saved(wrapper)?.[1]).toEqual(['p2'])
   })
 
+  it('assigns a project left picked in the dropdown when the task is added, without Assign', async () => {
+    const wrapper = mount(TaskForm, { props: { projects } })
+    const picker = selectWithOption(wrapper, 'p2')
+    expect(picker.element.value).toBe('') // starts on "Add to project…", so untouched means unassigned
+    expect(picker.find('option[value=""]').text()).toBe('Add to project…')
+
+    await wrapper.find('input[placeholder="Task"]').setValue('Write report')
+    await picker.setValue('p2')
+    await wrapper.find('form').trigger('submit')
+
+    expect(saved(wrapper)?.[1]).toEqual(['p2'])
+  })
+
   it('uses projectIds over the projects when given, e.g. to restore an unsaved choice', () => {
     const wrapper = mount(TaskForm, { props: { task, projects, projectIds: ['p2'] } })
     expect(listedIn(wrapper, 'Projects')).toEqual(['Website'])

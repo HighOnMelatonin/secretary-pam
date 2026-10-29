@@ -50,6 +50,19 @@ export function isCompleted(project: Project, tasks: Task[]) {
   return total > 0 && completed === total
 }
 
+// The tasks no project lists, live or archived: unfinished first, then soonest due, with
+// undated ones last
+export function unassignedTasks(tasks: Task[], projects: Project[]): Task[] {
+  const assigned = new Set(projects.flatMap((p) => p.taskIds))
+  return tasks
+    .filter((t) => !assigned.has(t.id))
+    .sort(
+      (a, b) =>
+        Number(a.completed) - Number(b.completed) ||
+        (a.dueDate ?? '9999-12-31').localeCompare(b.dueDate ?? '9999-12-31'),
+    )
+}
+
 // Looks up the project's task ids in a list of tasks; ids with no matching task are skipped
 export function resolveTasks(project: Project, tasks: Task[]): Task[] {
   const byId = new Map(tasks.map((t) => [t.id, t]))

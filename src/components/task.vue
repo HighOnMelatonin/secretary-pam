@@ -74,7 +74,8 @@ const clashes = computed(() =>
   selectionIsLate.value ? [...lateProjects.value, selectedProject.value!] : lateProjects.value,
 )
 
-const canSave = computed(() => draft.value.name.trim() !== '' && lateProjects.value.length === 0)
+// The picked project counts too, since saving assigns it
+const canSave = computed(() => draft.value.name.trim() !== '' && clashes.value.length === 0)
 
 function extendDeadline(project: AssignableProject) {
   deadlines.value[project.id] = draft.value.dueDate!
@@ -121,6 +122,9 @@ function removeRelation(index: number) {
 
 function save() {
   if (!canSave.value) return
+  // A project or related task picked but not yet added with Assign or Link is added now, not lost
+  assignProject()
+  addRelation()
   draft.value.name = draft.value.name.trim()
   // Only the projects the task ends up in are extended
   const extended = Object.fromEntries(Object.entries(deadlines.value).filter(([id]) => projectIds.value.includes(id)))
@@ -191,7 +195,7 @@ function cancel() {
 
         <div v-if="assignableProjects.length" role="group">
           <select v-model="newProjectId">
-            <option value="" disabled>Select project</option>
+            <option value="">Add to project…</option>
             <option v-for="p in assignableProjects" :key="p.id" :value="p.id">{{ p.name }}</option>
           </select>
           <button type="button" :disabled="!newProjectId || selectionIsLate" @click="assignProject">Assign</button>
