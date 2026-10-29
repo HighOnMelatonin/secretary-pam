@@ -35,6 +35,8 @@ import {
 } from '../src/types/task'
 import type { Project, ReferenceLink } from '../src/types/project'
 import { ARCHIVE_TAG_ID, DEFAULT_TAG_COLOR, isHexColor, type Tag } from '../src/types/tag'
+import { UnknownReference, type Changes } from '../src/types/operations'
+import type { Clash } from '../src/types/rules'
 import { currentUser, handleAuth, HttpError } from './auth'
 import { migrateOnce } from './migrate'
 
@@ -45,6 +47,16 @@ const NOW = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
 class BadRequest extends HttpError {
   constructor(message: string) {
     super(400, message)
+  }
+}
+
+// Thrown for saves that would break a scheduling rule; becomes a 409 response listing the clashes
+class Conflict extends HttpError {
+  constructor(
+    message: string,
+    readonly clashes: Clash[],
+  ) {
+    super(409, message)
   }
 }
 
@@ -221,10 +233,10 @@ async function listTasks(db: D1Database, userId: string): Promise<Task[]> {
   }))
 }
 
-// Runs as one transaction: the task row is upserted (not replaced, which would cascade
-// and drop it from its projects) and its relations are rewritten
-async function saveTask(db: D1Database, userId: string, task: Task): Promise<Task> {
-  await db.batch([
+// The task row is upserted (not replaced, which would cascade and drop it from its projects)
+// and its relations are rewritten
+function taskStatements(db: D1Database, userId: string, task: Task): D1PreparedStatement[] {
+  return [
     db
       .prepare(
         `INSERT INTO tasks (id, name, description, due_date, priority, completed, user_id)
@@ -242,7 +254,12 @@ async function saveTask(db: D1Database, userId: string, task: Task): Promise<Tas
         )
         .bind(userId, task.id, relation.taskId, relation.type, position),
     ),
-  ])
+  ]
+}
+
+// Runs as one transaction
+async function saveTask(db: D1Database, userId: string, task: Task): Promise<Task> {
+  await db.batch(taskStatements(db, userId, task))
   return task
 }
 
@@ -271,9 +288,9 @@ async function listProjects(db: D1Database, userId: string): Promise<Project[]> 
   }))
 }
 
-// Runs as one transaction, like saveTask
-async function saveProject(db: D1Database, userId: string, project: Project): Promise<Project> {
-  await db.batch([
+// The project row is upserted and its tasks, links and tags are rewritten
+function projectStatements(db: D1Database, userId: string, project: Project): D1PreparedStatement[] {
+  return [
     db
       .prepare(
         `INSERT INTO projects (id, name, description, delivery_date, priority, user_id)
@@ -300,8 +317,22 @@ async function saveProject(db: D1Database, userId: string, project: Project): Pr
         .prepare('INSERT INTO project_tags (user_id, project_id, tag_id, position) VALUES (?1, ?2, ?3, ?4)')
         .bind(userId, project.id, tagId, position),
     ),
-  ])
+  ]
+}
+
+// Runs as one transaction, like saveTask
+async function saveProject(db: D1Database, userId: string, project: Project): Promise<Project> {
+  await db.batch(projectStatements(db, userId, project))
   return project
+}
+
+// Saves several tasks and projects as one transaction, since D1 has no BEGIN/COMMIT and a batch
+// is its only atomic unit. Tasks go first because project_tasks rows reference them.
+async function writeChanges(db: D1Database, userId: string, { tasks, projects }: Changes): Promise<void> {
+  await db.batch([
+    ...tasks.flatMap((task) => taskStatements(db, userId, task)),
+    ...projects.flatMap((project) => projectStatements(db, userId, project)),
+  ])
 }
 
 // Tags
@@ -412,7 +443,9 @@ export default {
       }
       return error(405, 'Method not allowed')
     } catch (e) {
+      if (e instanceof Conflict) return json({ error: e.message, clashes: e.clashes }, e.status)
       if (e instanceof HttpError) return error(e.status, e.message)
+      if (e instanceof UnknownReference) return error(400, e.message)
       if (String(e).includes('FOREIGN KEY constraint failed')) {
         return error(400, 'References a task or tag that does not exist')
       }
