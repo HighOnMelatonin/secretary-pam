@@ -1,7 +1,8 @@
 import { computed, ref, toRaw } from 'vue'
 import { acceptHMRUpdate, defineStore } from 'pinia'
 import * as api from '@/api'
-import { isArchived, isCompleted, type Project } from '@/types/project'
+import { isArchived, type Project } from '@/types/project'
+import { applyMembership, projectsToArchive } from '@/types/rules'
 import { ARCHIVE_TAG_ID } from '@/types/tag'
 import { useTaskList } from './taskList'
 
@@ -31,19 +32,8 @@ export const useProjectList = defineStore('projectList', () => {
 
   // Puts the task in exactly the given projects, saving only the projects that change
   async function assignTask(taskId: string, projectIds: string[]) {
-    const changed = projects.value.filter(
-      (p) => p.taskIds.includes(taskId) !== projectIds.includes(p.id),
-    )
-    await Promise.all(
-      changed.map((p) =>
-        saveProject({
-          ...structuredClone(toRaw(p)),
-          taskIds: projectIds.includes(p.id)
-            ? [...p.taskIds, taskId]
-            : p.taskIds.filter((id) => id !== taskId),
-        }),
-      ),
-    )
+    const changed = applyMembership(toRaw(projects.value), taskId, projectIds)
+    await Promise.all(changed.map((p) => saveProject(structuredClone(p))))
   }
 
   // Moves the delivery dates of the given projects, by project id
@@ -58,11 +48,11 @@ export const useProjectList = defineStore('projectList', () => {
   // Runs a change to tasks or projects, then archives the projects it completed. Only projects
   // that weren't completed before are archived, so one taken out of the archive stays out.
   async function archivingCompleted(change: () => Promise<void>) {
-    const completedBefore = new Set(projects.value.filter((p) => isCompleted(p, taskList.tasks)).map((p) => p.id))
+    // Saves replace items rather than editing them, so copying the lists is enough of a snapshot
+    const before = { projects: [...projects.value], tasks: [...taskList.tasks] }
     await change()
-    const newlyCompleted = projects.value.filter(
-      (p) => !completedBefore.has(p.id) && !isArchived(p) && isCompleted(p, taskList.tasks),
-    )
+    const ids = projectsToArchive(before, { projects: projects.value, tasks: taskList.tasks })
+    const newlyCompleted = projects.value.filter((p) => ids.includes(p.id))
     await Promise.all(
       newlyCompleted.map((p) => saveProject({ ...structuredClone(toRaw(p)), tagIds: [...p.tagIds, ARCHIVE_TAG_ID] })),
     )
