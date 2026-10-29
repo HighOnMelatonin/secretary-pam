@@ -86,12 +86,12 @@ function scrollToPanel() {
 
 <template>
   <section ref="panel" class="upcoming" aria-labelledby="upcoming-heading">
-    <div class="upcoming-heading">
+    <div class="heading-row upcoming-heading">
       <h2 id="upcoming-heading">Upcoming</h2>
       <button
         v-if="canCollapse"
         type="button"
-        class="secondary outline collapse-toggle"
+        class="secondary outline compact collapse-toggle"
         aria-controls="upcoming-tasks"
         :aria-expanded="!isCollapsed"
         @click="collapsed = !isCollapsed"
@@ -141,25 +141,9 @@ function scrollToPanel() {
   scroll-margin-top: 1rem;
 }
 
-/* The heading with the button to collapse or expand the panel, as the projects' Expand all */
+/* The heading, with the button to collapse or expand the panel */
 .upcoming-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem 1rem;
   margin-bottom: 1rem;
-}
-
-.upcoming-heading h2 {
-  margin: 0;
-}
-
-.collapse-toggle {
-  width: auto;
-  margin: 0;
-  padding: 0.3rem 0.9rem;
-  font-size: 0.9rem;
 }
 
 .more {

@@ -90,7 +90,7 @@ async function add() {
 
 <template>
   <article class="tag-manager">
-    <header class="heading">
+    <header class="heading-row">
       <h2>Tags</h2>
       <button type="button" class="secondary" @click="$emit('close')">Done</button>
     </header>
@@ -117,7 +117,7 @@ async function add() {
           </span>
           <button
             type="button"
-            class="secondary outline color-button"
+            class="secondary outline small"
             :aria-label="`Choose colour for ${tag.name}`"
             @click="openPicker"
           >
@@ -150,22 +150,6 @@ async function add() {
 </template>
 
 <style scoped>
-.heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.heading h2 {
-  margin: 0;
-}
-
-.heading button {
-  width: auto;
-  margin: 0;
-}
-
 .tag-list {
   padding: 0;
   margin-block: 1.5rem;
@@ -201,13 +185,6 @@ async function add() {
   text-align: center;
   font-family: ui-monospace, Consolas, monospace;
   text-transform: uppercase;
-}
-
-.color-button {
-  width: auto;
-  margin: 0;
-  padding: 0.2rem 0.75rem;
-  font-size: 0.85rem;
 }
 
 form button {

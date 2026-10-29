@@ -39,7 +39,7 @@ const urgencies = [...PRIORITIES].reverse()
             v-for="tag in filterTags"
             :key="tag.id"
             type="button"
-            class="chip tag-chip"
+            class="chip compact tag-chip"
             :style="tagStyle(tag)"
             :aria-pressed="activeTagIds.includes(tag.id)"
             @click="view.toggleTag(tag.id)"
@@ -48,7 +48,7 @@ const urgencies = [...PRIORITIES].reverse()
           </button>
           <button
             type="button"
-            class="chip tag-chip"
+            class="chip compact tag-chip"
             :aria-pressed="activeTagIds.includes(NO_TAG)"
             @click="view.toggleTag(NO_TAG)"
           >
@@ -64,7 +64,7 @@ const urgencies = [...PRIORITIES].reverse()
             v-for="p in urgencies"
             :key="p"
             type="button"
-            class="chip urgency-chip"
+            class="chip compact urgency-chip"
             :aria-pressed="priorities.includes(p)"
             @click="view.togglePriority(p)"
           >
@@ -73,7 +73,7 @@ const urgencies = [...PRIORITIES].reverse()
         </div>
       </fieldset>
 
-      <button v-if="filterCount" type="button" class="secondary outline clear" @click="view.clearFilters()">
+      <button v-if="filterCount" type="button" class="secondary outline compact" @click="view.clearFilters()">
         Clear filters
       </button>
     </details>
@@ -124,16 +124,12 @@ const urgencies = [...PRIORITIES].reverse()
   gap: 0.5rem;
 }
 
-/* A toggle shaped like the tags on the tiles; filled when on */
+/* A toggle shaped like the tags on the tiles (and sized by .compact); filled when on */
 .chip {
-  width: auto;
-  margin: 0;
-  padding: 0.3rem 0.9rem;
   border: 1px solid var(--pam-cream-muted);
   border-radius: 999px;
   background: transparent;
   color: var(--pam-cream);
-  font-size: 0.9rem;
 }
 
 /* When on, each chip takes the accent of the badges it filters by (see main.css), plus a
@@ -155,13 +151,6 @@ const urgencies = [...PRIORITIES].reverse()
   border-color: var(--pam-coral);
   background: var(--pam-coral);
   color: var(--pam-green);
-}
-
-.clear {
-  width: auto;
-  margin: 0;
-  padding: 0.3rem 0.9rem;
-  font-size: 0.9rem;
 }
 
 /* Phones: the sort menu takes the full width under its label */

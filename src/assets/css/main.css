@@ -113,13 +113,6 @@
   gap: 0.5rem;
 }
 
-.date-fixes button {
-  width: auto;
-  margin: 0;
-  padding: 0.3rem 0.9rem;
-  font-size: 0.9rem;
-}
-
 /* Read out by screen readers but not shown, e.g. "(completed)" beside a struck-through task */
 .sr-only {
   position: absolute;
@@ -163,8 +156,55 @@
   color: var(--pico-muted-color);
 }
 
-/* Project and task pages: the link back to the list above the title, and the title with
-   its Edit button */
+/* Smaller buttons, for actions among other content: .small on a row or tile (Edit, View more,
+   Choose colour), .compact beside a heading or among a list's controls (Expand all, Show fewer,
+   Clear filters, the filter chips, a date clash's fixes) */
+.small,
+.compact {
+  width: auto;
+  margin: 0;
+}
+
+.small {
+  padding: 0.2rem 0.75rem;
+  font-size: 0.85rem;
+}
+
+.compact {
+  padding: 0.3rem 0.9rem;
+  font-size: 0.9rem;
+}
+
+/* A heading with its buttons at the other end, e.g. Live projects and Expand all. The buttons
+   wrap under the heading when there isn't room beside it. */
+.heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+
+.heading-row > :is(h2, h3) {
+  margin: 0;
+}
+
+.heading-row > button {
+  flex: none;
+  width: auto;
+  margin: 0;
+}
+
+/* A completed task's name, wherever it is listed */
+.struck {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+/* Project and task pages (projectDetails.vue, taskDetails.vue): the link back to the list above
+   the title, the title with its Edit button (a .heading-row whose title wraps rather than
+   pushing the button under it), the description, then sections divided by lines, some side
+   by side in .columns */
 .back-link {
   display: inline-block;
   margin-bottom: 1rem;
@@ -173,21 +213,86 @@
 }
 
 .page-header {
+  flex-wrap: nowrap;
+}
+
+.page-header h2 {
+  overflow-wrap: anywhere;
+}
+
+.details-page .description {
+  max-width: 48rem;
+  color: var(--pico-muted-color);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.details-page section {
+  margin: 0;
+  padding-block: 1.25rem;
+  border-top: 1px solid var(--pico-muted-border-color);
+}
+
+.details-page .columns {
+  display: grid;
+  column-gap: 2rem;
+}
+
+/* The project and task forms (project.vue, task.vue) */
+
+/* What has been added, such as a project's tasks, each with its Remove button at the end */
+.edit-form li {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
 }
 
-.page-header h2 {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.page-header button {
-  flex: none;
+.edit-form li button {
   width: auto;
   margin: 0;
+  padding: 0.25rem 0.75rem;
+}
+
+/* e.g. "due date moves to …", beside a task whose date the form will change on saving */
+.edit-form .pending {
+  margin-left: 0.5rem;
+  color: var(--pico-muted-color);
+}
+
+.edit-form .actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Below Pico's 768px breakpoint, where .grid would put each field on its own line, the date and
+   priority still share one */
+@media (max-width: 767px) {
+  .edit-form .grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 575px) {
+  .edit-form fieldset ul {
+    padding-left: 0;
+  }
+
+  /* Save and Cancel stay at the bottom of the screen while the long form scrolls */
+  .edit-form .actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    margin: 0 calc(var(--pico-block-spacing-horizontal) * -1) calc(var(--pico-block-spacing-vertical) * -1);
+    padding: 0.75rem var(--pico-block-spacing-horizontal) calc(0.75rem + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--pico-muted-border-color);
+    border-radius: 0 0 var(--pico-border-radius) var(--pico-border-radius);
+    background: var(--pico-card-background-color);
+  }
+
+  .edit-form .actions button {
+    margin: 0;
+  }
 }
 
 /* Small pill used for priorities and status tags */

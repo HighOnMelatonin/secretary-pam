@@ -197,11 +197,6 @@ function onTileClick(event: MouseEvent) {
   transform: rotate(90deg);
 }
 
-.small {
-  padding: 0.2rem 0.75rem;
-  font-size: 0.85rem;
-}
-
 .description {
   color: var(--pico-muted-color);
   white-space: pre-line;

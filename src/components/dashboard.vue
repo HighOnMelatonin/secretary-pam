@@ -264,12 +264,12 @@ async function onToggleTask(task: Task) {
       </article>
 
       <template v-else>
-        <div class="list-heading">
+        <div class="heading-row">
           <h2>Live projects</h2>
           <button
             v-if="visibleProjects.length"
             type="button"
-            class="secondary outline toggle-all"
+            class="secondary outline compact toggle-all"
             @click="toggleAll"
           >
             {{ allExpanded ? 'Collapse all' : 'Expand all' }}
@@ -286,7 +286,7 @@ async function onToggleTask(task: Task) {
           <ListControls />
           <p v-if="visibleProjects.length === 0" class="no-match">
             No projects match these filters.
-            <button type="button" class="secondary outline" @click="projectView.clearFilters()">Clear filters</button>
+            <button type="button" class="secondary outline compact" @click="projectView.clearFilters()">Clear filters</button>
           </p>
         </template>
 
@@ -328,38 +328,12 @@ async function onToggleTask(task: Task) {
 </template>
 
 <style scoped>
-.list-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem 1rem;
-}
-
-.list-heading h2 {
-  margin: 0;
-}
-
-.toggle-all {
-  width: auto;
-  margin: 0;
-  padding: 0.3rem 0.9rem;
-  font-size: 0.9rem;
-}
-
 .no-match {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 0.5rem 1rem;
   margin-top: 1.5rem;
-}
-
-.no-match button {
-  width: auto;
-  margin: 0;
-  padding: 0.3rem 0.9rem;
-  font-size: 0.9rem;
 }
 
 .empty {

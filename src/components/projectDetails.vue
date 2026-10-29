@@ -31,10 +31,10 @@ const status = computed(() => completionStatus(props.project, props.tasks))
 </script>
 
 <template>
-  <article class="project-page">
+  <article class="project-page details-page">
     <RouterLink :to="{ name: 'dashboard' }" class="back-link">← Live projects</RouterLink>
 
-    <header class="page-header">
+    <header class="heading-row page-header">
       <h2>{{ project.name }}</h2>
       <button type="button" class="secondary outline" @click="$emit('edit', project)">Edit</button>
     </header>
@@ -100,28 +100,12 @@ const status = computed(() => completionStatus(props.project, props.tasks))
   color: var(--pico-muted-color);
 }
 
-.description {
-  max-width: 48rem;
-  color: var(--pico-muted-color);
-  white-space: pre-line;
-}
-
-.project-page section {
-  margin: 0;
-  padding-block: 1.25rem;
-  border-top: 1px solid var(--pico-muted-border-color);
-}
-
 .timeline-section {
   min-width: 0; /* so a long timeline scrolls inside the page instead of widening it */
 }
 
-/* Tasks beside the reference links on wide screens, above them on narrow ones */
-.columns {
-  display: grid;
-  column-gap: 2rem;
-}
-
+/* Tasks beside the reference links on wide screens, above them on narrow ones (.columns and
+   the sections are styled with the task page's, as .details-page in main.css) */
 @media (min-width: 768px) {
   .columns.with-links {
     grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);

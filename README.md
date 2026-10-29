@@ -77,6 +77,23 @@ Priority badges get louder as the priority rises, and overdue is the loudest:
 | overdue | coral fill |
 | project tag (e.g. Work) | filled with the tag's colour (indigo by default), in the case it was typed |
 
+### Shared styles
+
+Styles used in more than one place live in `main.css`, and each component keeps only its own layout in a `<style scoped>` block, so its class names can't clash with another's. Reuse these rather than restyling a copy:
+
+| Class | For |
+|---|---|
+| `.small` | Buttons among a row's or tile's content: Edit, View more, Choose colour |
+| `.compact` | Buttons beside a heading or among a list's controls: Expand all, Show fewer, Clear filters, filter chips, a date clash's fixes |
+| `.heading-row` | A heading with its buttons at the other end, wrapping under it when narrow; `.page-header` adds the no-wrap version for a project or task page's title |
+| `.tag` and its variants | Badges: priorities, overdue, and `.project-tag` coloured by `tagStyle()` |
+| `.meta` | The row of a project's or task's badges and due date |
+| `.section-heading`, `.plain-list` | Small uppercase headings, and lists without bullets |
+| `.struck` | A completed task's name |
+| `.details-page` | Project and task pages: their description, divided sections and `.columns` |
+| `.edit-form` | Project and task forms: the lists of added items, pending date notes, and Save and Cancel kept at the bottom on phones |
+| `.error`, `.date-error` | Error messages, and a date clash with its fixes |
+
 ## Project structure
 
 ```

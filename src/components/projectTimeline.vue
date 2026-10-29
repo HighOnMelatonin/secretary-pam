@@ -92,7 +92,7 @@ onMounted(() => {
       <ul v-if="stop.tasks.length" class="stop-tasks">
         <li v-for="task in stop.tasks" :key="task.id" :class="{ done: task.completed }">
           <span class="check" aria-hidden="true">{{ task.completed ? '✓' : '○' }}</span>
-          <RouterLink :to="{ name: 'task', params: { id: task.id } }" class="task-name">
+          <RouterLink :to="{ name: 'task', params: { id: task.id } }" class="task-name" :class="{ struck: task.completed }">
             {{ task.name }}<span v-if="task.completed" class="sr-only"> (completed)</span>
           </RouterLink>
         </li>
@@ -231,11 +231,6 @@ onMounted(() => {
 .check {
   flex: none;
   color: var(--pico-muted-color);
-}
-
-.stop-tasks li.done .task-name {
-  text-decoration: line-through;
-  opacity: 0.7;
 }
 
 /* Phones: top to bottom, with the rail down the left. The line is drawn on the stop itself so
