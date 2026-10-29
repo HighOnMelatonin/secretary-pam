@@ -171,7 +171,17 @@ The app never talks to the database directly. The Pinia stores call the Worker A
 
 ```
 Vue app (Pinia stores)  ──fetch──▶  Worker /api/*  ──SQL──▶  D1
+        ▲                                │
+        └──── changes { tasks, projects } ┘
 ```
+
+The Worker enforces the scheduling rules, so the app sends each save as one request and stores whatever comes back. Saving a task or project goes through the planners in `src/types/operations.ts`, which the Worker and the unit tests' fake API both run:
+
+- **Archiving**: a project whose last task is completed gets the Archive tag. Only projects the save completes are archived, so one taken out of the archive stays out.
+- **Membership**: a task save can say which projects the task is in (`projectIds`); the Worker adds it to or removes it from each project. A project save's `taskIds` is its membership.
+- **Date clashes**: a save that would make a task due after the delivery date of one of its projects is refused with `409` and the clashes, and nothing is written. The forms offer to move the dates first, and send the moves with the save (`deliveryDates` on a task save, `dueDates` on a project save) so they're checked and written together. Clashes already in the stored data don't block a save that doesn't touch them.
+
+The reply lists every task and project the save changed, and `applyChanges` (`src/stores/changes.ts`) puts each one into the stores, replacing the item with the same id or adding it.
 
 ### Accounts
 
@@ -191,10 +201,10 @@ Vue app (Pinia stores)  ──fetch──▶  Worker /api/*  ──SQL──▶ 
 | `POST /api/auth/logout` | Sign out |
 | `GET /api/auth/me` | `{ email }` of the signed-in account, or `401` |
 | `GET /api/projects` | All projects |
-| `PUT /api/projects/:id` | Create or update the project in the body; returns it |
+| `PUT /api/projects/:id` | Create or update the project from `{ project, dueDates? }`; returns the changed `{ tasks, projects }` (`409` for a date clash) |
 | `DELETE /api/projects/:id` | Delete the project |
 | `GET /api/tasks` | All tasks |
-| `PUT /api/tasks/:id` | Create or update the task in the body; returns it |
+| `PUT /api/tasks/:id` | Create or update the task from `{ task, projectIds?, deliveryDates? }`; returns the changed `{ tasks, projects }` (`409` for a date clash) |
 | `DELETE /api/tasks/:id` | Delete the task, removing it from projects and relations |
 | `GET /api/tags` | All tags, by name |
 | `PUT /api/tags/:id` | Create, rename or recolour the tag in the body; returns it. `color` is a `#rrggbb` code (stored in lower case); leaving it out keeps an existing tag's colour, or makes a new one indigo |
@@ -204,7 +214,7 @@ The project, task and tag routes work on the signed-in account's data only. Bodi
 
 The limits in `src/types/limits.ts` apply to the forms and the API alike: names and link labels up to 200 characters, descriptions up to 10,000, ids up to 100, link URLs up to 2,000, up to 500 tasks, tags, links or relations on one item, emails up to 254, and passwords from 8 to 256. Reference links must start with `http:`, `https:` or `mailto:`, so a `javascript:` link can't run code in the app when clicked. Every value reaches D1 as a bound parameter, never as part of the SQL.
 
-The Worker doesn't check that a task's due date is on or before the delivery dates of its projects. Only the task and project forms enforce that, so a project or task saved straight through the API can break the rule. Its form will then refuse to save until the dates are fixed.
+A bare `Task` or `Project` body is still accepted, as sent by clients from before the scheduling rules: it is saved under the same rules, and the reply is the saved item.
 
 ### Schema
 
@@ -293,7 +303,7 @@ Planned, not built yet:
 - Project list view, including completed projects
 - Messages
 - Settings and profile (the calendar's week start would move there from the browser's storage)
-- **Rescheduling from the calendar**: drag a chip to another day on wide screens; on phones (where drag and drop doesn't work) tap it, then **Move to…** with a date picker. Dragging a task from **No due date** onto a day gives it that date. Saves through `taskList.setDueDates`, showing the move straight away and undoing it if the save fails. Items already carry `editable` (false for now) to decide what can be moved. Before this, the rule that a task can't be due after a project's delivery date (only checked in the forms today) moves into a shared function that the Worker enforces too, since a task can be in several projects, and moving a delivery date earlier goes through the same clash fixes the project form offers.
+- **Rescheduling from the calendar**: drag a chip to another day on wide screens; on phones (where drag and drop doesn't work) tap it, then **Move to…** with a date picker. Dragging a task from **No due date** onto a day gives it that date. Saves through `taskList.saveTask` or `projectList.saveProject`, showing the move straight away and undoing it if the save fails. Items already carry `editable` (false for now) to decide what can be moved. A move that clashes with a delivery date comes back from the Worker as a `409`, and should offer the same clash fixes the forms do.
 - **Google Calendar, both ways**: show upcoming Google Calendar events in Pam, and keep tasks and events in step. OAuth and token refresh in the Worker, tokens stored per account in D1, the client secret set with `wrangler secret`. Tasks get a `googleEventId`, with the event's etag and update time to detect conflicting edits. Events come in through a third adapter beside `taskToItems` and `projectToItems` in `src/types/calendar.ts`, which already asks for items by date range (as Google's API does), keeps a loading and error state per source, places timed events after all-day ones, and has room for time zones and Google's exclusive end dates on all-day events.
 - **Logo**: a logo for Pam, to make it look the part.
 - **LLM layer**: summarise what needs doing, quickly pick out the high priority tasks, and explain how tasks relate to each other.

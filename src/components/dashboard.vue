@@ -164,15 +164,14 @@ watch(
   { immediate: true },
 )
 
-// On failure the form is reopened with the unsaved project/task so no input is lost
-// along with the due dates or deadlines it moved to fix date clashes
+// Each save is one request: the Worker moves the dates, sets which projects the task is in and
+// archives completed projects along with it. On failure the form is reopened with the unsaved
+// project/task so no input is lost, along with the due dates or deadlines it moved to fix date
+// clashes. A clash the Worker refuses (ApiConflict) names the task and project in its message.
 async function onSaveProject(project: Project, taskDueDates: Record<string, string>) {
   error.value = null
   try {
-    await projectList.archivingCompleted(async () => {
-      await taskList.setDueDates(taskDueDates)
-      await projectList.saveProject(project)
-    })
+    await projectList.saveProject({ project, dueDates: taskDueDates })
     await close()
   } catch (e) {
     error.value = `Couldn't save "${project.name}": ${messageOf(e)}`
@@ -183,11 +182,7 @@ async function onSaveProject(project: Project, taskDueDates: Record<string, stri
 async function onSaveTask(task: Task, projectIds: string[], deadlines: Record<string, string>) {
   error.value = null
   try {
-    await projectList.archivingCompleted(async () => {
-      await projectList.setDeliveryDates(deadlines)
-      await taskList.saveTask(task)
-      await projectList.assignTask(task.id, projectIds)
-    })
+    await taskList.saveTask({ task, projectIds, deliveryDates: deadlines })
     await close()
   } catch (e) {
     error.value = `Couldn't save "${task.name}": ${messageOf(e)}`
@@ -199,7 +194,7 @@ async function onSaveTask(task: Task, projectIds: string[], deadlines: Record<st
 async function onToggleTask(task: Task) {
   error.value = null
   try {
-    await projectList.archivingCompleted(() => taskList.saveTask({ ...task, completed: !task.completed }))
+    await taskList.saveTask({ task: { ...task, completed: !task.completed } })
   } catch (e) {
     error.value = `Couldn't save "${task.name}": ${messageOf(e)}`
   }

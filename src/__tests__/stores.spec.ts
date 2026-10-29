@@ -38,7 +38,7 @@ describe('taskList', () => {
   it('adds a new task after the API saves it', async () => {
     const api = fakeApi()
     const store = useTaskList()
-    await store.saveTask(task('a'))
+    await store.saveTask({ task: task('a') })
 
     expect(api.requests).toEqual(['PUT /api/tasks/a'])
     expect(store.tasks).toEqual([task('a')])
@@ -48,7 +48,7 @@ describe('taskList', () => {
     fakeApi({ tasks: [task('a'), task('b')] })
     const store = useTaskList()
     await store.load()
-    await store.saveTask(task('a', { name: 'Renamed' }))
+    await store.saveTask({ task: task('a', { name: 'Renamed' }) })
 
     expect(store.tasks.map((t) => t.name)).toEqual(['Renamed', 'b'])
   })
@@ -59,8 +59,30 @@ describe('taskList', () => {
     await store.load()
     api.failWith = 'D1 is down'
 
-    await expect(store.saveTask(task('a', { name: 'Renamed' }))).rejects.toThrow('D1 is down')
+    await expect(store.saveTask({ task: task('a', { name: 'Renamed' }) })).rejects.toThrow('D1 is down')
     expect(store.tasks).toEqual([task('a')])
+  })
+
+  it('updates every task and project the save changed, from its one request', async () => {
+    const api = fakeApi({
+      tasks: [task('t'), task('u')],
+      projects: [project('p', { taskIds: ['t'], tagIds: ['work'] }), project('q', { taskIds: ['u'] })],
+    })
+    const store = useTaskList()
+    const projectList = useProjectList()
+    await Promise.all([store.load(), projectList.load()])
+    api.requests.length = 0
+
+    await store.saveTask({ task: task('t', { completed: true }), projectIds: ['p', 'q'], deliveryDates: { q: '2026-12-01' } })
+
+    expect(api.requests).toEqual(['PUT /api/tasks/t'])
+    expect(store.tasks).toEqual([task('t', { completed: true }), task('u')])
+    // Completing p's last task archives it; q, which still has u to do, gets the task and its
+    // new delivery date
+    expect(projectList.projects).toEqual([
+      project('p', { taskIds: ['t'], tagIds: ['work', ARCHIVE_TAG_ID] }),
+      project('q', { taskIds: ['u', 't'], deliveryDate: '2026-12-01' }),
+    ])
   })
 })
 
@@ -75,11 +97,23 @@ describe('projectList', () => {
   it('saves a project through the API, adding or replacing it', async () => {
     const api = fakeApi()
     const store = useProjectList()
-    await store.saveProject(project('p'))
-    await store.saveProject(project('p', { name: 'Renamed' }))
+    await store.saveProject({ project: project('p') })
+    await store.saveProject({ project: project('p', { name: 'Renamed' }) })
 
     expect(api.requests).toEqual(['PUT /api/projects/p', 'PUT /api/projects/p'])
     expect(store.projects).toEqual([project('p', { name: 'Renamed' })])
+  })
+
+  it("updates the tasks whose due dates the save moved", async () => {
+    fakeApi({ tasks: [task('t', { dueDate: '2026-12-05' }), task('u')], projects: [project('p', { taskIds: ['t'] })] })
+    const store = useProjectList()
+    const taskList = useTaskList()
+    await Promise.all([store.load(), taskList.load()])
+
+    await store.saveProject({ project: project('p', { taskIds: ['t'], deliveryDate: '2026-11-30' }), dueDates: { t: '2026-11-30' } })
+
+    expect(taskList.tasks).toEqual([task('t', { dueDate: '2026-11-30' }), task('u')])
+    expect(store.projects).toEqual([project('p', { taskIds: ['t'], deliveryDate: '2026-11-30' })])
   })
 
   describe('liveProjects and archivedProjects', () => {
@@ -107,85 +141,6 @@ describe('projectList', () => {
       ]
 
       expect(store.liveProjects.map((p) => p.id)).toEqual(['soon', 'late', 'none'])
-    })
-
-  })
-
-  describe('archivingCompleted', () => {
-    it('archives the projects the change completes, keeping their other tags', async () => {
-      const api = fakeApi()
-      const taskList = useTaskList()
-      taskList.tasks = [task('t'), task('u')]
-      const store = useProjectList()
-      store.projects = [
-        project('p', { taskIds: ['t'], tagIds: ['work'] }),
-        project('q', { taskIds: ['t', 'u'] }),
-        project('r'),
-      ]
-
-      await store.archivingCompleted(() => taskList.saveTask(task('t', { completed: true })))
-
-      expect(api.requests).toEqual(['PUT /api/tasks/t', 'PUT /api/projects/p'])
-      expect(store.projects.map((p) => p.tagIds)).toEqual([['work', ARCHIVE_TAG_ID], [], []])
-      expect(store.archivedProjects.map((p) => p.id)).toEqual(['p'])
-    })
-
-    it('leaves a completed project that was taken out of the archive alone', async () => {
-      const api = fakeApi()
-      const taskList = useTaskList()
-      taskList.tasks = [task('t', { completed: true })]
-      const store = useProjectList()
-      store.projects = [project('p', { taskIds: ['t'] })]
-
-      await store.archivingCompleted(() => taskList.saveTask(task('t', { name: 'Renamed', completed: true })))
-
-      expect(api.requests).toEqual(['PUT /api/tasks/t'])
-      expect(store.projects[0]!.tagIds).toEqual([])
-    })
-
-    it('archives nothing when the change fails', async () => {
-      const api = fakeApi()
-      api.failWith = 'D1 is down'
-      const taskList = useTaskList()
-      taskList.tasks = [task('t')]
-      const store = useProjectList()
-      store.projects = [project('p', { taskIds: ['t'] })]
-
-      await expect(store.archivingCompleted(() => taskList.saveTask(task('t', { completed: true })))).rejects.toThrow()
-      expect(store.projects[0]!.tagIds).toEqual([])
-    })
-  })
-
-  describe('assignTask', () => {
-    it('saves only the projects whose membership changes', async () => {
-      const api = fakeApi()
-      const store = useProjectList()
-      store.projects = [project('p1', { taskIds: ['t1'] }), project('p2'), project('p3')]
-
-      await store.assignTask('t1', ['p2'])
-
-      expect([...api.requests].sort()).toEqual(['PUT /api/projects/p1', 'PUT /api/projects/p2'])
-      expect(store.projects.map((p) => p.taskIds)).toEqual([[], ['t1'], []])
-    })
-
-    it("adds the task after the project's existing tasks", async () => {
-      fakeApi()
-      const store = useProjectList()
-      store.projects = [project('p', { taskIds: ['a', 'b'] })]
-
-      await store.assignTask('c', ['p'])
-
-      expect(store.projects[0]!.taskIds).toEqual(['a', 'b', 'c'])
-    })
-
-    it('sends nothing when the assignment is unchanged', async () => {
-      const api = fakeApi()
-      const store = useProjectList()
-      store.projects = [project('p1', { taskIds: ['t'] }), project('p2')]
-
-      await store.assignTask('t', ['p1'])
-
-      expect(api.requests).toEqual([])
     })
   })
 })

@@ -1,7 +1,9 @@
-import { ref, toRaw } from 'vue'
+import { ref } from 'vue'
 import { acceptHMRUpdate, defineStore } from 'pinia'
 import * as api from '@/api'
+import type { TaskSave } from '@/types/operations'
 import type { Task } from '@/types/task'
+import { applyChanges } from './changes'
 
 export const useTaskList = defineStore('taskList', () => {
   const tasks = ref<Task[]>([])
@@ -10,24 +12,13 @@ export const useTaskList = defineStore('taskList', () => {
     tasks.value = await api.list('tasks')
   }
 
-  // Stores the task, then adds it or replaces the existing task with the same id
-  async function saveTask(task: Task) {
-    const saved = await api.save('tasks', task)
-    const index = tasks.value.findIndex((t) => t.id === saved.id)
-    if (index === -1) tasks.value.push(saved)
-    else tasks.value[index] = saved
+  // Saves the task under the scheduling rules, then updates every task and project the Worker
+  // changed, such as a project it moved the task into or archived. Throws ApiConflict for a clash.
+  async function saveTask(input: TaskSave) {
+    applyChanges(await api.saveTask(input))
   }
 
-  // Moves the due dates of the given tasks, by task id
-  async function setDueDates(dates: Record<string, string>) {
-    await Promise.all(
-      tasks.value
-        .filter((t) => t.id in dates)
-        .map((t) => saveTask({ ...structuredClone(toRaw(t)), dueDate: dates[t.id]! })),
-    )
-  }
-
-  return { tasks, load, saveTask, setDueDates }
+  return { tasks, load, saveTask }
 })
 
 // Lets Vite hot-swap this store when the file changes, instead of keeping the old one
