@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { completionStatus, createEmptyProject, resolveTasks, type Project } from '../types/project'
-import { createEmptyTask, relatedTasks, type Task, type TaskRelation } from '../types/task'
-import { contrastRatio, createEmptyTag, DEFAULT_TAG_COLOR, isHexColor, tagStyle, textColorOn } from '../types/tag'
+import { completionStatus, createEmptyProject, resolveTasks, unassignedTasks, type Project } from '../types/project'
+import { createEmptyTask, findTasks, relatedTasks, type Task, type TaskRelation } from '../types/task'
+import { ARCHIVE_TAG_ID, contrastRatio, createEmptyTag, DEFAULT_TAG_COLOR, isHexColor, tagStyle, textColorOn } from '../types/tag'
 
 const task = (id: string, completed = false): Task => ({ ...createEmptyTask(), id, name: id, completed })
 const projectWith = (taskIds: string[]): Project => ({ ...createEmptyProject(), taskIds })
@@ -57,6 +57,50 @@ describe('resolveTasks', () => {
 
   it('returns nothing for a project without tasks', () => {
     expect(resolveTasks(projectWith([]), tasks)).toEqual([])
+  })
+})
+
+describe('findTasks', () => {
+  const tasks = [task('Write report'), task('Review slides'), task('Rewrite report', true), task('Book room')]
+  const names = (query: string) => findTasks(tasks, query).map((t) => t.name)
+
+  it('finds tasks whose name contains the query anywhere, ignoring case', () => {
+    expect(names('REPORT')).toEqual(['Write report', 'Rewrite report'])
+    expect(names('ite')).toEqual(['Write report', 'Rewrite report'])
+    expect(names('slides')).toEqual(['Review slides'])
+  })
+
+  it('lists unfinished tasks first, then by name, keeping completed ones', () => {
+    expect(names('r')).toEqual(['Book room', 'Review slides', 'Write report', 'Rewrite report'])
+  })
+
+  it('ignores the spaces around the query, and finds nothing for a blank one or no match', () => {
+    expect(names('  book ')).toEqual(['Book room'])
+    expect(names('')).toEqual([])
+    expect(names('   ')).toEqual([])
+    expect(names('thesis')).toEqual([])
+  })
+})
+
+describe('unassignedTasks', () => {
+  it('lists the tasks in no project, live or archived: unfinished first, then soonest due, undated last', () => {
+    const dated = (id: string, dueDate: string | null, completed = false) => ({ ...task(id, completed), dueDate })
+    const tasks = [
+      dated('in live', '2026-11-01'),
+      dated('in archived', '2026-11-02'),
+      dated('undated', null),
+      dated('done', '2026-11-03', true),
+      dated('later', '2026-11-20'),
+      dated('sooner', '2026-11-05'),
+    ]
+    const archived = { ...projectWith(['in archived']), tagIds: [ARCHIVE_TAG_ID] }
+    expect(unassignedTasks(tasks, [projectWith(['in live']), archived]).map((t) => t.id)).toEqual([
+      'sooner',
+      'later',
+      'undated',
+      'done',
+    ])
+    expect(unassignedTasks([], [])).toEqual([])
   })
 })
 

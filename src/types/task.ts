@@ -68,3 +68,13 @@ export function relatedTasks(task: Task, tasks: Task[]): RelatedTask[] {
 
 // "blocked_by" reads as "blocked by"
 export const relationLabel = (type: RelationType) => type.replace('_', ' ')
+
+// The tasks whose name contains the query, ignoring case and the spaces around it, for the task
+// lookup. Unfinished ones come first, then by name. A blank query finds nothing.
+export function findTasks(tasks: Task[], query: string): Task[] {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return []
+  return tasks
+    .filter((t) => t.name.toLowerCase().includes(needle))
+    .sort((a, b) => Number(a.completed) - Number(b.completed) || a.name.localeCompare(b.name))
+}

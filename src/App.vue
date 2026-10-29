@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import TaskSearch from '@/components/taskSearch.vue'
 import { useSession } from '@/stores/session'
 
 const session = useSession()
@@ -23,6 +24,7 @@ async function signOut() {
         <RouterLink :to="{ name: 'dashboard' }">Projects</RouterLink>
         <RouterLink :to="{ name: 'calendar' }">Calendar</RouterLink>
       </nav>
+      <TaskSearch v-if="session.account" />
       <div v-if="session.account" class="account">
         <small>{{ session.account.email }}</small>
         <button type="button" class="secondary outline" @click="signOut">Sign out</button>

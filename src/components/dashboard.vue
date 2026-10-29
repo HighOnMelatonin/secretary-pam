@@ -13,6 +13,7 @@ import Taskbar from './taskbar.vue'
 import UpcomingPanel from './upcomingPanel.vue'
 import ProjectTile from './projectTile.vue'
 import ProjectDetails from './projectDetails.vue'
+import TaskRow from './taskRow.vue'
 import TaskDetails from './taskDetails.vue'
 import ListControls from './listControls.vue'
 import CalendarView from './calendarView.vue'
@@ -20,7 +21,7 @@ import { useProjectView } from '@/stores/projectView'
 import { useProjectList } from '@/stores/projectList'
 import { useTagList } from '@/stores/tagList'
 import { useTaskList } from '@/stores/taskList'
-import type { Project } from '@/types/project'
+import { unassignedTasks, type Project } from '@/types/project'
 import type { Task } from '@/types/task'
 
 const projectList = useProjectList()
@@ -32,6 +33,8 @@ const projectView = useProjectView()
 const { visibleProjects } = storeToRefs(projectView)
 const { tasks } = storeToRefs(taskList)
 const { tags } = storeToRefs(tagList)
+// The tasks in no project, listed in their own section below the projects
+const unassigned = computed(() => unassignedTasks(tasks.value, projects.value))
 
 // The project's tags, in the order it lists them
 const tagsOf = (project: Project) =>
@@ -343,6 +346,20 @@ async function onToggleTask(task: Task) {
           </div>
         </details>
       </template>
+
+      <section class="unassigned" aria-labelledby="unassigned-heading">
+        <h2 id="unassigned-heading">Unassigned</h2>
+        <ul v-if="unassigned.length" class="plain-list">
+          <TaskRow
+            v-for="task in unassigned"
+            :key="task.id"
+            :task="task"
+            @edit="open({ name: 'edit-task', params: { id: $event.id } })"
+            @toggle-completed="onToggleTask"
+          />
+        </ul>
+        <p v-else class="none"><small>Every task is in a project.</small></p>
+      </section>
     </template>
   </section>
 </template>
@@ -368,10 +385,23 @@ async function onToggleTask(task: Task) {
   margin-top: 1.5rem;
 }
 
-.archived {
+.archived,
+.unassigned {
   margin-top: 2.5rem;
   padding-top: 1.5rem;
   border-top: 1px solid var(--pico-muted-border-color);
+}
+
+.unassigned h2 {
+  margin-bottom: 1rem;
+}
+
+.none {
+  margin: 0;
+}
+
+.none small {
+  color: var(--pico-muted-color);
 }
 
 .archived summary {
