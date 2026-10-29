@@ -13,6 +13,7 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 - **Task lookup** in the header, on every page: type part of a task's name (any case) and, once you pause, it lists the matching tasks, unfinished first, with their projects (or **Unassigned**), due date and a **done** mark on completed ones. Choose one to open its page.
 - **Calendar** (`/calendar`, linked from **Calendar** in the header, with **Projects** leading back) shows a month of unfinished tasks on their due dates and live projects' delivery dates as flags. Each is a chip in the colour of its tag (a task takes the first tag of the first live project it's in; untagged things are grey), with cream or green text, whichever reads better, and links to its page. A day shows up to three chips, then **+N more** to expand it. Overdue chips get a coral ring, and today a cream ring, as on a project's timeline. **‹**, **Today** and **›** move between months, and the month is kept in the address (`?month=2026-11`), so going back after an edit returns to it and the link can be shared. The week can start on Monday or Sunday (remembered in the browser), and the chips can be filtered by tag. Below the grid, **No due date** opens the tasks that have none. On phones the grid is compact, with a dot per item, and tapping a day lists its tasks below with their check marks, **Edit** buttons and projects. Completed tasks and archived projects aren't shown. It is view-only for now: dates are changed in the forms.
 - **Project pages** (`/projects/:id`) use the whole screen for one project: its details and progress, its timeline, every task with its description, and its reference links.
+- **Export** on a project's page copies its tasks for sharing. It only reads the project, never changes it, and works entirely in the browser. Choose **Markdown** (a checklist, for notes apps, GitHub and chat apps), **Plain text**, **CSV** (for Excel, Google Sheets or Numbers) or **JSON** (structured data, in the `pam-project-export` format a future import would read), and whether to include completed tasks (off at first). A preview shows exactly what you'll get; then **Copy** puts it on the clipboard, or **Download** saves it as `<project>-tasks-<date>.<md|txt|csv|json>`. An export has the project's name and delivery date, then each task's name, due date, priority, whether it's done and its description, in the project's order; relations, tags and links are left out. CSV files start with a byte order mark so Excel reads accents and other scripts correctly (copied CSV leaves it out, so it doesn't stick to the first cell when pasted), and any cell starting with `=`, `+`, `-` or `@` gets a `'` in front so a spreadsheet can't run it as a formula.
 - **Task pages** (`/tasks/:id`) show a task's status, priority, due date and description, the projects it is in, and its related tasks. Relations are shown from both sides, so if A blocks B, B's page says it is blocked by A.
 - **Projects** have a name, description, delivery date, priority, any number of tags, tasks and reference links.
 - **Taskbar** hidden on the left edge of the screen. Hover over it to slide it out over the page, with buttons for **Tags**, **Add task** and **Add project**. On phones and other touch screens these are behind a **+** button in the bottom-right corner instead.
@@ -111,6 +112,7 @@ src/
     taskbar.vue       the Tags, Add task and Add project buttons: a hidden bar on the left, or a + button on phones
     upcomingPanel.vue the upcoming tasks section above the projects, and the overdue counter that floats once it scrolls away
     projectTile.vue   one project on the dashboard; expands into a preview
+    projectExport.vue the Export button and dialog on a project's page: format, preview, Copy and Download
     project.vue       create/edit a project
     task.vue          create/edit a task, including which projects it is in
     tags.vue          add, rename, recolour and delete tags
@@ -118,7 +120,7 @@ src/
   router/             one route per form and the calendar, all showing the dashboard, so back closes forms
   stores/             Pinia stores for projects, tasks, tags and the signed-in account; they load and save through the API
   types/              Project, Task and Tag models, shared by the app and the Worker, which tasks are upcoming,
-                      and the calendar's items, dates and month grid (calendar.ts)
+                      the calendar's items, dates and month grid (calendar.ts), and the export formats (export.ts)
   api.ts              client for the Worker API, including signing in
   __tests__/          unit tests
 worker/

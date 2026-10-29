@@ -176,6 +176,23 @@ describe('TaskForm relations', () => {
     expect(saved(wrapper)?.[0].relations).toEqual([{ taskId: 't2', type: 'blocks' }])
   })
 
+  it('leaves completed tasks out of the related task menu, but keeps relations already made to them', () => {
+    const tasks = [...otherTasks, { id: 't4', name: 'Print poster', completed: true }]
+    const newTask = mount(TaskForm, { props: { availableTasks: tasks } })
+    expect(selectWithOption(newTask, 't2').findAll('option').map((o) => o.text())).toEqual([
+      'Select task',
+      'Write report',
+      'Review slides',
+      'Book room',
+    ])
+
+    const linked = mount(TaskForm, {
+      props: { task: { ...task, relations: [{ taskId: 't4', type: 'blocked_by' }] }, availableTasks: tasks },
+    })
+    expect(listedIn(linked, 'Related tasks')).toEqual(['blocked by: Print poster'])
+    expect(selectWithOption(linked, 't2').find('option[value="t4"]').exists()).toBe(false)
+  })
+
   it('names related tasks, falling back to the id for unknown ones', () => {
     const wrapper = mount(TaskForm, {
       props: {

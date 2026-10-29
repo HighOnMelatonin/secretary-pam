@@ -16,7 +16,7 @@ import { MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH } from '@/types/limits'
 
 const props = defineProps<{
   task?: Task // task to edit; a new empty task is used when omitted
-  availableTasks?: Pick<Task, 'id' | 'name'>[] // tasks that can be linked as relations
+  availableTasks?: (Pick<Task, 'id' | 'name'> & Partial<Pick<Task, 'completed'>>)[] // tasks that can be linked as relations
   projects?: Pick<Project, 'id' | 'name' | 'taskIds' | 'deliveryDate'>[] // projects the task can be assigned to
   projectIds?: string[] // projects to show as assigned; defaults to the projects whose taskIds include the task
   deadlines?: Record<string, string> // project deadlines to start out extended, by project id
@@ -100,9 +100,10 @@ function unassignProject(id: string) {
 const newRelationTaskId = ref('')
 const newRelationType = ref<RelationType>('related_to')
 
+// Completed tasks aren't offered, though relations already made to them stay listed
 const relatableTasks = computed(() =>
   (props.availableTasks ?? []).filter(
-    (t) => t.id !== draft.value.id && !draft.value.relations.some((r) => r.taskId === t.id),
+    (t) => !t.completed && t.id !== draft.value.id && !draft.value.relations.some((r) => r.taskId === t.id),
   ),
 )
 
