@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ProjectTile from '../components/projectTile.vue'
 import { createEmptyProject, type Project } from '../types/project'
+import type { Tag } from '../types/tag'
 import { createEmptyTask, type Task } from '../types/task'
 import { memoryRouter } from './helpers'
 
@@ -19,7 +20,7 @@ const project: Project = {
   links: [{ label: 'GitHub repo', url: 'https://example.com/repo' }],
 }
 
-const mountTile = (props: { tags?: { id: string; name: string }[]; expanded?: boolean } = {}) =>
+const mountTile = (props: { tags?: Tag[]; expanded?: boolean } = {}) =>
   mount(ProjectTile, { props: { project, tasks, tags: [], ...props }, global: { plugins: [memoryRouter()] } })
 
 describe('ProjectTile', () => {
@@ -64,10 +65,13 @@ describe('ProjectTile', () => {
     expect(wrapper.find('.preview').exists()).toBe(false)
   })
 
-  it("shows each of the project's tags", () => {
+  it("shows each of the project's tags in its colour", () => {
     expect(mountTile().find('.project-tag').exists()).toBe(false)
-    const tagged = mountTile({ tags: [{ id: 'school', name: 'School (SUTD)' }, { id: 'archive', name: 'Archive' }] })
-    expect(tagged.findAll('.project-tag').map((t) => t.text())).toEqual(['School (SUTD)', 'Archive'])
+    const tagged = mountTile({ tags: [{ id: 'school', name: 'School (SUTD)', color: '#17646a' }, { id: 'archive', name: 'Archive', color: '#f5d76e' }] })
+    expect(tagged.findAll('.project-tag').map((t) => [t.text(), t.attributes('style')])).toEqual([
+      ['School (SUTD)', '--pam-tag-fill: #17646a; --pam-tag-text: #faefe0;'],
+      ['Archive', '--pam-tag-fill: #f5d76e; --pam-tag-text: #204030;'],
+    ])
   })
 
   it("links each task to its page, without collapsing the tile when one is clicked", async () => {

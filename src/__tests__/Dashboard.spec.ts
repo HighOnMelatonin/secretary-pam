@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import Dashboard from '../components/dashboard.vue'
 import { createEmptyProject, type Project } from '../types/project'
-import { ARCHIVE_TAG_ID } from '../types/tag'
+import { ARCHIVE_TAG_ID, type Tag } from '../types/tag'
 import { createEmptyTask, type Task } from '../types/task'
 import { fakeApi } from './fakeApi'
 import { button, listedIn, routerAt, selectWithOption } from './helpers'
@@ -157,9 +157,9 @@ describe('Dashboard editing a project', () => {
 })
 
 describe('Dashboard tags', () => {
-  const tags = [
-    { id: 'school', name: 'School (SUTD)' },
-    { id: 'work', name: 'Work' },
+  const tags: Tag[] = [
+    { id: 'school', name: 'School (SUTD)', color: '#343ca6' },
+    { id: 'work', name: 'Work', color: '#343ca6' },
   ]
 
   it('shows each tile with its tags', async () => {
@@ -295,7 +295,7 @@ describe('Dashboard routes', () => {
   })
 
   it('opens the tag list from its link', async () => {
-    fakeApi({ tags: [{ id: 'w', name: 'Work' }] })
+    fakeApi({ tags: [{ id: 'w', name: 'Work', color: '#343ca6' }] })
     const wrapper = await mountDashboard('/tags')
     expect(wrapper.find('input[aria-label="Name of Work"]').exists()).toBe(true)
   })
@@ -317,9 +317,9 @@ describe('Dashboard sorting and filtering', () => {
     project('thesis', { name: 'Thesis', deliveryDate: '2027-02-01', priority: 'urgent', tagIds: ['school'] }),
     project('gym', { name: 'Gym', priority: 'high' }),
   ]
-  const tags = [
-    { id: 'school', name: 'School (SUTD)' },
-    { id: 'work', name: 'Work' },
+  const tags: Tag[] = [
+    { id: 'school', name: 'School (SUTD)', color: '#343ca6' },
+    { id: 'work', name: 'Work', color: '#343ca6' },
   ]
   const chip = (wrapper: ReturnType<typeof mount>, text: string) =>
     wrapper.findAll('.chip').find((c) => c.text() === text)!

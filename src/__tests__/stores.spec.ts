@@ -192,25 +192,25 @@ describe('projectList', () => {
 
 describe('tagList', () => {
   it('loads tags from the API', async () => {
-    fakeApi({ tags: [{ id: 'w', name: 'Work' }] })
+    fakeApi({ tags: [{ id: 'w', name: 'Work', color: '#343ca6' }] })
     const store = useTagList()
     await store.load()
-    expect(store.tags).toEqual([{ id: 'w', name: 'Work' }])
+    expect(store.tags).toEqual([{ id: 'w', name: 'Work', color: '#343ca6' }])
   })
 
   it('saves a tag, keeping the list in name order', async () => {
     const api = fakeApi()
     const store = useTagList()
-    await store.saveTag({ id: 'w', name: 'Work' })
-    await store.saveTag({ id: 's', name: 'school' })
-    await store.saveTag({ id: 'w', name: 'Apprenticeship' })
+    await store.saveTag({ id: 'w', name: 'Work', color: '#343ca6' })
+    await store.saveTag({ id: 's', name: 'school', color: '#343ca6' })
+    await store.saveTag({ id: 'w', name: 'Apprenticeship', color: '#343ca6' })
 
     expect(api.requests).toEqual(['PUT /api/tags/w', 'PUT /api/tags/s', 'PUT /api/tags/w'])
     expect(store.tags.map((t) => t.name)).toEqual(['Apprenticeship', 'school'])
   })
 
   it('deletes a tag and clears it from the loaded projects', async () => {
-    const api = fakeApi({ tags: [{ id: 'w', name: 'Work' }] })
+    const api = fakeApi({ tags: [{ id: 'w', name: 'Work', color: '#343ca6' }] })
     const store = useTagList()
     await store.load()
     const projectList = useProjectList()
@@ -224,13 +224,13 @@ describe('tagList', () => {
   })
 
   it('keeps the tag when the API fails to delete it', async () => {
-    const api = fakeApi({ tags: [{ id: 'w', name: 'Work' }] })
+    const api = fakeApi({ tags: [{ id: 'w', name: 'Work', color: '#343ca6' }] })
     const store = useTagList()
     await store.load()
     api.failWith = 'D1 is down'
 
     await expect(store.deleteTag('w')).rejects.toThrow('D1 is down')
-    expect(store.tags).toEqual([{ id: 'w', name: 'Work' }])
+    expect(store.tags).toEqual([{ id: 'w', name: 'Work', color: '#343ca6' }])
   })
 })
 
@@ -239,8 +239,8 @@ describe('projectView', () => {
   function setUp() {
     useTaskList().tasks = [task('done', { completed: true }), task('open1'), task('open2')]
     useTagList().tags = [
-      { id: 'work', name: 'Work' },
-      { id: 'school', name: 'School' },
+      { id: 'work', name: 'Work', color: '#343ca6' },
+      { id: 'school', name: 'School', color: '#343ca6' },
     ]
     useProjectList().projects = [
       project('d', { priority: 'urgent', tagIds: ['school'] }),
@@ -294,7 +294,7 @@ describe('projectView', () => {
   it('ignores a filtered tag that has been deleted', () => {
     const view = setUp()
     view.toggleTag('school')
-    useTagList().tags = [{ id: 'work', name: 'Work' }]
+    useTagList().tags = [{ id: 'work', name: 'Work', color: '#343ca6' }]
     expect(ids(view)).toEqual(['a', 'b', 'c', 'd'])
     expect(view.filterCount).toBe(0)
   })

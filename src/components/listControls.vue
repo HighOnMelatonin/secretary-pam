@@ -5,7 +5,7 @@ import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { NO_TAG, SORTS, useProjectView } from '@/stores/projectView'
 import { useTagList } from '@/stores/tagList'
-import { ARCHIVE_TAG_ID } from '@/types/tag'
+import { ARCHIVE_TAG_ID, tagStyle } from '@/types/tag'
 import { PRIORITIES } from '@/types/task'
 
 const view = useProjectView()
@@ -40,6 +40,7 @@ const urgencies = [...PRIORITIES].reverse()
             :key="tag.id"
             type="button"
             class="chip tag-chip"
+            :style="tagStyle(tag)"
             :aria-pressed="activeTagIds.includes(tag.id)"
             @click="view.toggleTag(tag.id)"
           >
@@ -142,11 +143,12 @@ const urgencies = [...PRIORITIES].reverse()
   content: '✓ ' / ''; /* the empty alt text keeps screen readers from reading it; aria-pressed says it */
 }
 
-/* Indigo is as dark as the page, so the cream border marks the chip's edge */
+/* Filled with the tag's colour (from tagStyle()), or indigo for No tag. A tag's colour can be as
+   dark as the page, so the cream border marks the chip's edge */
 .tag-chip[aria-pressed='true'] {
   border-color: var(--pam-cream);
-  background: var(--pam-indigo);
-  color: var(--pam-cream);
+  background: var(--pam-tag-fill, var(--pam-indigo));
+  color: var(--pam-tag-text, var(--pam-cream));
 }
 
 .urgency-chip[aria-pressed='true'] {

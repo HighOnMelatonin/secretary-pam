@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { completionStatus, createEmptyProject, resolveTasks, type Project } from '../types/project'
 import { createEmptyTask, relatedTasks, type Task, type TaskRelation } from '../types/task'
+import { contrastRatio, createEmptyTag, DEFAULT_TAG_COLOR, isHexColor, tagStyle, textColorOn } from '../types/tag'
 
 const task = (id: string, completed = false): Task => ({ ...createEmptyTask(), id, name: id, completed })
 const projectWith = (taskIds: string[]): Project => ({ ...createEmptyProject(), taskIds })
@@ -106,5 +107,34 @@ describe('relatedTasks', () => {
 
   it('skips relations to tasks that no longer exist', () => {
     expect(summary('a', [withRelations('a', [{ taskId: 'gone', type: 'blocks' }])])).toEqual([])
+  })
+})
+
+describe('tag colours', () => {
+  it('starts a new tag indigo', () => {
+    expect(createEmptyTag().color).toBe('#343ca6')
+    expect(DEFAULT_TAG_COLOR).toBe('#343ca6')
+  })
+
+  it('accepts only #rrggbb colours', () => {
+    expect(['#343ca6', '#F5D76E', '#000000'].every(isHexColor)).toBe(true)
+    expect(['indigo', '#fff', '343ca6', '#343ca6 ', '#34gca6', null, 0x343ca6].some(isHexColor)).toBe(false)
+  })
+
+  it('measures contrast as WCAG does', () => {
+    expect(contrastRatio('#000000', '#ffffff')).toBeCloseTo(21)
+    expect(contrastRatio('#ffffff', '#000000')).toBeCloseTo(21)
+    expect(contrastRatio('#343ca6', '#343ca6')).toBe(1)
+    expect(contrastRatio('#faefe0', '#343ca6')).toBeCloseTo(7.9, 1) // cream on indigo, from the README
+  })
+
+  it('writes cream on dark colours and forest green on light ones', () => {
+    expect(['#343ca6', '#000000', '#9c2f55', '#204030'].map(textColorOn)).toEqual(Array(4).fill('#faefe0'))
+    expect(['#ffffff', '#f5d76e', '#e69e7a', '#faefe0'].map(textColorOn)).toEqual(Array(4).fill('#204030'))
+  })
+
+  it('gives anything showing a tag its fill and text colour, falling back to indigo', () => {
+    expect(tagStyle({ id: 't', name: 'T', color: '#f5d76e' })).toEqual({ '--pam-tag-fill': '#f5d76e', '--pam-tag-text': '#204030' })
+    expect(tagStyle({ id: 't', name: 'T', color: 'url(x)' })).toEqual({ '--pam-tag-fill': '#343ca6', '--pam-tag-text': '#faefe0' })
   })
 })

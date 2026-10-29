@@ -46,6 +46,26 @@ describe('Tags', () => {
     tile('Slides').find('.project-tag').should('have.text', 'Internship')
   })
 
+  it('gives a tag any colour, which its badges keep after a reload', () => {
+    const badge = () => tile('Report').find('.project-tag')
+    cy.seed({ tags: [tag('work', 'Work')], projects: [project('p', { name: 'Report', tagIds: ['work'] })] })
+    cy.visit('/')
+    badge().should('have.css', 'background-color', 'rgb(52, 60, 166)') // indigo, the default
+
+    cy.taskbar('Tags')
+    tagRow('Work').find('.color-swatch').should('have.text', '#343ca6')
+    // The browser's own picker can't be driven, so the colour is set the way the picker sets it
+    tagRow('Work').find('input[type="color"]').invoke('val', '#f5d76e').trigger('input').trigger('change')
+    tagRow('Work').find('.color-swatch').should('have.text', '#f5d76e')
+    cy.request('/api/tags').its('body').should('deep.include', { id: 'work', name: 'Work', color: '#f5d76e' })
+    cy.contains('button', 'Done').click()
+    // A light colour gets forest green text
+    badge().should('have.css', 'background-color', 'rgb(245, 215, 110)').and('have.css', 'color', 'rgb(32, 64, 48)')
+
+    cy.reload()
+    badge().should('have.css', 'background-color', 'rgb(245, 215, 110)')
+  })
+
   it('refuses a name another tag already has', () => {
     cy.seed({ tags: [tag('work', 'Work'), tag('personal', 'Personal')], projects: [project('p')] })
     cy.visit('/')

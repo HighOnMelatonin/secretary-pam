@@ -65,9 +65,9 @@ describe('ProjectForm for a new project', () => {
 
 describe('ProjectForm tags', () => {
   const tags: Tag[] = [
-    { id: 'archive', name: 'Archive' },
-    { id: 'school', name: 'School (SUTD)' },
-    { id: 'work', name: 'Work' },
+    { id: 'archive', name: 'Archive', color: '#343ca6' },
+    { id: 'school', name: 'School (SUTD)', color: '#343ca6' },
+    { id: 'work', name: 'Work', color: '#343ca6' },
   ]
   const checkbox = (wrapper: ReturnType<typeof mount>, id: string) =>
     wrapper.find<HTMLInputElement>(`input[type="checkbox"][value="${id}"]`)

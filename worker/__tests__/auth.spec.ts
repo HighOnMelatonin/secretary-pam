@@ -15,10 +15,10 @@ describe('signing up', () => {
     const cookie = cookieOf(response.headers)
     expect((await me(cookie)).body).toEqual({ email: 'me@example.com' })
     expect((await call('GET', 'tags', undefined, cookie)).body).toEqual([
-      { id: 'archive', name: 'Archive' },
-      { id: 'personal', name: 'Personal' },
-      { id: 'school', name: 'School (SUTD)' },
-      { id: 'work', name: 'Work' },
+      { id: 'archive', name: 'Archive', color: '#343ca6' },
+      { id: 'personal', name: 'Personal', color: '#343ca6' },
+      { id: 'school', name: 'School (SUTD)', color: '#343ca6' },
+      { id: 'work', name: 'Work', color: '#343ca6' },
     ])
   })
 
@@ -177,7 +177,7 @@ describe('the original account', () => {
     const first = await signUp('me@example.com')
     expect((await call('GET', 'tasks', undefined, first)).body.map((t: { name: string }) => t.name)).toEqual(['From before accounts'])
     // It already has its tags, so it isn't given the starting ones
-    expect((await call('GET', 'tags', undefined, first)).body).toEqual([{ id: 'archive', name: 'Archive' }])
+    expect((await call('GET', 'tags', undefined, first)).body).toEqual([{ id: 'archive', name: 'Archive', color: '#343ca6' }])
 
     const second = await signUp('other@example.com')
     expect((await call('GET', 'tasks', undefined, second)).body).toEqual([])

@@ -16,7 +16,7 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 - **Taskbar** hidden on the left edge of the screen. Hover over it to slide it out over the page, with buttons for **Tags**, **Add task** and **Add project**. On phones and other touch screens these are behind a **+** button in the bottom-right corner instead.
 - **Upcoming tasks** in a section at the top of the dashboard, above the projects. It lists every unfinished task that is overdue or due in the next 14 days, from all projects, soonest first, with each task's projects, check mark and **Edit** button. Tasks with no due date, or only in archived projects, are left out. Once the section scrolls out of view, a coral **overdue** counter floats in the top-right corner; click it to scroll back up to it.
 - **Works on phones**: each form has its own address (such as `/projects/new` or `/tags`), so the back button or gesture closes it, and the forms keep Save and Cancel pinned to the bottom of the screen.
-- **Tags** such as School (SUTD), Work and Personal file projects by area of life. Add, rename and delete them from **Tags** in the taskbar. Renaming a tag renames it on every project, and deleting one removes it from its projects. The Archive tag can be renamed but not deleted.
+- **Tags** such as School (SUTD), Work and Personal file projects by area of life. Add, rename, recolour and delete them from **Tags** in the taskbar. Each tag shows its colour beside a **Choose colour** button, which opens the browser's colour picker: any colour can be chosen, and it fills the tag's badges and filter chip, with cream or green text, whichever is easier to read on it. Tags start indigo. Renaming a tag renames it on every project, and deleting one removes it from its projects. The Archive tag can be renamed but not deleted.
 - **Tasks** have a name, description, due date, priority, completed flag and relations to other tasks (blocks, blocked by, subtask of, parent of, related to). A task can be assigned to several projects, from either the project form or the task form. A task can't be due after the delivery date of a project it's in: once both dates are set, either form points out the clash, offers to extend the project's deadline or move the task's due date, and won't add the task or save until it's fixed.
 
 ## Tech stack
@@ -40,14 +40,16 @@ A dark theme: [Pico CSS](https://picocss.com/) recoloured in `src/assets/css/mai
 | Forest green | `#204030` | `--pam-green` | Page background, form fields, and text on cream or coral fills |
 | Raised green | `#2a5040` | `--pam-green-raised` | Cards (project tiles, forms), the taskbar and menus |
 | Cream | `#faefe0` | `--pam-cream` | Text, primary buttons, progress bars |
-| Indigo (accent) | `#343ca6` | `--pam-indigo` | Categories: project tag badges, selected tag filters |
+| Indigo (accent) | `#343ca6` | `--pam-indigo` | Categories: project tag badges, selected tag filters (the default tag colour) |
 | Coral (accent) | `#e69e7a` | `--pam-coral` | Needs attention: urgent and overdue badges, selected urgency filters |
+
+Tags are indigo unless given a colour of their own, which can be any colour (`Tag.color`, a `#rrggbb` code). A tag's badge and its selected filter chip are filled with it, and their text is cream or forest green, whichever contrasts more with the fill (`textColorOn` in `src/types/tag.ts`). `tagStyle(tag)` sets both as the CSS variables `--pam-tag-fill` and `--pam-tag-text`, which the styles fall back from to indigo and cream.
 
 Three shades are derived from these: `--pam-green-line` (`#3d6652`) for borders and secondary buttons, `--pam-cream-muted` (cream at 68%) for secondary text, and `--pam-cream-faint` (cream at 14%) for focus rings.
 
 ### Accents
 
-The accents carry meaning, so keep them to their jobs: **indigo** says which area of life something belongs to, and **coral** says it needs attention. Using them for decoration would blur that.
+The accents carry meaning, so keep them to their jobs: **indigo** (or a tag's own colour) says which area of life something belongs to, and **coral** says it needs attention. Using them for decoration would blur that.
 
 Their contrast with the rest of the palette decides how they can be used:
 
@@ -73,7 +75,7 @@ Priority badges get louder as the priority rises, and overdue is the loudest:
 | high | cream outline |
 | urgent | coral outline |
 | overdue | coral fill |
-| project tag (e.g. Work) | indigo fill, in the case it was typed |
+| project tag (e.g. Work) | filled with the tag's colour (indigo by default), in the case it was typed |
 
 ## Project structure
 
@@ -87,7 +89,7 @@ src/
     projectTile.vue   one project on the dashboard; expands into a preview
     project.vue       create/edit a project
     task.vue          create/edit a task, including which projects it is in
-    tags.vue          add, rename and delete tags
+    tags.vue          add, rename, recolour and delete tags
     login.vue         the sign-in and sign-up pages
   router/             one route per form, all showing the dashboard, so back closes forms
   stores/             Pinia stores for projects, tasks, tags and the signed-in account; they load and save through the API
@@ -168,7 +170,7 @@ Vue app (Pinia stores)  ──fetch──▶  Worker /api/*  ──SQL──▶ 
 | `PUT /api/tasks/:id` | Create or update the task in the body; returns it |
 | `DELETE /api/tasks/:id` | Delete the task, removing it from projects and relations |
 | `GET /api/tags` | All tags, by name |
-| `PUT /api/tags/:id` | Create or rename the tag in the body; returns it |
+| `PUT /api/tags/:id` | Create, rename or recolour the tag in the body; returns it. `color` is a `#rrggbb` code (stored in lower case); leaving it out keeps an existing tag's colour, or makes a new one indigo |
 | `DELETE /api/tags/:id` | Delete the tag, removing it from its projects (`400` for the built-in `archive` tag) |
 
 The project, task and tag routes work on the signed-in account's data only. Bodies are the `Project`, `Task` and `Tag` objects from `src/types`, sent as `application/json`. The Worker checks every field and answers `400` with an error message if something is invalid, including a reference to a task or tag that doesn't exist, or a tag name that another tag already has. Each save runs as one transaction, so a failed save changes nothing.
@@ -192,7 +194,7 @@ Defined in the files in `migrations/`. Each field has its own column, and each a
 | `project_links` | `Project.links` | `user_id`, `project_id` → `projects`, `position`, `label`, `url` |
 | `project_tags` | `Project.tagIds` | `user_id`, `project_id` → `projects`, `tag_id` → `tags`, `position` |
 | `task_relations` | `Task.relations` | `user_id`, `task_id` → `tasks`, `related_task_id` → `tasks`, `type`, `position` |
-| `tags` | `Tag` | `user_id` → `users`, `id`, `name`, `created_at`, `updated_at` |
+| `tags` | `Tag` | `user_id` → `users`, `id`, `name`, `color`, `created_at`, `updated_at` |
 
 - `project_tasks` links projects to tasks. A task can be in several projects.
 - All foreign keys cascade on delete. Deleting a task removes it from its projects and from other tasks' relations, deleting a project removes its links and tags, deleting a tag removes it from its projects, and deleting a user removes their sessions and all of their data.

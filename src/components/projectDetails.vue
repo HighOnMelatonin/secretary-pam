@@ -8,7 +8,7 @@ import ProjectTimeline from './projectTimeline.vue'
 import TaskRow from './taskRow.vue'
 import { completionStatus, resolveTasks, type Project } from '@/types/project'
 import { safeHref } from '@/types/limits'
-import type { Tag } from '@/types/tag'
+import { tagStyle, type Tag } from '@/types/tag'
 import type { Task } from '@/types/task'
 
 const props = defineProps<{
@@ -40,7 +40,7 @@ const status = computed(() => completionStatus(props.project, props.tasks))
     </header>
 
     <div class="meta">
-      <span v-for="tag in tags" :key="tag.id" class="tag project-tag">{{ tag.name }}</span>
+      <span v-for="tag in tags" :key="tag.id" class="tag project-tag" :style="tagStyle(tag)">{{ tag.name }}</span>
       <span class="tag" :class="`priority-${project.priority}`">{{ project.priority }}</span>
       <span v-if="isOverdue" class="tag overdue">overdue</span>
       <small>Due {{ project.deliveryDate ?? 'whenever' }}</small>

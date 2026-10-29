@@ -34,7 +34,7 @@ import {
   type TaskRelation,
 } from '../src/types/task'
 import type { Project, ReferenceLink } from '../src/types/project'
-import { ARCHIVE_TAG_ID, type Tag } from '../src/types/tag'
+import { ARCHIVE_TAG_ID, DEFAULT_TAG_COLOR, isHexColor, type Tag } from '../src/types/tag'
 import { currentUser, handleAuth, HttpError } from './auth'
 import { migrateOnce } from './migrate'
 
@@ -188,11 +188,17 @@ function parseProject(body: unknown, id: string): Project {
   }
 }
 
-function parseTag(body: unknown, id: string): Tag {
+// A tag to save. color may be left out, as by clients from before tags had colours: a new tag
+// is then indigo and an existing one keeps its colour.
+type TagBody = Omit<Tag, 'color'> & { color?: string }
+
+function parseTag(body: unknown, id: string): TagBody {
   check(isObject(body), 'Body must be a JSON object')
   check(body.id === id, 'id must match the URL')
   checkName(body.name)
-  return { id, name: body.name.trim() }
+  const { color } = body
+  check(color === undefined || isHexColor(color), 'color must be a #rrggbb hex colour')
+  return { id, name: body.name.trim(), color: color?.toLowerCase() }
 }
 
 // Tasks
@@ -302,21 +308,23 @@ async function saveProject(db: D1Database, userId: string, project: Project): Pr
 
 async function listTags(db: D1Database, userId: string): Promise<Tag[]> {
   const { results } = await db
-    .prepare('SELECT id, name FROM tags WHERE user_id = ?1 ORDER BY name, id')
+    .prepare('SELECT id, name, color FROM tags WHERE user_id = ?1 ORDER BY name, id')
     .bind(userId)
     .all<Tag>()
   return results
 }
 
-async function saveTag(db: D1Database, userId: string, tag: Tag): Promise<Tag> {
-  await db
+// Returns the tag as stored, so the reply has its colour even when the body left it out
+async function saveTag(db: D1Database, userId: string, tag: TagBody): Promise<Tag> {
+  return (await db
     .prepare(
-      `INSERT INTO tags (user_id, id, name) VALUES (?1, ?2, ?3)
-       ON CONFLICT (user_id, id) DO UPDATE SET name = excluded.name, updated_at = ${NOW}`,
+      `INSERT INTO tags (user_id, id, name, color) VALUES (?1, ?2, ?3, coalesce(?4, ?5))
+       ON CONFLICT (user_id, id) DO UPDATE SET name = excluded.name, color = coalesce(?4, color),
+         updated_at = ${NOW}
+       RETURNING id, name, color`,
     )
-    .bind(userId, tag.id, tag.name)
-    .run()
-  return tag
+    .bind(userId, tag.id, tag.name, tag.color ?? null, DEFAULT_TAG_COLOR)
+    .first<Tag>())!
 }
 
 // Routing

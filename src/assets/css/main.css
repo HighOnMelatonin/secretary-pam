@@ -14,6 +14,7 @@
   --pam-indigo: #343ca6; /* categories: project tags */
   --pam-coral: #e69e7a; /* needs attention: urgent and overdue */
 
+
   --pico-font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
   --pico-border-radius: 0.5rem;
 
@@ -223,11 +224,13 @@
   color: var(--pam-green);
 }
 
-/* The project's own tag, e.g. "Work": indigo, and in the case it was typed */
+/* The project's own tag, e.g. "Work": filled with the tag's colour, and in the case it was typed.
+   tagStyle() in src/types/tag.ts sets the fill, and cream or green text, whichever reads better
+   on it. Without them it is indigo. */
 .tag.project-tag {
-  background: var(--pam-indigo);
-  border-color: var(--pam-indigo);
-  color: var(--pam-cream);
+  background: var(--pam-tag-fill, var(--pam-indigo));
+  border-color: var(--pam-tag-fill, var(--pam-indigo));
+  color: var(--pam-tag-text, var(--pam-cream));
   text-transform: none;
   letter-spacing: normal;
 }
