@@ -18,8 +18,8 @@
 // Saving a task or project applies the scheduling rules in src/types/operations.ts: a save that
 // makes a task due after a project's delivery date is refused with 409 and the clashes, and a
 // project whose last task is completed is archived. The Changes ({ tasks, projects }) are every
-// task and project whose stored value changed. A bare Task or Project is also accepted, as sent
-// by clients from before the rules: it is saved the same way, and the reply is the saved entity.
+// task and project whose stored value changed. A body that isn't wrapped in { task } or
+// { project } (a bare Task or Project) is refused with 400.
 //
 // Every route but /api/auth needs a signed-in user, and only reads and writes that user's rows:
 // every query has a user_id, which comes from the session, never from the request.
@@ -225,11 +225,10 @@ function parseProject(body: unknown, id: string): Project {
   }
 }
 
-// A task save: { task, projectIds?, deliveryDates? }, or a bare Task from a client older than the
-// rules (recognised by having no `task`), which is saved with no extras and answered with the task
-function parseTaskSave(body: unknown, id: string): { save: TaskSave; legacy: boolean } {
+// A task save: { task, projectIds?, deliveryDates? }
+function parseTaskSave(body: unknown, id: string): TaskSave {
   check(isObject(body), 'Body must be a JSON object')
-  if (!Object.hasOwn(body, 'task')) return { save: { task: parseTask(body, id) }, legacy: true }
+  check(Object.hasOwn(body, 'task'), 'Body must be { task, projectIds?, deliveryDates? }')
   const { projectIds, deliveryDates } = body
   check(
     projectIds === undefined || (isList(projectIds) && projectIds.every(isId)),
@@ -240,16 +239,16 @@ function parseTaskSave(body: unknown, id: string): { save: TaskSave; legacy: boo
     deliveryDates === undefined || isDateMap(deliveryDates),
     'deliveryDates must map project ids to null or a YYYY-MM-DD date',
   )
-  return { save: { task: parseTask(body.task, id), projectIds, deliveryDates }, legacy: false }
+  return { task: parseTask(body.task, id), projectIds, deliveryDates }
 }
 
-// A project save: { project, dueDates? }, or a bare Project, as for tasks
-function parseProjectSave(body: unknown, id: string): { save: ProjectSave; legacy: boolean } {
+// A project save: { project, dueDates? }
+function parseProjectSave(body: unknown, id: string): ProjectSave {
   check(isObject(body), 'Body must be a JSON object')
-  if (!Object.hasOwn(body, 'project')) return { save: { project: parseProject(body, id) }, legacy: true }
+  check(Object.hasOwn(body, 'project'), 'Body must be { project, dueDates? }')
   const { dueDates } = body
   check(dueDates === undefined || isDateMap(dueDates), 'dueDates must map task ids to null or a YYYY-MM-DD date')
-  return { save: { project: parseProject(body.project, id), dueDates }, legacy: false }
+  return { project: parseProject(body.project, id), dueDates }
 }
 
 // A tag to save. color may be left out, as by clients from before tags had colours: a new tag
@@ -442,21 +441,19 @@ const RESOURCES: Record<string, Resource> = {
   tasks: {
     table: 'tasks',
     list: listTasks,
-    async save(db, userId, id, body) {
-      const { save, legacy } = parseTaskSave(body, id)
+    save(db, userId, id, body) {
+      const save = parseTaskSave(body, id)
       const saving = { tasks: [save.task], projects: [] }
-      const changes = await saveWithRules(db, userId, (state) => planTaskSave(state, save), saving)
-      return legacy ? changes.tasks.find((t) => t.id === id) : changes
+      return saveWithRules(db, userId, (state) => planTaskSave(state, save), saving)
     },
   },
   projects: {
     table: 'projects',
     list: listProjects,
-    async save(db, userId, id, body) {
-      const { save, legacy } = parseProjectSave(body, id)
+    save(db, userId, id, body) {
+      const save = parseProjectSave(body, id)
       const saving = { tasks: [], projects: [save.project] }
-      const changes = await saveWithRules(db, userId, (state) => planProjectSave(state, save), saving)
-      return legacy ? changes.projects.find((p) => p.id === id) : changes
+      return saveWithRules(db, userId, (state) => planProjectSave(state, save), saving)
     },
   },
   // Deleting a tag removes it from its projects

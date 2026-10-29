@@ -38,12 +38,14 @@ export function fakeApi(initial: { projects?: Project[]; tasks?: Task[]; tags?: 
 
       const body = JSON.parse(init!.body as string)
       const id = decodeURIComponent(rawId!)
-      // Saves in the new shapes go through the scheduling rules, as in the Worker
-      if (resource === 'tasks' && 'task' in body) {
+      // Task and project saves go through the scheduling rules, and must be wrapped, as in the Worker
+      if (resource === 'tasks') {
+        if (!('task' in body)) return Response.json({ error: 'Body must be { task, projectIds?, deliveryDates? }' }, { status: 400 })
         expect(body.task.id).toBe(id)
         return applyPlan(() => planTaskSave(data, body), { tasks: [body.task], projects: [] })
       }
-      if (resource === 'projects' && 'project' in body) {
+      if (resource === 'projects') {
+        if (!('project' in body)) return Response.json({ error: 'Body must be { project, dueDates? }' }, { status: 400 })
         expect(body.project.id).toBe(id)
         return applyPlan(() => planProjectSave(data, body), { tasks: [], projects: [body.project] })
       }

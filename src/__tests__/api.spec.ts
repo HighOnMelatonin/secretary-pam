@@ -145,11 +145,9 @@ describe('api client against the fake Worker', () => {
     expect(fake.data.tasks).toEqual([task('t')])
   })
 
-  it('still saves a bare task as it is', async () => {
-    const fake = fakeApi({ tasks: [task('t')], projects: [project('p', { taskIds: ['t'] })] })
-    const done = task('t', { completed: true })
-
-    expect(await api.save('tasks', done)).toEqual(done)
-    expect(fake.data.projects).toEqual([project('p', { taskIds: ['t'] })])
+  it('refuses a bare task, saving nothing', async () => {
+    const fake = fakeApi({ tasks: [task('t')] })
+    await expect(api.save('tasks', task('t', { completed: true }))).rejects.toThrow('Body must be { task, projectIds?, deliveryDates? }')
+    expect(fake.data.tasks).toEqual([task('t')])
   })
 })
