@@ -20,6 +20,7 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 - **Upcoming tasks** in a section at the top of the dashboard, above the projects. It lists every unfinished task that is overdue or due in the next 14 days, from all projects, soonest first, with each task's projects, check mark and **Edit** button. Tasks with no due date, or only in archived projects, are left out. **Show fewer** collapses the section to its first two tasks (and **Show all** expands it again); the browser remembers which. Once the section scrolls out of view, a coral **overdue** counter floats in the top-right corner; click it to scroll back up to it.
 - **Works on phones**: each form has its own address (such as `/projects/new` or `/tags`), so the back button or gesture closes it, and the forms keep Save and Cancel pinned to the bottom of the screen.
 - **Tags** such as School (SUTD), Work and Personal file projects by area of life. Add, rename, recolour and delete them from **Tags** in the taskbar. Each tag shows its colour beside a **Choose colour** button, which opens the browser's colour picker: any colour can be chosen, and it fills the tag's badges and filter chip, with cream or green text, whichever is easier to read on it. Tags start indigo. Renaming a tag renames it on every project, and deleting one removes it from its projects. The Archive tag can be renamed but not deleted.
+- **Google Calendar import**: **Sync Google Calendar**, under **Unassigned** on the dashboard, imports the events of every calendar shown in your Google Calendar, from now to a year ahead, as unassigned tasks. Each one has a tag with the Google account's email. A task is due the day its event starts. An event that ends on a later day starts its description with **Ends** and that day, followed by the event's own description (Google's HTML turned into plain text). Repeating events become one task per occurrence. Cancelled events and working locations ("Home", "Office") are left out. The first time, the button sends you to Google to connect an account, then comes back and syncs. **Google accounts** beside it lists the connected accounts, each with **Disconnect**, and connects more. Syncing again updates each task's name, due date and description from its event, keeping the done mark, priority, relations and projects set in Pam. It adds new events and deletes the tasks whose events were deleted. A task in a project keeps its due date when its event moves past the project's delivery date, and the sync says so. The import is one-way: changes made in Pam are not sent to Google, and the next sync replaces an imported task's name, due date and description, which the task's form and page point out. A task deleted in Pam comes back at the next sync if its event still exists.
 - **Tasks** have a name, description, due date, priority, completed flag and relations to other tasks (blocks, blocked by, subtask of, parent of, related to). A task can be assigned to several projects, from either the project form or the task form. A task can't be due after the delivery date of a project it's in: once both dates are set, either form points out the clash, offers to extend the project's deadline or move the task's due date, and won't add the task or save until it's fixed.
 
 ## Tech stack
@@ -116,16 +117,22 @@ src/
     project.vue       create/edit a project
     task.vue          create/edit a task, including which projects it is in
     tags.vue          add, rename, recolour and delete tags
+    googleSync.vue    the Sync Google Calendar button, what the last sync did, and the connected accounts
     login.vue         the sign-in and sign-up pages
   router/             one route per form and the calendar, all showing the dashboard, so back closes forms
   stores/             Pinia stores for projects, tasks, tags and the signed-in account; they load and save through the API
   types/              Project, Task and Tag models, shared by the app and the Worker, which tasks are upcoming,
-                      the calendar's items, dates and month grid (calendar.ts), and the export formats (export.ts)
+                      the calendar's items, dates and month grid (calendar.ts), the export formats (export.ts),
+                      and what the Google Calendar routes answer (google.ts)
   api.ts              client for the Worker API, including signing in
   __tests__/          unit tests
 worker/
   index.ts            the /api routes, reading and writing the signed-in user's rows in D1
   auth.ts             the /api/auth routes: accounts, passwords and sessions
+  google.ts           the /api/google routes: connecting Google accounts and syncing their events into tasks
+  googleCalendar.ts   Google's OAuth and Calendar API: tokens, the calendar list, batched event lists,
+                      and what a task takes from an event
+  secrets.d.ts        types for the Worker's secrets
   migrate.ts          applies migrations/ to the database on the Worker's first request
   __tests__/          integration tests for the API and database
 cypress/
@@ -209,8 +216,15 @@ The reply lists every task and project the save changed, and `applyChanges` (`sr
 | `GET /api/tags` | All tags, by name |
 | `PUT /api/tags/:id` | Create, rename or recolour the tag in the body; returns it. `color` is a `#rrggbb` code (stored in lower case); leaving it out keeps an existing tag's colour, or makes a new one indigo |
 | `DELETE /api/tags/:id` | Delete the tag, removing it from its projects (`400` for the built-in `archive` tag) |
+| `GET /api/google/connect` | Redirect to Google to connect an account |
+| `GET /api/google/callback` | Where Google redirects back to: saves the account, then redirects to `/?google=connected` (or `/?google=error&message=…`) |
+| `GET /api/google/accounts` | The connected Google accounts, `{ email, syncedAt }` |
+| `DELETE /api/google/accounts/:email` | Disconnect the account, revoking Pam's access at Google; its tasks stay |
+| `POST /api/google/sync` | Import every connected account's events; returns a `SyncResult` per account (`src/types/google.ts`), or `[]` when none is connected. `503` until the Google secrets are set |
 
-The project, task and tag routes work on the signed-in account's data only. Bodies are the `Project`, `Task` and `Tag` objects from `src/types`, sent as `application/json`. The Worker checks every field and answers `400` with an error message if something is invalid, including a reference to a task or tag that doesn't exist, or a tag name that another tag already has. Each save runs as one transaction, so a failed save changes nothing.
+Tasks imported from Google Calendar have `googleAccount`, the account's email. Only the sync sets it: a task save keeps the stored one, whatever the body says.
+
+The project, task, tag and Google routes work on the signed-in account's data only. Bodies are the `Project`, `Task` and `Tag` objects from `src/types`, sent as `application/json`. The Worker checks every field and answers `400` with an error message if something is invalid, including a reference to a task or tag that doesn't exist, or a tag name that another tag already has. Each save runs as one transaction, so a failed save changes nothing.
 
 The limits in `src/types/limits.ts` apply to the forms and the API alike: names and link labels up to 200 characters, descriptions up to 10,000, ids up to 100, link URLs up to 2,000, up to 500 tasks, tags, links or relations on one item, emails up to 254, and passwords from 8 to 256. Reference links must start with `http:`, `https:` or `mailto:`, so a `javascript:` link can't run code in the app when clicked. Every value reaches D1 as a bound parameter, never as part of the SQL.
 
@@ -232,6 +246,9 @@ Defined in the files in `migrations/`. Each field has its own column, and each a
 | `project_tags` | `Project.tagIds` | `user_id`, `project_id` → `projects`, `tag_id` → `tags`, `position` |
 | `task_relations` | `Task.relations` | `user_id`, `task_id` → `tasks`, `related_task_id` → `tasks`, `type`, `position` |
 | `tags` | `Tag` | `user_id` → `users`, `id`, `name`, `color`, `created_at`, `updated_at` |
+| `google_accounts` | Connected Google accounts | `user_id` → `users`, `email`, `refresh_token`, `synced_at`, `created_at` |
+| `google_auth_states` | Connections to Google not back yet | `id` (the OAuth state), `user_id` → `users`, `code_verifier` (PKCE), `expires_at` |
+| `google_events` | `Task.googleAccount`, and the event each imported task came from | `user_id`, `task_id` → `tasks`, `account_email`, `calendar_id`, `event_id`, `starts_at`, `ends_at` |
 
 - `project_tasks` links projects to tasks. A task can be in several projects.
 - All foreign keys cascade on delete. Deleting a task removes it from its projects and from other tasks' relations, deleting a project removes its links and tags, deleting a tag removes it from its projects, and deleting a user removes their sessions and all of their data.
@@ -275,6 +292,33 @@ Commit `wrangler.jsonc` after adding the ids. The Worker creates the tables in e
 
 The `packageManager` field in `package.json` makes Cloudflare's build use pnpm 10. pnpm 9 can't read this project's `pnpm-workspace.yaml`.
 
+### Google Calendar
+
+The import needs an OAuth client from Google Cloud, which Pam's Worker uses to ask for read-only access to your calendars:
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), create a project (or pick one) and enable the **Google Calendar API** under APIs & Services → Library.
+2. Under **Google Auth Platform** (APIs & Services → OAuth consent screen), set up the app as **External**, and add yourself, and anyone else who will connect an account, as a **test user**. Add the scopes `openid`, `email`, `https://www.googleapis.com/auth/calendar.calendarlist.readonly` (to list your calendars) and `https://www.googleapis.com/auth/calendar.events.readonly` (to read their events). These are the narrowest scopes the import can use, and neither covers the other's call.
+3. Under **Clients**, create a client of type **Web application**, with these **Authorised redirect URIs**:
+   - `http://localhost:5173/api/google/callback`, for `pnpm dev`
+   - `https://<your domain>/api/google/callback`, for each address Pam is deployed at
+4. Give the Worker the client's id and secret:
+   - for `pnpm dev`, in a `.dev.vars` file at the root of the project (git ignores it):
+     ```
+     GOOGLE_CLIENT_ID=<client id>
+     GOOGLE_CLIENT_SECRET=<client secret>
+     ```
+   - for deploys, as secrets: `pnpm exec wrangler secret put GOOGLE_CLIENT_ID`, then the same for `GOOGLE_CLIENT_SECRET`
+
+While the app's publishing status is **Testing**, Google lets only the test users connect, and its access lasts 7 days. After that, a sync asks you to connect the account again. To keep access longer, publish the app. Google then asks for verification, because reading calendars is a sensitive scope, and shows a warning until the app is verified.
+
+How it works:
+
+- **Connecting** uses OAuth 2.0's authorization code flow with PKCE, run by the Worker: the browser never sees a Google token. The `state` is stored for 10 minutes against the Pam account that started it, used once and then deleted, so a link to the callback can't connect a Google account to someone else's Pam account. Google is asked for offline access, which gives a refresh token for later syncs, and the account's email comes from the ID token. Accounts connected while Pam asked for the broader `calendar.readonly` still work, as it covers both calls; to drop it, disconnect the account in Pam (which revokes the access at Google) and connect it again.
+- **Refresh tokens** are stored in D1 as they are. They can't be used without the client secret, which is a Worker secret and not in the database. Disconnecting an account revokes its token at Google and deletes it.
+- **Syncing** gets an access token, lists the account's calendars and keeps the shown ones (`selected` in Google Calendar). It then lists their events in [batch requests](https://developers.google.com/workspace/calendar/api/guides/batch): one request to `/batch/calendar/v3` holds an `events.list` call per calendar (up to 1,000), with the `Authorization` header once on the batch. Google may answer in any order, so each answer is matched to its calendar by `Content-ID`. Calendars with more pages get them in further batches that hold only those calendars. Each call still counts towards Google's quota, and calls that are rate limited (`429`, or `403` with a rate limit reason) or fail on Google's side are tried again after 1, 2 and 4 seconds. `fields` asks only for the parts of each event that the import uses.
+- **Writing** happens in one D1 batch per account, so an account's sync is saved in full or not at all. Rows go to D1 as JSON read with `json_each`, a few statements for thousands of events, because D1 limits the queries one request can make.
+- **Deleted events**: a task is deleted when its calendar was listed in full but its event wasn't, and the event should have been listed: it ends after now and starts within the year ahead, more than a day from either end, since an all-day event's stored times can be up to a day off. A calendar that couldn't be read, or was hidden in Google Calendar, keeps its tasks.
+
 ### Security
 
 Pam has its own accounts (see [Accounts](#accounts)), and anyone who can reach it can create one. To choose who can reach it, put the Worker behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-public-app/) and allow only the emails you want. You can enable it from the Worker's Settings → Domains & Routes in the dashboard. Access only covers the hostnames you add to it, so also turn off the `workers.dev` route and Preview URLs (or add them to Access), or they stay open to everyone.
@@ -286,7 +330,7 @@ There are three layers of tests:
 | Layer | Command | Where | What it covers |
 |---|---|---|---|
 | Unit | `pnpm test:unit` | `src/__tests__/` | Components, stores, models and the API client in a simulated browser (jsdom). `fetch` is replaced by an in-memory fake API (`fakeApi.ts`), so no server or database is needed. |
-| Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers signing up and in, sessions, keeping accounts' data apart, routing, saving and reading every field, tags, migrations, validation, transactions, cascading deletes and the schema's constraints. The database is emptied before every test. |
+| Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers signing up and in, sessions, keeping accounts' data apart, routing, saving and reading every field, tags, migrations, validation, transactions, cascading deletes and the schema's constraints. The Google Calendar import runs against a fake Google that stands in for `fetch` (`google.spec.ts`). The database is emptied before every test. |
 | End-to-end | `pnpm test:e2e` | `cypress/e2e/` | The production build in a real browser (Cypress), with the Worker and a local D1 database. Covers creating and editing projects and tasks, managing tags, the tile preview, sorting, the calendar, and how errors are shown. |
 
 `pnpm test` runs the unit and integration tests together.
@@ -304,7 +348,7 @@ Planned, not built yet:
 - Messages
 - Settings and profile (the calendar's week start would move there from the browser's storage)
 - **Rescheduling from the calendar**: drag a chip to another day on wide screens; on phones (where drag and drop doesn't work) tap it, then **Move to…** with a date picker. Dragging a task from **No due date** onto a day gives it that date. Saves through `taskList.saveTask` or `projectList.saveProject`, showing the move straight away and undoing it if the save fails. Items already carry `editable` (false for now) to decide what can be moved. A move that clashes with a delivery date comes back from the Worker as a `409`, and should offer the same clash fixes the forms do.
-- **Google Calendar, both ways**: show upcoming Google Calendar events in Pam, and keep tasks and events in step. OAuth and token refresh in the Worker, tokens stored per account in D1, the client secret set with `wrangler secret`. Tasks get a `googleEventId`, with the event's etag and update time to detect conflicting edits. Events come in through a third adapter beside `taskToItems` and `projectToItems` in `src/types/calendar.ts`, which already asks for items by date range (as Google's API does), keeps a loading and error state per source, places timed events after all-day ones, and has room for time zones and Google's exclusive end dates on all-day events.
+- **Google Calendar, both ways**: events are imported as tasks one way (see [Google Calendar](#google-calendar)). Still to do: send changes made in Pam back to Google, using the event's etag and update time to detect conflicting edits, and show events on the calendar without making them tasks, through a third adapter beside `taskToItems` and `projectToItems` in `src/types/calendar.ts`. That adapter already asks for items by date range (as Google's API does), keeps a loading and error state per source, places timed events after all-day ones, and has room for time zones and Google's exclusive end dates on all-day events. Syncing on a schedule (a Cron Trigger) rather than by button would also fit here.
 - **Logo**: a logo for Pam, to make it look the part.
 - **LLM layer**: summarise what needs doing, quickly pick out the high priority tasks, and explain how tasks relate to each other.
 - **Android app**: Pam on Android, for home screen widgets and notifications.

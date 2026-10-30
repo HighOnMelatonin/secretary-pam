@@ -26,7 +26,14 @@ export default defineConfig({
         plugins: [
           cloudflareTest({
             wrangler: { configPath: fileURLToPath(new URL('./wrangler.jsonc', import.meta.url)) },
-            miniflare: { bindings: { TEST_MIGRATIONS: migrations } },
+            miniflare: {
+              bindings: {
+                TEST_MIGRATIONS: migrations,
+                // Stand-ins for the secrets; the tests replace fetch, so nothing reaches Google
+                GOOGLE_CLIENT_ID: 'test-client-id',
+                GOOGLE_CLIENT_SECRET: 'test-client-secret',
+              },
+            },
           }),
         ],
         test: {

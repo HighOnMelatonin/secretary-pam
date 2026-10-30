@@ -38,9 +38,14 @@ const related = computed(() => relatedTasks(props.task, props.tasks))
     <div class="meta">
       <span class="tag" :class="{ 'done-tag': task.completed }">{{ task.completed ? '✓ done' : 'to do' }}</span>
       <span class="tag" :class="`priority-${task.priority}`">{{ task.priority }}</span>
+      <span v-if="task.googleAccount" class="tag project-tag" title="Imported from Google Calendar">{{ task.googleAccount }}</span>
       <span v-if="isOverdue" class="tag overdue">overdue</span>
       <small>{{ task.dueDate ? `Due ${task.dueDate}` : 'No due date' }}</small>
     </div>
+
+    <p v-if="task.googleAccount" class="source">
+      <small>From Google Calendar. Syncing sets its name, due date and description from the event again.</small>
+    </p>
 
     <p class="description">{{ task.description || 'No description.' }}</p>
 

@@ -289,6 +289,12 @@
   color: var(--pico-muted-color);
 }
 
+/* The note on a task imported from Google Calendar, in its form and on its page */
+.edit-form .source,
+.details-page .source {
+  color: var(--pico-muted-color);
+}
+
 .edit-form .actions {
   display: flex;
   gap: 0.5rem;

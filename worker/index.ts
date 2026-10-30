@@ -12,7 +12,7 @@
 //   PUT    /api/tags/:id       -> saves the Tag in the body, returns it
 //   DELETE /api/tags/:id       -> 204
 //
-// plus the sign-in routes in auth.ts. Each object is split across its own table and the tables
+// plus the sign-in routes in auth.ts and the Google Calendar routes in google.ts. Each object is split across its own table and the tables
 // holding its arrays when saved, and put back together when read.
 //
 // Saving a task or project applies the scheduling rules in src/types/operations.ts: a save that
@@ -58,6 +58,7 @@ import {
 } from '../src/types/operations'
 import type { Clash } from '../src/types/rules'
 import { currentUser, handleAuth, HttpError } from './auth'
+import { handleGoogle } from './google'
 import { migrateOnce } from './migrate'
 
 const MAX_BODY_BYTES = 100_000
@@ -88,6 +89,7 @@ interface TaskRow {
   due_date: string | null
   priority: Priority
   completed: 0 | 1
+  account_email: string | null // from google_events, for imported tasks
 }
 
 interface RelationRow {
@@ -268,7 +270,13 @@ function parseTag(body: unknown, id: string): TagBody {
 
 async function listTasks(db: D1Database, userId: string): Promise<Task[]> {
   const [tasks, relations] = (await db.batch([
-    db.prepare('SELECT * FROM tasks WHERE user_id = ?1 ORDER BY created_at, id').bind(userId),
+    db
+      .prepare(
+        `SELECT tasks.*, google_events.account_email FROM tasks
+         LEFT JOIN google_events ON google_events.user_id = tasks.user_id AND google_events.task_id = tasks.id
+         WHERE tasks.user_id = ?1 ORDER BY tasks.created_at, tasks.id`,
+      )
+      .bind(userId),
     db.prepare('SELECT * FROM task_relations WHERE user_id = ?1 ORDER BY task_id, position').bind(userId),
   ])) as [D1Result<TaskRow>, D1Result<RelationRow>]
   const relationsByTask = groupBy(relations.results, (r) => r.task_id)
@@ -281,6 +289,7 @@ async function listTasks(db: D1Database, userId: string): Promise<Task[]> {
     relations: (relationsByTask.get(row.id) ?? []).map((r) => ({ taskId: r.related_task_id, type: r.type })),
     priority: row.priority,
     completed: row.completed === 1,
+    ...(row.account_email ? { googleAccount: row.account_email } : {}),
   }))
 }
 
@@ -444,7 +453,12 @@ const RESOURCES: Record<string, Resource> = {
     save(db, userId, id, body) {
       const save = parseTaskSave(body, id)
       const saving = { tasks: [save.task], projects: [] }
-      return saveWithRules(db, userId, (state) => planTaskSave(state, save), saving)
+      // Only the sync sets googleAccount, so the saved task keeps the stored one
+      const withSource = (state: State): TaskSave => {
+        const googleAccount = state.tasks.find((t) => t.id === id)?.googleAccount
+        return googleAccount ? { ...save, task: { ...save.task, googleAccount } } : save
+      }
+      return saveWithRules(db, userId, (state) => planTaskSave(state, withSource(state)), saving)
     },
   },
   projects: {
@@ -502,14 +516,18 @@ export default {
     // e.g. "/api/tasks/abc" -> ["", "api", "tasks", "abc"]
     const [, api, name, rawId, ...rest] = new URL(request.url).pathname.split('/')
     const resource = name !== undefined && Object.hasOwn(RESOURCES, name) ? RESOURCES[name] : undefined
-    if (api !== 'api' || !(resource || name === 'auth') || rest.length > 0) return error(404, 'Not found')
+    const isGoogle = name === 'google' // the only routes with more than one part after the name
+    if (api !== 'api' || !(resource || name === 'auth' || isGoogle) || (rest.length > 0 && !isGoogle)) {
+      return error(404, 'Not found')
+    }
 
     try {
       await migrateOnce(env.DB)
-      if (!resource) return await handleAuth(env.DB, request, rawId, () => readJson(request))
+      if (name === 'auth') return await handleAuth(env.DB, request, rawId, () => readJson(request))
 
       const user = await currentUser(env.DB, request)
       if (!user) return error(401, 'Sign in to continue')
+      if (!resource) return await handleGoogle(env, request, user, [rawId, ...rest], () => readJson(request))
       const id = rawId ? decodeId(rawId) : undefined
       if (!id && request.method === 'GET') return json(await resource.list(env.DB, user.id))
       if (id && request.method === 'PUT') {
