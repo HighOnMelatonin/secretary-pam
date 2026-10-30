@@ -11,8 +11,16 @@ describe('Taskbar', () => {
     await button(wrapper, 'Tags').trigger('click')
     await button(wrapper, 'Add task').trigger('click')
     await button(wrapper, 'Add project').trigger('click')
+    await button(wrapper, 'Sync Google Calendar').trigger('click')
 
-    expect(Object.keys(wrapper.emitted())).toEqual(expect.arrayContaining(['tags', 'addTask', 'addProject']))
+    expect(Object.keys(wrapper.emitted())).toEqual(expect.arrayContaining(['tags', 'addTask', 'addProject', 'sync']))
+  })
+
+  it('shows a sync under way, and offers no second one meanwhile', () => {
+    const wrapper = mount(Taskbar, { props: { syncing: true } })
+    const sync = button(wrapper, 'Syncing…')
+    expect(sync.attributes('aria-busy')).toBe('true')
+    expect(sync.attributes('disabled')).toBeDefined()
   })
 
   it('opens from the strip, and closes again from the strip or once an action is chosen', async () => {
@@ -54,7 +62,7 @@ describe('Taskbar + button', () => {
 
     await fab(wrapper).trigger('click')
     expect(fab(wrapper).attributes('aria-expanded')).toBe('true')
-    expect(menuButtons(wrapper).map((b) => b.text())).toEqual(['Tags', 'Add task', 'Add project'])
+    expect(menuButtons(wrapper).map((b) => b.text())).toEqual(['Tags', 'Add task', 'Add project', 'Sync Google Calendar'])
 
     await fab(wrapper).trigger('click')
     expect(menuButtons(wrapper)).toHaveLength(0)

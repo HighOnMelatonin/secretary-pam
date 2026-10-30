@@ -1,46 +1,22 @@
 <script setup lang="ts">
 // The Sync Google Calendar button, under the Unassigned heading, where imported events land as
-// tasks (see worker/google.ts). With no Google account connected it sends the browser to Google to
-// connect one; Google sends it back to /?google=connected, which syncs straight away. Below the
-// button, what the last sync did for each account, and a list of the connected accounts (loaded
-// when opened) with Disconnect and Connect another account.
-import { onMounted, ref } from 'vue'
+// tasks (see worker/google.ts); the taskbar has one too, and both share stores/googleSync.ts.
+// With no Google account connected it sends the browser to Google to connect one; Google sends
+// it back to /?google=connected, which syncs straight away. Below the button, what the last sync
+// did for each account, and a list of the connected accounts (loaded when opened) with
+// Disconnect and Connect another account.
+import { onMounted } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
-import * as api from '@/api'
-import { browser } from '@/stores/session'
+import { useGoogleSync } from '@/stores/googleSync'
 import { syncSummary, type GoogleAccount, type SyncResult } from '@/types/google'
-
-const emit = defineEmits<{
-  synced: [] // tasks were imported, changed or deleted, so the stores need loading again
-}>()
 
 const route = useRoute()
 const router = useRouter()
 
-const syncing = ref(false)
-const results = ref<SyncResult[]>([])
-const error = ref<string | null>(null)
-const accounts = ref<GoogleAccount[] | null>(null)
-
-const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e))
-
-const connect = () => browser.load(api.google.connectPath)
-
-async function sync() {
-  syncing.value = true
-  error.value = null
-  try {
-    const reply = await api.google.sync()
-    if (reply.length === 0) return connect()
-    results.value = reply
-    if (accounts.value) accounts.value = await api.google.accounts() // for the new sync times
-    emit('synced')
-  } catch (e) {
-    error.value = `Couldn't sync Google Calendar: ${messageOf(e)}`
-  } finally {
-    syncing.value = false
-  }
-}
+const googleSync = useGoogleSync()
+const { syncing, results, error, accounts } = storeToRefs(googleSync)
+const { sync, connect, disconnect } = googleSync
 
 // The rest of an account's line after its email, e.g. "3 added, 1 updated; 1 calendar couldn't be read"
 function details(result: SyncResult) {
@@ -55,25 +31,8 @@ function details(result: SyncResult) {
   return notes.join('; ')
 }
 
-async function loadAccounts(event: Event) {
-  if (!(event.target as HTMLDetailsElement).open || accounts.value) return
-  try {
-    accounts.value = await api.google.accounts()
-  } catch (e) {
-    error.value = `Couldn't load your Google accounts: ${messageOf(e)}`
-  }
-}
-
-// Its tasks stay, with their badge
-async function disconnect(email: string) {
-  error.value = null
-  try {
-    await api.google.disconnect(email)
-    accounts.value = accounts.value?.filter((a) => a.email !== email) ?? null
-    results.value = results.value.filter((r) => r.email !== email)
-  } catch (e) {
-    error.value = `Couldn't disconnect ${email}: ${messageOf(e)}`
-  }
+function loadAccounts(event: Event) {
+  if ((event.target as HTMLDetailsElement).open) googleSync.loadAccounts()
 }
 
 const syncedLabel = (account: GoogleAccount) =>

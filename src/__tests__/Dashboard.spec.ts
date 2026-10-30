@@ -86,6 +86,47 @@ describe('Dashboard project list', () => {
   })
 })
 
+describe('Dashboard unassigned tasks', () => {
+  const toggle = (wrapper: ReturnType<typeof mount>) => wrapper.find('.unassigned .collapse-toggle')
+  // Hidden with v-show, so the list stays in the page
+  const listHidden = (wrapper: ReturnType<typeof mount>) =>
+    wrapper.find('#unassigned-tasks').attributes('style')?.includes('display: none') ?? false
+
+  it('collapses the list and expands it again, keeping the sync button in view', async () => {
+    fakeApi({ tasks: [task('a'), task('b')] })
+    const wrapper = await mountDashboard()
+    expect(toggle(wrapper).text()).toBe('Hide')
+    expect(toggle(wrapper).attributes('aria-expanded')).toBe('true')
+    expect(listHidden(wrapper)).toBe(false)
+
+    await toggle(wrapper).trigger('click')
+    expect(toggle(wrapper).text()).toBe('Show all 2')
+    expect(toggle(wrapper).attributes('aria-expanded')).toBe('false')
+    expect(listHidden(wrapper)).toBe(true)
+    expect(wrapper.find('.unassigned .google-sync').exists()).toBe(true)
+
+    await toggle(wrapper).trigger('click')
+    expect(listHidden(wrapper)).toBe(false)
+  })
+
+  it('remembers being collapsed', async () => {
+    fakeApi({ tasks: [task('a')] })
+    await toggle(await mountDashboard()).trigger('click')
+    expect(localStorage.getItem('pam.unassignedCollapsed')).toBe('true')
+
+    const wrapper = await mountDashboard()
+    expect(toggle(wrapper).text()).toBe('Show all 1')
+    expect(listHidden(wrapper)).toBe(true)
+  })
+
+  it('offers no collapse button when every task is in a project', async () => {
+    fakeApi({ tasks: [task('a')], projects: [project('p', { taskIds: ['a'] })] })
+    const wrapper = await mountDashboard()
+    expect(toggle(wrapper).exists()).toBe(false)
+    expect(wrapper.find('.unassigned').text()).toContain('Every task is in a project.')
+  })
+})
+
 describe('Dashboard creating a project', () => {
   it('saves the new project and shows it as a tile', async () => {
     const api = fakeApi()
