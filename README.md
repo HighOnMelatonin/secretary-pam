@@ -123,13 +123,15 @@ src/
   stores/             Pinia stores for projects, tasks, tags and the signed-in account; they load and save through the API
   types/              Project, Task and Tag models, shared by the app and the Worker, which tasks are upcoming,
                       the calendar's items, dates and month grid (calendar.ts), the export formats (export.ts),
-                      and what the Google Calendar routes answer (google.ts)
+                      what the Google Calendar routes answer (google.ts), and the change tracking log (events.ts)
   api.ts              client for the Worker API, including signing in
   __tests__/          unit tests
 worker/
   index.ts            the /api routes, reading and writing the signed-in user's rows in D1
   auth.ts             the /api/auth routes: accounts, passwords and sessions
   google.ts           the /api/google routes: connecting Google accounts and syncing their events into tasks
+  events.ts           writing change tracking events, and the GET /api/events route
+  jsonChunks.ts       passing many rows to D1 in a few statements, as JSON
   googleCalendar.ts   Google's OAuth and Calendar API: tokens, the calendar list, batched event lists,
                       and what a task takes from an event
   secrets.d.ts        types for the Worker's secrets
@@ -221,6 +223,7 @@ The reply lists every task and project the save changed, and `applyChanges` (`sr
 | `GET /api/google/accounts` | The connected Google accounts, `{ email, syncedAt }` |
 | `DELETE /api/google/accounts/:email` | Disconnect the account, revoking Pam's access at Google; its tasks stay |
 | `POST /api/google/sync` | Import every connected account's events; returns a `SyncResult` per account (`src/types/google.ts`), or `[]` when none is connected. `503` until the Google secrets are set |
+| `GET /api/events?projectId=&since=` | The account's change tracking events (`LoggedEvent` in `src/types/events.ts`), oldest first. `projectId` keeps one project's events; `since` (a `YYYY-MM-DD` date or a UTC timestamp) keeps those at or after it. Both are optional (`400` if malformed) |
 
 Tasks imported from Google Calendar have `googleAccount`, the account's email. Only the sync sets it: a task save keeps the stored one, whatever the body says.
 
@@ -249,12 +252,41 @@ Defined in the files in `migrations/`. Each field has its own column, and each a
 | `google_accounts` | Connected Google accounts | `user_id` → `users`, `email`, `refresh_token`, `synced_at`, `created_at` |
 | `google_auth_states` | Connections to Google not back yet | `id` (the OAuth state), `user_id` → `users`, `code_verifier` (PKCE), `expires_at` |
 | `google_events` | `Task.googleAccount`, and the event each imported task came from | `user_id`, `task_id` → `tasks`, `account_email`, `calendar_id`, `event_id`, `starts_at`, `ends_at` |
+| `task_events` | The change tracking log (see below), append-only | `user_id` → `users`, `id` (increasing), `at`, `kind`, `task_id`, `project_id`, `old_value`, `new_value`, `delivery_date_at_time`, `source`, `task_source` |
 
 - `project_tasks` links projects to tasks. A task can be in several projects.
-- All foreign keys cascade on delete. Deleting a task removes it from its projects and from other tasks' relations, deleting a project removes its links and tags, deleting a tag removes it from its projects, and deleting a user removes their sessions and all of their data.
+- All foreign keys cascade on delete. `task_events` has none to `tasks` or `projects`, so events outlive what they're about, but deleting a user deletes their events. Deleting a task removes it from its projects and from other tasks' relations, deleting a project removes its links and tags, deleting a tag removes it from its projects, and deleting a user removes their sessions and all of their data.
 - Tag names are unique within an account, ignoring case. A new account starts with the tags School (SUTD), Work and Personal, plus the built-in Archive tag (id `archive`).
 - `CHECK` constraints limit `priority` to `low`, `medium`, `high` or `urgent`; relation `type` to `blocks`, `blocked_by`, `subtask_of`, `parent_of` or `related_to`; and `completed` to `0` or `1`.
 - Dates are ISO 8601 strings such as `2026-10-25`. Timestamps are UTC, such as `2026-10-25T15:08:26.123Z`.
+
+### Change tracking
+
+Pam logs changes to `task_events` so that scope creep, and how well projects were scoped, can be worked out later. Nothing in the app reads the log yet; `GET /api/events` returns it.
+
+**What's logged.** Each event has a `kind`:
+
+| `kind` | When | `old_value` → `new_value` |
+|---|---|---|
+| `task_created` | A task is made in the app or imported | → its first due date |
+| `task_added_to_project`, `task_removed_from_project` | A task joins or leaves a project, from either form, or by a delete | |
+| `due_date_changed` | A task's due date moves, from the task form, a project save's `dueDates`, or a sync | old → new date |
+| `delivery_date_changed` | A project's delivery date moves, from the project form or a task save's `deliveryDates` | old → new date |
+| `task_completed`, `task_reopened` | A task is ticked off or unticked | |
+| `task_deleted` | A task is deleted in the app, or by a sync because its event was deleted | |
+| `project_created`, `project_deleted` | A project is made or deleted | → its first delivery date |
+
+- An event about a task is logged once for each project the task is in, with that project's `project_id` and `delivery_date_at_time` (its delivery date once the change is made). A task in no project gets one event with no project. `task_created` always has no project, since a task is made before it joins any: a task saved with its projects logs `task_created`, then `task_added_to_project` for each.
+- Deleting a task logs `task_deleted`, then its removal from each project. Deleting a project logs `project_deleted`, then the removal of each of its tasks.
+- `source` says who made the change: `app`, `google` (a sync) or `backfill`. `task_source` says where the task came from (`app` or `google`), so adding an imported task to a project is `source = 'app'`, `task_source = 'google'`.
+- Events are worked out from the data before and after a save, by `diffEvents` in `src/types/events.ts`, which the Worker and the fake API both run. Membership comes from each project's tasks before and after, whichever form changed it.
+- Events are written in the same batch as the change, so a refused (`409`) or failed save logs nothing. Only real changes are logged: a save that changes nothing logs nothing.
+
+**What isn't logged:** names, descriptions, priorities, relations, links, tags (including the Archive tag a completed project gets), the order of a project's tasks, and a sync's name or description updates. Nor is a sync's due date that stays put because of a clash.
+
+**Backfilled rows are approximate.** Migration `0007` logged the data from before tracking began as `source = 'backfill'`: one `task_created` per task at its `created_at`, with its due date as it was at the migration (not necessarily its first), and one `task_added_to_project` per project it was in, also at the task's `created_at`, because when it really joined isn't known. There are no backfilled `project_created` events. Leave backfilled rows out of anything that depends on timing.
+
+**Planned or added later.** `isPlanned` in `src/types/events.ts` counts a task as planned for a project if it first joined within `PLANNING_WINDOW_HOURS` (24) of the project's `project_created` event, and as added later otherwise. It returns `undefined` for projects whose creation wasn't logged. The window is a tunable guess, not a recorded fact, and nothing stores the result, so changing it reclassifies all of the history.
 
 ### Changing the schema
 
@@ -330,7 +362,7 @@ There are three layers of tests:
 | Layer | Command | Where | What it covers |
 |---|---|---|---|
 | Unit | `pnpm test:unit` | `src/__tests__/` | Components, stores, models and the API client in a simulated browser (jsdom). `fetch` is replaced by an in-memory fake API (`fakeApi.ts`), so no server or database is needed. |
-| Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers signing up and in, sessions, keeping accounts' data apart, routing, saving and reading every field, tags, migrations, validation, transactions, cascading deletes and the schema's constraints. The Google Calendar import runs against a fake Google that stands in for `fetch` (`google.spec.ts`). The database is emptied before every test. |
+| Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers signing up and in, sessions, keeping accounts' data apart, routing, saving and reading every field, tags, migrations, validation, transactions, cascading deletes, the schema's constraints and change tracking. The Google Calendar import runs against a fake Google that stands in for `fetch` (`google.spec.ts`). The database is emptied before every test. |
 | End-to-end | `pnpm test:e2e` | `cypress/e2e/` | The production build in a real browser (Cypress), with the Worker and a local D1 database. Covers creating and editing projects and tasks, managing tags, the tile preview, sorting, the calendar, and how errors are shown. |
 
 `pnpm test` runs the unit and integration tests together.

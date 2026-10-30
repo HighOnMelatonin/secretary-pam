@@ -137,6 +137,23 @@ describe('api client against the fake Worker', () => {
       clashes: [clash],
     })
     expect(fake.data).toMatchObject(before)
+    expect(fake.events).toEqual([])
+  })
+
+  it('logs what saves and deletes change, as the Worker does', async () => {
+    const fake = fakeApi({ projects: [project('p')] })
+
+    await api.saveTask({ task: task('t'), projectIds: ['p'] })
+    await api.saveTask({ task: task('t', { name: 'Renamed' }) })
+    await api.remove('projects', 'p')
+
+    expect(fake.events.map((e) => [e.id, e.kind, e.taskId, e.projectId, e.source])).toEqual([
+      [1, 'task_created', 't', null, 'app'],
+      [2, 'task_added_to_project', 't', 'p', 'app'],
+      [3, 'project_deleted', null, 'p', 'app'],
+      [4, 'task_removed_from_project', 't', 'p', 'app'],
+    ])
+    expect((await fetch('/api/events?projectId=p').then((r) => r.json())).length).toBe(3)
   })
 
   it('answers 400 for an unknown project, saving nothing', async () => {

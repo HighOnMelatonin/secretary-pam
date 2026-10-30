@@ -3,6 +3,7 @@
 // list, batch and revoke requests, so nothing leaves the test.
 import { env, SELF } from 'cloudflare:test'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { LoggedEvent } from '../../src/types/events'
 import type { SyncResult } from '../../src/types/google'
 import type { Project } from '../../src/types/project'
 import type { Task } from '../../src/types/task'
@@ -398,6 +399,132 @@ describe('syncing', () => {
     await sync()
     expect(await listTasks(other)).toEqual([])
     expect(await listTasks()).toHaveLength(1)
+  })
+})
+
+describe('change tracking', () => {
+  const listEvents = async (): Promise<LoggedEvent[]> => (await call('GET', 'events')).body
+  // Leaves out id and at, which differ from run to run
+  const logged = async () => (await listEvents()).map(({ id: _, at: __, ...event }) => event)
+  const fromGoogle = { source: 'google', taskSource: 'google', oldValue: null, newValue: null, deliveryDateAtTime: null }
+  const project = (id: string, fields: Partial<Project>): Project => ({
+    id,
+    name: `Project ${id}`,
+    description: '',
+    deliveryDate: null,
+    taskIds: [],
+    priority: 'medium',
+    links: [],
+    tagIds: [],
+    ...fields,
+  })
+
+  // Imports event a, due in 2 days, and returns its task
+  async function imported() {
+    google.calendars.set('primary', { events: [allDay('a', inDays(2))] })
+    await connect()
+    await sync()
+    return (await listTasks())[0]!
+  }
+
+  it('logs each task it adds as created by Google, with its due date', async () => {
+    google.calendars.set('primary', { events: [allDay('a', inDays(2)), allDay('b', inDays(3))] })
+    await connect()
+    await sync()
+
+    // Tasks made in one sync list in id order, so both go by due date
+    const tasks = byName(await listTasks())
+    expect((await logged()).sort((x, y) => x.newValue!.localeCompare(y.newValue!))).toEqual(
+      tasks.map((t) => ({ ...fromGoogle, kind: 'task_created', taskId: t.id, projectId: null, newValue: t.dueDate })),
+    )
+  })
+
+  it('logs a moved event as a due date change, with the old and new dates, for each project', async () => {
+    const task = await imported()
+    await call('PUT', 'projects/p', { project: project('p', { taskIds: [task.id], deliveryDate: inDays(30) }) })
+    const before = (await listEvents()).length
+
+    google.calendars.set('primary', { events: [allDay('a', inDays(4))] })
+    await sync()
+
+    expect((await logged()).slice(before)).toEqual([
+      {
+        ...fromGoogle,
+        kind: 'due_date_changed',
+        taskId: task.id,
+        projectId: 'p',
+        oldValue: inDays(2),
+        newValue: inDays(4),
+        deliveryDateAtTime: inDays(30),
+      },
+    ])
+  })
+
+  it('logs nothing when only the name or description changed', async () => {
+    await imported()
+    const before = await listEvents()
+
+    google.calendars.set('primary', { events: [allDay('a', inDays(2), { summary: 'Renamed', description: 'More' })] })
+    expect((await sync())[0]).toMatchObject({ updated: 1 })
+
+    expect(await listEvents()).toEqual(before)
+  })
+
+  it('logs nothing for a due date kept because of a clash', async () => {
+    const task = await imported()
+    await call('PUT', 'projects/p', { project: project('p', { taskIds: [task.id], deliveryDate: inDays(5) }) })
+    const before = await listEvents()
+
+    google.calendars.set('primary', { events: [allDay('a', inDays(9))] })
+    expect((await sync())[0]).toMatchObject({ updated: 0, keptDates: 1 })
+
+    expect(await listEvents()).toEqual(before)
+  })
+
+  it('logs a deleted event as the task deleted and removed from each project, with or without a delivery date', async () => {
+    const task = await imported()
+    await call('PUT', 'projects/p', { project: project('p', { taskIds: [task.id], deliveryDate: inDays(30) }) })
+    await call('PUT', 'projects/q', { project: project('q', { taskIds: [task.id] }) })
+    const before = (await listEvents()).length
+
+    google.calendars.set('primary', { events: [] })
+    expect((await sync())[0]).toMatchObject({ removed: 1 })
+
+    const inP = { taskId: task.id, projectId: 'p', deliveryDateAtTime: inDays(30) }
+    const inQ = { taskId: task.id, projectId: 'q', deliveryDateAtTime: null }
+    expect((await logged()).slice(before)).toEqual([
+      { ...fromGoogle, ...inP, kind: 'task_deleted' },
+      { ...fromGoogle, ...inQ, kind: 'task_deleted' },
+      { ...fromGoogle, ...inP, kind: 'task_removed_from_project' },
+      { ...fromGoogle, ...inQ, kind: 'task_removed_from_project' },
+    ])
+  })
+
+  it('logs a deleted event for a task in no project once', async () => {
+    const task = await imported()
+    google.calendars.set('primary', { events: [] })
+    await sync()
+
+    expect((await logged()).map((e) => [e.kind, e.taskId, e.projectId])).toEqual([
+      ['task_created', task.id, null],
+      ['task_deleted', task.id, null],
+    ])
+  })
+
+  it('logs nothing for a sync that changes nothing', async () => {
+    await imported()
+    const before = await listEvents()
+
+    expect((await sync())[0]).toMatchObject({ added: 0, updated: 0, removed: 0 })
+
+    expect(await listEvents()).toEqual(before)
+  })
+
+  it('logs what is done to an imported task in the app as from the app, on a Google task', async () => {
+    const task = await imported()
+    await call('PUT', 'projects/p', { project: project('p', { taskIds: [task.id] }) })
+
+    expect((await listEvents()).at(-1)).toMatchObject({ kind: 'task_added_to_project', source: 'app', taskSource: 'google' })
   })
 })
 

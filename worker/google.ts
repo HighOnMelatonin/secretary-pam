@@ -15,12 +15,19 @@
 // keeps its due date if its event moved past the project's delivery date, so the import never
 // breaks the rule the task and project forms enforce.
 //
+// Each sync logs what it changed to task_events (src/types/events.ts) in the same batch, as
+// source 'google': tasks it created, due dates it moved, and tasks it deleted, with the projects
+// they leave. Changes to names and descriptions aren't logged.
+//
 // A user can only reach their own accounts and tasks: every query has the user_id of the session.
 // Refresh tokens never leave the Worker.
+import { forEachProject, newEvent, type ProjectDate, type TaskEvent } from '../src/types/events'
 import type { GoogleAccount, SyncResult } from '../src/types/google'
 import { MAX_EMAIL_LENGTH } from '../src/types/limits'
 import { isPastDeadline } from '../src/types/project'
 import { HttpError, type User } from './auth'
+import { eventStatements } from './events'
+import { jsonChunks } from './jsonChunks'
 import {
   accessToken,
   authorizationUrl,
@@ -38,8 +45,6 @@ const NOW = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
 const DAY = 24 * 60 * 60 * 1000
 const SYNC_DAYS = 365 // how far ahead a sync looks
 const STATE_MINUTES = 10 // how long the user has to connect at Google
-// Rows are passed to D1 as JSON, in parameters of at most this many characters (see jsonChunks)
-const MAX_CHUNK_LENGTH = 300_000
 
 // Encoding
 
@@ -161,10 +166,11 @@ interface LinkedRow {
   due_date: string | null
 }
 
-// The delivery date of a project an imported task is in
-interface DeadlineRow {
+// A project an imported task is in, with its delivery date
+interface MembershipRow {
   task_id: string
-  delivery_date: string
+  project_id: string
+  delivery_date: string | null
 }
 
 const eventKey = (calendarId: string, eventId: string) => `${calendarId}\n${eventId}`
@@ -174,27 +180,6 @@ const eventKey = (calendarId: string, eventId: string) => `${calendarId}\n${even
 // range are left alone rather than deleted by mistake.
 const shouldBeListed = (row: LinkedRow, range: TimeRange) =>
   Date.parse(row.ends_at) > Date.parse(range.timeMin) + DAY && Date.parse(row.starts_at) < Date.parse(range.timeMax) - DAY
-
-// Rows go to D1 as JSON text, a whole list per statement, which the SQL reads with json_each.
-// D1 limits how many queries one request can make, so this keeps a sync of thousands of events to
-// a few statements. Each chunk stays well under D1's limit of 2 MB on a single value.
-function jsonChunks(rows: unknown[]): string[] {
-  const chunks: string[] = []
-  let chunk: string[] = []
-  let length = 0
-  for (const row of rows) {
-    const json = JSON.stringify(row)
-    if (chunk.length > 0 && length + json.length > MAX_CHUNK_LENGTH) {
-      chunks.push(`[${chunk.join(',')}]`)
-      chunk = []
-      length = 0
-    }
-    chunk.push(json)
-    length += json.length + 1
-  }
-  if (chunk.length > 0) chunks.push(`[${chunk.join(',')}]`)
-  return chunks
-}
 
 async function syncAccount(
   db: D1Database,
@@ -214,7 +199,7 @@ async function syncAccount(
     throw e
   }
 
-  const [linked, deadlines] = (await db.batch([
+  const [linked, memberships] = (await db.batch([
     db
       .prepare(
         `SELECT g.task_id, g.calendar_id, g.event_id, g.starts_at, g.ends_at, t.name, t.description, t.due_date
@@ -222,22 +207,32 @@ async function syncAccount(
          WHERE g.user_id = ?1 AND g.account_email = ?2`,
       )
       .bind(userId, account.email),
+    // Every project, with or without a delivery date, as the events name each one. In the order
+    // the app lists projects, as diffEvents logs them.
     db
       .prepare(
-        `SELECT pt.task_id, p.delivery_date FROM project_tasks pt
+        `SELECT pt.task_id, pt.project_id, p.delivery_date FROM project_tasks pt
          JOIN projects p ON p.user_id = pt.user_id AND p.id = pt.project_id
          JOIN google_events g ON g.user_id = pt.user_id AND g.task_id = pt.task_id
-         WHERE pt.user_id = ?1 AND g.account_email = ?2 AND p.delivery_date IS NOT NULL`,
+         WHERE pt.user_id = ?1 AND g.account_email = ?2
+         ORDER BY p.created_at, p.id`,
       )
       .bind(userId, account.email),
-  ])) as [D1Result<LinkedRow>, D1Result<DeadlineRow>]
+  ])) as [D1Result<LinkedRow>, D1Result<MembershipRow>]
   const byEvent = new Map(linked.results.map((row) => [eventKey(row.calendar_id, row.event_id), row]))
-  const isLate = (taskId: string, dueDate: string) =>
-    deadlines.results.some((d) => d.task_id === taskId && isPastDeadline(dueDate, d.delivery_date))
+  const projectsOf = new Map<string, ProjectDate[]>()
+  for (const row of memberships.results) {
+    projectsOf.set(row.task_id, [...(projectsOf.get(row.task_id) ?? []), { id: row.project_id, deliveryDate: row.delivery_date }])
+  }
+  const projects = (taskId: string) => projectsOf.get(taskId) ?? []
+  const isLate = (taskId: string, dueDate: string) => projects(taskId).some((p) => isPastDeadline(dueDate, p.deliveryDate))
+  const syncEvent = (kind: TaskEvent['kind'], taskId: string, fields: Partial<TaskEvent> = {}) =>
+    newEvent(kind, 'google', { taskId, taskSource: 'google', ...fields })
 
   const added: { id: string; name: string; description: string; dueDate: string }[] = []
   const updated: { id: string; name: string; description: string; dueDate: string | null }[] = []
   const links: { taskId: string; calendarId: string; eventId: string; startsAt: string; endsAt: string }[] = []
+  const logged: TaskEvent[] = [] // what the sync logs
   const seen = new Set<string>()
   const listed = new Set<string>() // calendars whose events were all listed
 
@@ -260,6 +255,7 @@ async function syncAccount(
       if (!row) {
         const id = crypto.randomUUID()
         added.push({ id, name: fields.name, description: fields.description, dueDate: fields.dueDate })
+        logged.push(syncEvent('task_created', id, { newValue: fields.dueDate }))
         links.push({ taskId: id, calendarId, eventId: event.id, startsAt, endsAt })
         continue
       }
@@ -271,6 +267,11 @@ async function syncAccount(
       }
       if (fields.name !== row.name || fields.description !== row.description || dueDate !== row.due_date) {
         updated.push({ id: row.task_id, name: fields.name, description: fields.description, dueDate })
+      }
+      // A date kept because of a clash is unchanged, so it isn't logged
+      if (dueDate !== row.due_date) {
+        const moved = syncEvent('due_date_changed', row.task_id, { oldValue: row.due_date, newValue: dueDate })
+        logged.push(...forEachProject(moved, projects(row.task_id)))
       }
       if (startsAt !== row.starts_at || endsAt !== row.ends_at) {
         links.push({ taskId: row.task_id, calendarId, eventId: event.id, startsAt, endsAt })
@@ -284,6 +285,12 @@ async function syncAccount(
     .filter((row) => listed.has(row.calendar_id) && !seen.has(eventKey(row.calendar_id, row.event_id)))
     .filter((row) => shouldBeListed(row, range))
     .map((row) => row.task_id)
+  for (const taskId of removed) logged.push(...forEachProject(syncEvent('task_deleted', taskId), projects(taskId)))
+  for (const taskId of removed) {
+    for (const project of projects(taskId)) {
+      logged.push(syncEvent('task_removed_from_project', taskId, { projectId: project.id, deliveryDateAtTime: project.deliveryDate }))
+    }
+  }
 
   // One batch, so the account's sync is saved in full or not at all. Deleting a task deletes its
   // google_events row and takes it out of its projects.
@@ -324,6 +331,7 @@ async function syncAccount(
           .prepare('DELETE FROM tasks WHERE user_id = ?1 AND id IN (SELECT value FROM json_each(?2))')
           .bind(userId, json),
       ),
+      ...eventStatements(db, userId, new Date().toISOString(), logged),
       db
         .prepare(`UPDATE google_accounts SET synced_at = ${NOW} WHERE user_id = ?1 AND email = ?2`)
         .bind(userId, account.email),

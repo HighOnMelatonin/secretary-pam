@@ -3,6 +3,7 @@
 // is signed in to a new account with no tags; auth.spec.ts covers signing in itself.
 import { env, SELF } from 'cloudflare:test'
 import { beforeEach, describe, it, expect } from 'vitest'
+import type { LoggedEvent } from '../../src/types/events'
 import type { ProjectSave, TaskSave } from '../../src/types/operations'
 import type { Project } from '../../src/types/project'
 import type { Tag } from '../../src/types/tag'
@@ -752,5 +753,165 @@ describe('schema constraints', () => {
     const row = await env.DB.prepare("SELECT * FROM tasks WHERE id = 'a'").first<Record<string, unknown>>()
     expect(row).toMatchObject({ description: '', due_date: null, priority: 'medium', completed: 0 })
     expect(row!.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+  })
+})
+
+describe('change tracking', () => {
+  const listEvents = async (query = ''): Promise<LoggedEvent[]> => {
+    const { status, body } = await call('GET', `events${query}`)
+    expect(status).toBe(200)
+    return body
+  }
+  // [kind, taskId, projectId], enough to tell events apart
+  const kinds = (events: LoggedEvent[]) => events.map((e) => [e.kind, e.taskId, e.projectId])
+
+  it('logs what each save changed, oldest first, with when it happened', async () => {
+    await saveTask(task('t', { dueDate: '2026-11-01' }))
+    await saveProject(project('p', { taskIds: ['t'], deliveryDate: '2026-12-01' }))
+    await saveTask(task('t', { dueDate: '2026-11-08' }))
+
+    const events = await listEvents()
+    expect(kinds(events)).toEqual([
+      ['task_created', 't', null],
+      ['project_created', null, 'p'],
+      ['task_added_to_project', 't', 'p'],
+      ['due_date_changed', 't', 'p'],
+    ])
+    expect(events[3]).toMatchObject({
+      oldValue: '2026-11-01',
+      newValue: '2026-11-08',
+      deliveryDateAtTime: '2026-12-01',
+      source: 'app',
+      taskSource: 'app',
+    })
+    expect(events.map((e) => e.id)).toEqual([...events.map((e) => e.id)].sort((a, b) => a - b))
+    expect(events[0]!.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+    // One save's events are logged at the same moment
+    expect(events[1]!.at).toBe(events[2]!.at)
+  })
+
+  it('logs nothing for a save that changes nothing', async () => {
+    await saveTask(task('t'))
+    await saveTask(task('t', { name: 'Renamed' }))
+    expect(kinds(await listEvents())).toEqual([['task_created', 't', null]])
+  })
+
+  it('logs nothing for a save refused for a clash', async () => {
+    await saveTask(task('t', { dueDate: '2026-12-20' }))
+    await saveProject(project('p', { deliveryDate: '2026-12-01' }))
+
+    expect((await planTask({ task: task('t', { dueDate: '2026-12-20' }), projectIds: ['p'] })).status).toBe(409)
+
+    expect(kinds(await listEvents())).toEqual([
+      ['task_created', 't', null],
+      ['project_created', null, 'p'],
+    ])
+  })
+
+  it('logs in the same transaction as the save, so a save that fails part way logs nothing', async () => {
+    await saveProject(project('p'))
+
+    // The events are planned, but the relation fails in the batch, so they roll back with the task
+    const response = await planTask({ task: task('t', { relations: [{ taskId: 'missing', type: 'blocks' }] }), projectIds: ['p'] })
+    expect(response.status).toBe(400)
+
+    expect(await listTasks()).toEqual([])
+    expect(kinds(await listEvents())).toEqual([['project_created', null, 'p']])
+  })
+
+  it('keeps the events of a deleted task, and logs its deletion and removal from its projects', async () => {
+    await saveTask(task('t'))
+    await saveProject(project('p', { taskIds: ['t'], deliveryDate: '2026-12-01' }))
+    await saveProject(project('q', { taskIds: ['t'] }))
+
+    expect((await call('DELETE', 'tasks/t')).status).toBe(204)
+
+    const events = await listEvents()
+    expect(kinds(events)).toEqual([
+      ['task_created', 't', null],
+      ['project_created', null, 'p'],
+      ['task_added_to_project', 't', 'p'],
+      ['project_created', null, 'q'],
+      ['task_added_to_project', 't', 'q'],
+      ['task_deleted', 't', 'p'],
+      ['task_deleted', 't', 'q'],
+      ['task_removed_from_project', 't', 'p'],
+      ['task_removed_from_project', 't', 'q'],
+    ])
+    expect(events.at(-2)).toMatchObject({ deliveryDateAtTime: '2026-12-01' })
+  })
+
+  it('keeps the events of a deleted project, and logs its deletion and the removal of its tasks', async () => {
+    await saveTask(task('t'))
+    await saveProject(project('p', { taskIds: ['t'] }))
+
+    expect((await call('DELETE', 'projects/p')).status).toBe(204)
+
+    expect(kinds(await listEvents())).toEqual([
+      ['task_created', 't', null],
+      ['project_created', null, 'p'],
+      ['task_added_to_project', 't', 'p'],
+      ['project_deleted', null, 'p'],
+      ['task_removed_from_project', 't', 'p'],
+    ])
+  })
+
+  it('logs nothing when deleting something that does not exist', async () => {
+    await call('DELETE', 'tasks/missing')
+    await call('DELETE', 'projects/missing')
+    expect(await listEvents()).toEqual([])
+  })
+
+  it('narrows the list to one project, and to events at or after `since`', async () => {
+    await saveTask(task('t'))
+    await saveProject(project('p', { taskIds: ['t'] }))
+    await saveProject(project('q'))
+    const all = await listEvents()
+
+    expect(kinds(await listEvents('?projectId=p'))).toEqual([
+      ['project_created', null, 'p'],
+      ['task_added_to_project', 't', 'p'],
+    ])
+    expect(await listEvents(`?since=${encodeURIComponent(all.at(-1)!.at)}`)).toEqual(all.filter((e) => e.at === all.at(-1)!.at))
+    expect(await listEvents(`?since=${all[0]!.at.slice(0, 10)}&projectId=`)).toEqual(all)
+    expect(await listEvents('?since=2999-01-01')).toEqual([])
+  })
+
+  it.each([['?since=yesterday'], ['?since=2026-10-25T15:08:26+08:00'], [`?projectId=${'x'.repeat(101)}`]])(
+    'rejects %s',
+    async (query) => {
+      expect((await call('GET', `events${query}`)).status).toBe(400)
+    },
+  )
+
+  it('is read only, and needs a signed-in user', async () => {
+    expect((await call('POST', 'events', {})).status).toBe(405)
+    expect((await call('GET', 'events/1')).status).toBe(404)
+    expect((await helpers.call('GET', 'events')).status).toBe(401)
+  })
+
+  it("doesn't show one account's events to another, or let it log to them", async () => {
+    await saveTask(task('t'))
+    await saveProject(project('p', { taskIds: ['t'] }))
+    const other = await helpers.signUp('other@example.com')
+    await helpers.call('PUT', 'tasks/t', { task: task('t', { completed: true }) }, other)
+    await helpers.call('DELETE', 'projects/p', undefined, other)
+
+    expect((await helpers.call('GET', 'events?projectId=p', undefined, other)).body).toEqual([])
+    expect(kinds((await helpers.call('GET', 'events', undefined, other)).body)).toEqual([
+      ['task_created', 't', null],
+      ['task_completed', 't', null],
+    ])
+    expect(kinds(await listEvents())).toEqual([
+      ['task_created', 't', null],
+      ['project_created', null, 'p'],
+      ['task_added_to_project', 't', 'p'],
+    ])
+  })
+
+  it("deletes a user's events with the user", async () => {
+    await saveTask(task('t'))
+    await env.DB.prepare('DELETE FROM users').run()
+    expect(await count('task_events')).toBe(0)
   })
 })

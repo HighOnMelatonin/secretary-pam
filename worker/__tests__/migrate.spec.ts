@@ -2,12 +2,14 @@
 // has already applied migrations/ to with wrangler's own migration code.
 import { applyD1Migrations, env } from 'cloudflare:test'
 import { describe, it, expect } from 'vitest'
+import type { LoggedEvent } from '../../src/types/events'
 import type { Tag } from '../../src/types/tag'
 import { migrate } from '../migrate'
 import { call, signUp } from './helpers'
 
 // Children first, so nothing references a dropped table
 const TABLES = [
+  'task_events',
   'google_events',
   'google_auth_states',
   'google_accounts',
@@ -59,6 +61,7 @@ describe('migrate', () => {
       '0004_users.sql',
       '0005_tag_colors.sql',
       '0006_google_calendar.sql',
+      '0007_task_events.sql',
     ])
     expect((await call('GET', 'projects', undefined, await signUp())).body).toEqual([])
   })
@@ -163,6 +166,43 @@ describe('migrate', () => {
       ['school', '#343ca6'],
       ['work', '#343ca6'],
     ])
+  })
+
+  it("logs each task's creation and project memberships as backfilled, at the time the task was made (0007)", async () => {
+    await databaseBefore(6)
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO tasks (user_id, id, name, due_date, created_at) VALUES
+           ('original', 'b', 'B', NULL, '2026-02-01T00:00:00.000Z'),
+           ('original', 'a', 'A', '2026-03-01', '2026-01-01T00:00:00.000Z'),
+           ('original', 'g', 'Imported', '2026-04-01', '2026-01-15T00:00:00.000Z')`,
+      ),
+      env.DB.prepare(
+        `INSERT INTO projects (user_id, id, name, delivery_date, created_at) VALUES
+           ('original', 'p', 'P', '2026-06-01', '2025-12-01T00:00:00.000Z'), ('original', 'q', 'Q', NULL, '2025-12-02T00:00:00.000Z')`,
+      ),
+      env.DB.prepare(
+        `INSERT INTO project_tasks (user_id, project_id, task_id, position) VALUES
+           ('original', 'p', 'a', 0), ('original', 'q', 'a', 0), ('original', 'p', 'g', 1)`,
+      ),
+      env.DB.prepare(
+        `INSERT INTO google_events (user_id, task_id, account_email, calendar_id, event_id, starts_at, ends_at)
+         VALUES ('original', 'g', 'me@gmail.com', 'primary', 'e', '2026-04-01T00:00:00Z', '2026-04-02T00:00:00Z')`,
+      ),
+    ])
+
+    await migrate(env.DB)
+
+    const events: LoggedEvent[] = (await call('GET', 'events', undefined, await signUp())).body
+    expect(events.map((e) => [e.at.slice(0, 10), e.kind, e.taskId, e.projectId, e.newValue, e.deliveryDateAtTime, e.taskSource])).toEqual([
+      ['2026-01-01', 'task_created', 'a', null, '2026-03-01', null, 'app'],
+      ['2026-01-01', 'task_added_to_project', 'a', 'p', null, '2026-06-01', 'app'],
+      ['2026-01-01', 'task_added_to_project', 'a', 'q', null, null, 'app'],
+      ['2026-01-15', 'task_created', 'g', null, '2026-04-01', null, 'google'],
+      ['2026-01-15', 'task_added_to_project', 'g', 'p', null, '2026-06-01', 'google'],
+      ['2026-02-01', 'task_created', 'b', null, null, null, 'app'],
+    ])
+    expect(events.every((e) => e.source === 'backfill' && e.oldValue === null)).toBe(true)
   })
 
   it('skips migrations that wrangler already applied', async () => {

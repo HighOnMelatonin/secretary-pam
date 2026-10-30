@@ -11,6 +11,7 @@
 //   GET    /api/tags           -> Tag[]
 //   PUT    /api/tags/:id       -> saves the Tag in the body, returns it
 //   DELETE /api/tags/:id       -> 204
+//   GET    /api/events         -> LoggedEvent[], oldest first; ?projectId= and ?since= narrow it down
 //
 // plus the sign-in routes in auth.ts and the Google Calendar routes in google.ts. Each object is split across its own table and the tables
 // holding its arrays when saved, and put back together when read.
@@ -21,12 +22,15 @@
 // task and project whose stored value changed. A body that isn't wrapped in { task } or
 // { project } (a bare Task or Project) is refused with 400.
 //
+// Saves and deletes of tasks and projects also log what they changed to task_events
+// (src/types/events.ts), in the same batch, so a refused or failed save logs nothing.
+//
 // Every route but /api/auth needs a signed-in user, and only reads and writes that user's rows:
 // every query has a user_id, which comes from the session, never from the request.
 //
 // Every value from a request is passed to D1 as a bound parameter (?1, ?2, ...), never written
 // into the SQL itself, so it can't change what a query does. The only SQL built from variables
-// uses constants: NOW, and table names from RESOURCES.
+// uses constants: NOW, and the table names passed to deleteLogged.
 import {
   isSafeUrl,
   LINK_PROTOCOLS,
@@ -46,8 +50,11 @@ import {
 } from '../src/types/task'
 import type { Project, ReferenceLink } from '../src/types/project'
 import { ARCHIVE_TAG_ID, DEFAULT_TAG_COLOR, isHexColor, type Tag } from '../src/types/tag'
+import type { TaskEvent } from '../src/types/events'
 import {
+  planProjectDelete,
   planProjectSave,
+  planTaskDelete,
   planTaskSave,
   UnknownReference,
   type Changes,
@@ -58,6 +65,7 @@ import {
 } from '../src/types/operations'
 import type { Clash } from '../src/types/rules'
 import { currentUser, handleAuth, HttpError } from './auth'
+import { eventStatements, listEvents, type EventQuery } from './events'
 import { handleGoogle } from './google'
 import { migrateOnce } from './migrate'
 
@@ -374,12 +382,14 @@ function projectStatements(db: D1Database, userId: string, project: Project): D1
   ]
 }
 
-// Saves several tasks and projects as one transaction, since D1 has no BEGIN/COMMIT and a batch
-// is its only atomic unit. Tasks go first because project_tasks rows reference them.
-async function writeChanges(db: D1Database, userId: string, { tasks, projects }: Changes): Promise<void> {
+// Saves several tasks and projects, and logs the events, as one transaction, since D1 has no
+// BEGIN/COMMIT and a batch is its only atomic unit. Tasks go first because project_tasks rows
+// reference them.
+async function writeChanges(db: D1Database, userId: string, { tasks, projects }: Changes, events: TaskEvent[]) {
   await db.batch([
     ...tasks.flatMap((task) => taskStatements(db, userId, task)),
     ...projects.flatMap((project) => projectStatements(db, userId, project)),
+    ...eventStatements(db, userId, new Date().toISOString(), events),
   ])
 }
 
@@ -401,7 +411,7 @@ async function saveWithRules(
     const message = clashMessage(result.clashes[0]!, [...tasks, ...saving.tasks], [...projects, ...saving.projects])
     throw new Conflict(message, result.clashes)
   }
-  await writeChanges(db, userId, result.changes)
+  await writeChanges(db, userId, result.changes, result.events)
   return result.changes
 }
 
@@ -413,6 +423,36 @@ function clashMessage(clash: Clash, tasks: Task[], projects: Project[]) {
     `"${name(tasks, clash.taskId)}" is due ${clash.dueDate}, ` +
     `after "${name(projects, clash.projectId)}"'s delivery date (${clash.deliveryDate})`
   )
+}
+
+// Deletes a task or project, logging what the delete does in the same batch. The events are
+// worked out from the stored data, read first, with the same race as saveWithRules.
+async function deleteLogged(
+  db: D1Database,
+  userId: string,
+  table: string,
+  id: string,
+  plan: (state: State, id: string) => TaskEvent[],
+): Promise<void> {
+  const [tasks, projects] = await Promise.all([listTasks(db, userId), listProjects(db, userId)])
+  await db.batch([
+    ...eventStatements(db, userId, new Date().toISOString(), plan({ tasks, projects }, id)),
+    db.prepare(`DELETE FROM ${table} WHERE user_id = ?1 AND id = ?2`).bind(userId, id),
+  ])
+}
+
+// Events
+
+// ?projectId= and ?since=, where an empty value means no filter
+function parseEventQuery(params: URLSearchParams): EventQuery {
+  const projectId = params.get('projectId') || undefined
+  const since = params.get('since') || undefined
+  check(projectId === undefined || isId(projectId), `projectId must be at most ${MAX_ID_LENGTH} characters`)
+  check(
+    since === undefined || /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?Z)?$/.test(since),
+    'since must be a YYYY-MM-DD date or a UTC timestamp such as 2026-10-25T15:08:26.123Z',
+  )
+  return { projectId, since }
 }
 
 // Tags
@@ -441,14 +481,14 @@ async function saveTag(db: D1Database, userId: string, tag: TagBody): Promise<Ta
 // Routing
 
 interface Resource {
-  table: string // deleting from it cascades to the tables holding its arrays
   list(db: D1Database, userId: string): Promise<unknown[]>
   save(db: D1Database, userId: string, id: string, body: unknown): Promise<unknown>
+  // Deleting the row cascades to the tables holding its arrays
+  remove(db: D1Database, userId: string, id: string): Promise<void>
 }
 
 const RESOURCES: Record<string, Resource> = {
   tasks: {
-    table: 'tasks',
     list: listTasks,
     save(db, userId, id, body) {
       const save = parseTaskSave(body, id)
@@ -460,21 +500,24 @@ const RESOURCES: Record<string, Resource> = {
       }
       return saveWithRules(db, userId, (state) => planTaskSave(state, withSource(state)), saving)
     },
+    remove: (db, userId, id) => deleteLogged(db, userId, 'tasks', id, planTaskDelete),
   },
   projects: {
-    table: 'projects',
     list: listProjects,
     save(db, userId, id, body) {
       const save = parseProjectSave(body, id)
       const saving = { tasks: [], projects: [save.project] }
       return saveWithRules(db, userId, (state) => planProjectSave(state, save), saving)
     },
+    remove: (db, userId, id) => deleteLogged(db, userId, 'projects', id, planProjectDelete),
   },
   // Deleting a tag removes it from its projects
   tags: {
-    table: 'tags',
     list: listTags,
     save: (db, userId, id, body) => saveTag(db, userId, parseTag(body, id)),
+    async remove(db, userId, id) {
+      await db.prepare('DELETE FROM tags WHERE user_id = ?1 AND id = ?2').bind(userId, id).run()
+    },
   },
 }
 
@@ -514,10 +557,12 @@ function decodeId(rawId: string) {
 export default {
   async fetch(request, env) {
     // e.g. "/api/tasks/abc" -> ["", "api", "tasks", "abc"]
-    const [, api, name, rawId, ...rest] = new URL(request.url).pathname.split('/')
+    const url = new URL(request.url)
+    const [, api, name, rawId, ...rest] = url.pathname.split('/')
     const resource = name !== undefined && Object.hasOwn(RESOURCES, name) ? RESOURCES[name] : undefined
     const isGoogle = name === 'google' // the only routes with more than one part after the name
-    if (api !== 'api' || !(resource || name === 'auth' || isGoogle) || (rest.length > 0 && !isGoogle)) {
+    const isEvents = name === 'events' && !rawId // read only, so there is no /api/events/:id
+    if (api !== 'api' || !(resource || name === 'auth' || isGoogle || isEvents) || (rest.length > 0 && !isGoogle)) {
       return error(404, 'Not found')
     }
 
@@ -527,6 +572,10 @@ export default {
 
       const user = await currentUser(env.DB, request)
       if (!user) return error(401, 'Sign in to continue')
+      if (isEvents) {
+        if (request.method !== 'GET') return error(405, 'Method not allowed')
+        return json(await listEvents(env.DB, user.id, parseEventQuery(url.searchParams)))
+      }
       if (!resource) return await handleGoogle(env, request, user, [rawId, ...rest], () => readJson(request))
       const id = rawId ? decodeId(rawId) : undefined
       if (!id && request.method === 'GET') return json(await resource.list(env.DB, user.id))
@@ -535,7 +584,7 @@ export default {
       }
       if (id && request.method === 'DELETE') {
         check(!(name === 'tags' && id === ARCHIVE_TAG_ID), 'The Archive tag is built in and cannot be deleted')
-        await env.DB.prepare(`DELETE FROM ${resource.table} WHERE user_id = ?1 AND id = ?2`).bind(user.id, id).run()
+        await resource.remove(env.DB, user.id, id)
         return new Response(null, { status: 204 })
       }
       return error(405, 'Method not allowed')
