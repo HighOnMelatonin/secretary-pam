@@ -29,6 +29,9 @@ export interface Task {
   relations: TaskRelation[]
   priority: Priority
   completed: boolean
+  // Email of the Google account whose calendar the task was imported from. Only the Worker's sync
+  // sets it; it is left out of saves, and is absent on tasks made in Pam.
+  googleAccount?: string
 }
 
 export function createEmptyTask(): Task {

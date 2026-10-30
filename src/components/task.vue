@@ -148,6 +148,13 @@ function cancel() {
 <template>
   <article class="task-container edit-form">
     <form @submit.prevent="save">
+      <p v-if="draft.googleAccount" class="source">
+        <small>
+          Imported from Google Calendar ({{ draft.googleAccount }}). Its name, due date and description are set from
+          the event again each time you sync, so change them in Google Calendar.
+        </small>
+      </p>
+
       <label>
         Task name
         <input v-model="draft.name" placeholder="Task" required :maxlength="MAX_NAME_LENGTH" />

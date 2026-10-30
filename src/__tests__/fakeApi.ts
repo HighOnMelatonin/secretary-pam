@@ -1,6 +1,7 @@
 // In-memory stand-in for the Worker API (worker/index.ts), installed as the global fetch.
 // Unit tests use it to check what the app sends and how it handles the replies.
 import { expect, vi } from 'vitest'
+import type { GoogleAccount, SyncResult } from '@/types/google'
 import { planProjectSave, planTaskSave, UnknownReference, type Plan, type State } from '@/types/operations'
 import type { Project } from '@/types/project'
 import type { Tag } from '@/types/tag'
@@ -21,6 +22,9 @@ export function fakeApi(initial: { projects?: Project[]; tasks?: Task[]; tags?: 
     failOn: null as string | null,
     // Each request as "METHOD /path", in order
     requests: [] as string[],
+    // Google Calendar: the connected accounts, what a sync answers when there are any, and the
+    // tasks it imports
+    google: { accounts: [] as GoogleAccount[], results: [] as SyncResult[], imports: [] as Task[] },
     fetch: vi.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? 'GET'
       api.requests.push(`${method} ${url}`)
@@ -28,6 +32,7 @@ export function fakeApi(initial: { projects?: Project[]; tasks?: Task[]; tags?: 
         return Response.json({ error: api.failWith }, { status: 500 })
       }
 
+      if (url.startsWith('/api/google/')) return googleRoute(method, url.split('/').slice(3))
       const [, , resource, rawId] = url.split('/') as [string, string, keyof typeof data, string?]
       const items: { id: string }[] = data[resource]
       if (method === 'GET') return Response.json(items)
@@ -54,6 +59,21 @@ export function fakeApi(initial: { projects?: Project[]; tasks?: Task[]; tags?: 
       upsert(items, body)
       return Response.json(body)
     }),
+  }
+
+  function googleRoute(method: string, [action, email]: string[]): Response {
+    const { google } = api
+    if (method === 'POST' && action === 'sync') {
+      if (google.accounts.length === 0) return Response.json([])
+      for (const task of google.imports) upsert(data.tasks, task)
+      return Response.json(google.results)
+    }
+    if (method === 'GET' && action === 'accounts') return Response.json(google.accounts)
+    if (method === 'DELETE' && action === 'accounts') {
+      google.accounts = google.accounts.filter((a) => a.email !== decodeURIComponent(email!))
+      return new Response(null, { status: 204 })
+    }
+    return Response.json({ error: 'Not found' }, { status: 404 })
   }
 
   // Stores what a planned save changes and replies as the Worker does: the changes, a 400 for an

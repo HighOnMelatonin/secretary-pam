@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // One task in a project's task list: its check mark (a button that marks it done or not done), its
-// name (a link to the task's page), priority, overdue tag and due date, with an Edit button at the
+// name (a link to the task's page), priority, overdue tag, due date and, for a task imported from
+// Google Calendar, the account's email as a tag, with an Edit button at the
 // end of the row. Used in the expanded project tile, on the project page, which also shows each
 // task's description, and in the upcoming tasks panel, which also names each task's projects.
 import type { Task } from '@/types/task'
@@ -38,6 +39,7 @@ const isOverdue = (date: string | null) => date !== null && date < today
           {{ task.name }}<span v-if="task.completed" class="sr-only"> (completed)</span>
         </RouterLink>
         <span class="tag" :class="`priority-${task.priority}`">{{ task.priority }}</span>
+        <span v-if="task.googleAccount" class="tag project-tag" title="Imported from Google Calendar">{{ task.googleAccount }}</span>
         <span v-if="!task.completed && isOverdue(task.dueDate)" class="tag overdue">overdue</span>
         <small v-if="task.dueDate">Due {{ task.dueDate }}</small>
       </span>

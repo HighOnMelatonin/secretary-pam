@@ -17,6 +17,7 @@ import TaskRow from './taskRow.vue'
 import TaskDetails from './taskDetails.vue'
 import ListControls from './listControls.vue'
 import CalendarView from './calendarView.vue'
+import GoogleSync from './googleSync.vue'
 import { useProjectView } from '@/stores/projectView'
 import { useProjectList } from '@/stores/projectList'
 import { useTagList } from '@/stores/tagList'
@@ -190,6 +191,16 @@ async function onSaveTask(task: Task, projectIds: string[], deadlines: Record<st
   }
 }
 
+// After a Google Calendar sync, which can add, change and delete tasks, and so change projects too
+async function onGoogleSynced() {
+  error.value = null
+  try {
+    await Promise.all([taskList.load(), projectList.load()])
+  } catch (e) {
+    error.value = `Couldn't load the imported tasks: ${messageOf(e)}`
+  }
+}
+
 // From a task's check mark; the list keeps the old state if saving fails
 async function onToggleTask(task: Task) {
   error.value = null
@@ -344,6 +355,7 @@ async function onToggleTask(task: Task) {
 
       <section class="unassigned" aria-labelledby="unassigned-heading">
         <h2 id="unassigned-heading">Unassigned</h2>
+        <GoogleSync @synced="onGoogleSynced" />
         <ul v-if="unassigned.length" class="plain-list">
           <TaskRow
             v-for="task in unassigned"

@@ -1,6 +1,7 @@
-// Client for the Worker API in worker/index.ts, which stores projects, tasks and tags in D1, and
-// for signing in through worker/auth.ts. The session cookie is HttpOnly, so this code never sees
+// Client for the Worker API in worker/index.ts, which stores projects, tasks and tags in D1, for
+// signing in through worker/auth.ts, and for importing Google Calendar through worker/google.ts. The session cookie is HttpOnly, so this code never sees
 // it: the browser sends it with every request.
+import type { GoogleAccount, SyncResult } from '@/types/google'
 import type { Changes, ProjectSave, TaskSave } from '@/types/operations'
 import type { Project } from '@/types/project'
 import type { Clash } from '@/types/rules'
@@ -85,4 +86,13 @@ export const auth = {
   signUp: (email: string, password: string) => request<Account>('auth/signup', sendJson('POST', { email, password })),
   logIn: (email: string, password: string) => request<Account>('auth/login', sendJson('POST', { email, password })),
   logOut: () => request<void>('auth/logout', { method: 'POST' }),
+}
+
+export const google = {
+  // Where to send the browser to connect a Google account. Google sends it back to /?google=connected.
+  connectPath: '/api/google/connect',
+  accounts: () => request<GoogleAccount[]>('google/accounts'),
+  disconnect: (email: string) => request<void>(`google/accounts/${encodeURIComponent(email)}`, { method: 'DELETE' }),
+  // Imports the events of every connected account; an empty list when none is connected
+  sync: () => request<SyncResult[]>('google/sync', sendJson('POST', {})),
 }

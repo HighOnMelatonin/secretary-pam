@@ -8,6 +8,9 @@ import { call, signUp } from './helpers'
 
 // Children first, so nothing references a dropped table
 const TABLES = [
+  'google_events',
+  'google_auth_states',
+  'google_accounts',
   'project_links',
   'project_tasks',
   'project_tags',
@@ -55,6 +58,7 @@ describe('migrate', () => {
       '0003_project_tags_and_archive.sql',
       '0004_users.sql',
       '0005_tag_colors.sql',
+      '0006_google_calendar.sql',
     ])
     expect((await call('GET', 'projects', undefined, await signUp())).body).toEqual([])
   })
