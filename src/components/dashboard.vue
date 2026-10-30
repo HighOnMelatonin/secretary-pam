@@ -18,6 +18,7 @@ import TaskDetails from './taskDetails.vue'
 import ListControls from './listControls.vue'
 import CalendarView from './calendarView.vue'
 import GoogleSync from './googleSync.vue'
+import { useGoogleSync } from '@/stores/googleSync'
 import { useProjectView } from '@/stores/projectView'
 import { useProjectList } from '@/stores/projectList'
 import { useTagList } from '@/stores/tagList'
@@ -34,8 +35,30 @@ const projectView = useProjectView()
 const { visibleProjects } = storeToRefs(projectView)
 const { tasks } = storeToRefs(taskList)
 const { tags } = storeToRefs(tagList)
-// The tasks in no project, listed in their own section below the projects
+// The tasks in no project, listed in their own section below the projects. The list can be
+// collapsed, which this browser remembers.
 const unassigned = computed(() => unassignedTasks(tasks.value, projects.value))
+const UNASSIGNED_COLLAPSED_KEY = 'pam.unassignedCollapsed'
+
+function loadUnassignedCollapsed() {
+  try {
+    return localStorage.getItem(UNASSIGNED_COLLAPSED_KEY) === 'true'
+  } catch {
+    return false // storage blocked: start expanded
+  }
+}
+
+const unassignedCollapsed = ref(loadUnassignedCollapsed())
+watch(unassignedCollapsed, () => {
+  try {
+    localStorage.setItem(UNASSIGNED_COLLAPSED_KEY, String(unassignedCollapsed.value))
+  } catch {
+    // Not remembered, but the section still collapses
+  }
+})
+
+// Synced from the taskbar or from the button under Unassigned, which show the same progress
+const googleSync = useGoogleSync()
 
 // The project's tags, in the order it lists them
 const tagsOf = (project: Project) =>
@@ -191,16 +214,6 @@ async function onSaveTask(task: Task, projectIds: string[], deadlines: Record<st
   }
 }
 
-// After a Google Calendar sync, which can add, change and delete tasks, and so change projects too
-async function onGoogleSynced() {
-  error.value = null
-  try {
-    await Promise.all([taskList.load(), projectList.load()])
-  } catch (e) {
-    error.value = `Couldn't load the imported tasks: ${messageOf(e)}`
-  }
-}
-
 // From a task's check mark; the list keeps the old state if saving fails
 async function onToggleTask(task: Task) {
   error.value = null
@@ -218,9 +231,11 @@ async function onToggleTask(task: Task) {
     <Taskbar
       v-if="!loading && !loadFailed"
       :form-open="editor !== null"
+      :syncing="googleSync.syncing"
       @tags="open({ name: 'tags' })"
       @add-task="open({ name: 'new-task' })"
       @add-project="open({ name: 'new-project' })"
+      @sync="googleSync.sync()"
     />
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -354,9 +369,21 @@ async function onToggleTask(task: Task) {
       </template>
 
       <section class="unassigned" aria-labelledby="unassigned-heading">
-        <h2 id="unassigned-heading">Unassigned</h2>
-        <GoogleSync @synced="onGoogleSynced" />
-        <ul v-if="unassigned.length" class="plain-list">
+        <div class="heading-row unassigned-heading">
+          <h2 id="unassigned-heading">Unassigned</h2>
+          <button
+            v-if="unassigned.length"
+            type="button"
+            class="secondary outline compact collapse-toggle"
+            aria-controls="unassigned-tasks"
+            :aria-expanded="!unassignedCollapsed"
+            @click="unassignedCollapsed = !unassignedCollapsed"
+          >
+            {{ unassignedCollapsed ? `Show all ${unassigned.length}` : 'Hide' }}
+          </button>
+        </div>
+        <GoogleSync />
+        <ul v-if="unassigned.length" v-show="!unassignedCollapsed" id="unassigned-tasks" class="plain-list">
           <TaskRow
             v-for="task in unassigned"
             :key="task.id"
@@ -399,7 +426,7 @@ async function onToggleTask(task: Task) {
   border-top: 1px solid var(--pico-muted-border-color);
 }
 
-.unassigned h2 {
+.unassigned-heading {
   margin-bottom: 1rem;
 }
 

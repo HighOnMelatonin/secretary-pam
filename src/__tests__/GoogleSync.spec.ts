@@ -1,4 +1,5 @@
-// The Sync Google Calendar button under Unassigned, on the dashboard, and the badge on imported tasks
+// The Sync Google Calendar buttons under Unassigned and in the taskbar, on the dashboard, and the
+// badge on imported tasks
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
@@ -31,6 +32,9 @@ async function mountDashboard(path = '/') {
 
 const unassignedNames = (wrapper: ReturnType<typeof mount>) =>
   wrapper.findAll('.unassigned .task-name').map((n) => n.text())
+const syncButtons = (wrapper: ReturnType<typeof mount>) =>
+  wrapper.findAll('button').filter((b) => ['Sync Google Calendar', 'Syncing…'].includes(b.text()))
+const panelSync = (wrapper: ReturnType<typeof mount>) => wrapper.find('.google-sync button')
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -43,7 +47,7 @@ describe('Sync Google Calendar', () => {
     const load = vi.spyOn(browser, 'load').mockImplementation(() => {})
     const { wrapper } = await mountDashboard()
 
-    await button(wrapper, 'Sync Google Calendar').trigger('click')
+    await panelSync(wrapper).trigger('click')
     await flushPromises()
     expect(load).toHaveBeenCalledWith('/api/google/connect')
   })
@@ -55,13 +59,30 @@ describe('Sync Google Calendar', () => {
     api.google.results = [result({ added: 1, failedCalendars: 1 })]
     const { wrapper } = await mountDashboard()
 
-    await button(wrapper, 'Sync Google Calendar').trigger('click')
+    await panelSync(wrapper).trigger('click')
     await flushPromises()
 
     expect(api.requests).toContain('POST /api/google/sync')
     expect(unassignedNames(wrapper)).toEqual(['Dentist'])
     expect(wrapper.find('.unassigned .project-tag').text()).toBe(EMAIL)
     expect(wrapper.find('.results').text()).toBe(`${EMAIL}: 1 added; 1 calendar couldn't be read`)
+  })
+
+  it('syncs from the taskbar too, showing the progress on both buttons and the outcome under Unassigned', async () => {
+    const api = fakeApi()
+    api.google.accounts = [{ email: EMAIL, syncedAt: null }]
+    api.google.imports = [task('e', { name: 'Dentist', googleAccount: EMAIL })]
+    api.google.results = [result({ added: 1 })]
+    const { wrapper } = await mountDashboard()
+
+    await wrapper.find('.taskbar .sync').trigger('click')
+    expect(syncButtons(wrapper).map((b) => b.text())).toEqual(['Syncing…', 'Syncing…'])
+    await flushPromises()
+
+    expect(api.requests.filter((r) => r === 'POST /api/google/sync')).toHaveLength(1)
+    expect(unassignedNames(wrapper)).toEqual(['Dentist'])
+    expect(wrapper.find('.results').text()).toBe(`${EMAIL}: 1 added`)
+    expect(syncButtons(wrapper).map((b) => b.text())).toEqual(['Sync Google Calendar', 'Sync Google Calendar'])
   })
 
   it('syncs straight away when Google sends the browser back, and drops the query', async () => {
@@ -89,7 +110,7 @@ describe('Sync Google Calendar', () => {
     const load = vi.spyOn(browser, 'load').mockImplementation(() => {})
     const { wrapper } = await mountDashboard()
 
-    await button(wrapper, 'Sync Google Calendar').trigger('click')
+    await panelSync(wrapper).trigger('click')
     await flushPromises()
     await button(wrapper, 'Connect again').trigger('click')
     expect(load).toHaveBeenCalledWith('/api/google/connect')
@@ -100,7 +121,7 @@ describe('Sync Google Calendar', () => {
     const { wrapper } = await mountDashboard()
     api.failWith = 'Google Calendar isn’t set up yet'
 
-    await button(wrapper, 'Sync Google Calendar').trigger('click')
+    await panelSync(wrapper).trigger('click')
     await flushPromises()
     expect(wrapper.find('.google-sync [role="alert"]').text()).toBe("Couldn't sync Google Calendar: Google Calendar isn’t set up yet")
   })

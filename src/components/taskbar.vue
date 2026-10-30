@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// The dashboard's actions (Tags, Add task, Add project), shown one of two ways:
+// The dashboard's actions (Tags, Add task, Add project, Sync Google Calendar), shown one of two ways:
 // - with a mouse: a bar hidden on the left edge of the screen. Only a thin strip shows until
 //   it is hovered or tabbed into; it then slides out over the page without moving anything.
 // - on touch screens and narrow windows: a round + button in the bottom-right corner, within
@@ -10,12 +10,14 @@ import { onMounted, onUnmounted, ref } from 'vue'
 
 defineProps<{
   formOpen?: boolean // hides the + button, which would cover the form's Save button
+  syncing?: boolean // a Google Calendar sync is under way
 }>()
 
 const emit = defineEmits<{
   tags: []
   addTask: []
   addProject: []
+  sync: []
 }>()
 
 // The bar opens on hover and keyboard focus in CSS, and from its strip when clicked
@@ -37,6 +39,7 @@ function close() {
 const tags = () => (close(), emit('tags'))
 const addTask = () => (close(), emit('addTask'))
 const addProject = () => (close(), emit('addProject'))
+const sync = () => (close(), emit('sync'))
 
 // A tap anywhere else closes them
 function onPointerDown(event: PointerEvent) {
@@ -55,6 +58,9 @@ onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
       <button type="button" class="secondary" @click="tags">Tags</button>
       <button type="button" class="secondary" @click="addTask">Add task</button>
       <button type="button" @click="addProject">Add project</button>
+      <button type="button" class="secondary outline sync" :aria-busy="syncing" :disabled="syncing" @click="sync">
+        {{ syncing ? 'Syncing…' : 'Sync Google Calendar' }}
+      </button>
     </div>
     <button type="button" class="strip" :aria-expanded="barOpen" aria-label="Show actions" @click="barOpen = !barOpen">
       <span aria-hidden="true">›</span>
@@ -66,6 +72,9 @@ onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
       <button type="button" class="secondary" @click="tags">Tags</button>
       <button type="button" class="secondary" @click="addTask">Add task</button>
       <button type="button" @click="addProject">Add project</button>
+      <button type="button" class="secondary outline" :aria-busy="syncing" :disabled="syncing" @click="sync">
+        {{ syncing ? 'Syncing…' : 'Sync Google Calendar' }}
+      </button>
     </div>
     <button
       type="button"
@@ -122,6 +131,11 @@ onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
 .panel button {
   width: 100%;
   margin: 0;
+}
+
+/* Set apart from the actions that open a form */
+.panel .sync {
+  margin-top: 0.75rem;
 }
 
 .strip {
