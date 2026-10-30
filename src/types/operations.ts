@@ -1,6 +1,7 @@
 // What a save writes, worked out up front so the Worker and the client test fake agree on it.
 // Pure functions over plain data only: no I/O, no Vue and relative imports only, since worker/
 // imports this file too.
+import { diffEvents, type TaskEvent } from './events'
 import type { Project } from './project'
 import { applyMembership, findClashes, projectsToArchive, type Clash } from './rules'
 import { ARCHIVE_TAG_ID } from './tag'
@@ -17,7 +18,8 @@ export interface Changes {
   projects: Project[]
 }
 
-export type Plan = { ok: true; changes: Changes } | { ok: false; clashes: Clash[] }
+// events are what the save logs (src/types/events.ts), written with the changes
+export type Plan = { ok: true; changes: Changes; events: TaskEvent[] } | { ok: false; clashes: Clash[] }
 
 export interface TaskSave {
   task: Task
@@ -62,10 +64,22 @@ export function planProjectSave(state: State, { project, dueDates = {} }: Projec
   return finish(state, after, { tasks: [], projects: [project] })
 }
 
+// What deleting a task or project logs. A deleted task also leaves its projects, as the delete
+// cascades to them.
+export function planTaskDelete(state: State, id: string): TaskEvent[] {
+  const projects = state.projects.map((p) => (p.taskIds.includes(id) ? { ...p, taskIds: p.taskIds.filter((t) => t !== id) } : p))
+  return diffEvents(state, { tasks: state.tasks.filter((t) => t.id !== id), projects }, 'app')
+}
+
+export function planProjectDelete(state: State, id: string): TaskEvent[] {
+  return diffEvents(state, { tasks: state.tasks, projects: state.projects.filter((p) => p.id !== id) }, 'app')
+}
+
 // Steps shared by every save once the change is applied: refuse new clashes, archive the
-// projects the change completed, and collect what differs from before. The saved entity is
-// always in the changes; anything else only when it was replaced along the way, since every
-// step keeps the original object for an entity it leaves alone.
+// projects the change completed, and collect what differs from before and the events it logs.
+// The saved entity is always in the changes; anything else only when it was replaced along the
+// way, since every step keeps the original object for an entity it leaves alone. Archiving isn't
+// an event, so the events come from the change before it.
 function finish(before: State, after: State, saved: Changes): Plan {
   const clashes = touchedClashes(before, after)
   if (clashes.length > 0) return { ok: false, clashes }
@@ -76,7 +90,11 @@ function finish(before: State, after: State, saved: Changes): Plan {
   const savedIds = new Set([...saved.tasks, ...saved.projects].map((e) => e.id))
   const differs = <T extends { id: string }>(items: T[], original: T[]) =>
     items.filter((item) => savedIds.has(item.id) || !original.includes(item))
-  return { ok: true, changes: { tasks: differs(after.tasks, before.tasks), projects: differs(projects, before.projects) } }
+  return {
+    ok: true,
+    changes: { tasks: differs(after.tasks, before.tasks), projects: differs(projects, before.projects) },
+    events: diffEvents(before, after, 'app'),
+  }
 }
 
 // The clashes this change is responsible for: on a task-project pair that's new, or whose due

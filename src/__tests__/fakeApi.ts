@@ -1,8 +1,17 @@
 // In-memory stand-in for the Worker API (worker/index.ts), installed as the global fetch.
 // Unit tests use it to check what the app sends and how it handles the replies.
 import { expect, vi } from 'vitest'
+import type { LoggedEvent, TaskEvent } from '@/types/events'
 import type { GoogleAccount, SyncResult } from '@/types/google'
-import { planProjectSave, planTaskSave, UnknownReference, type Plan, type State } from '@/types/operations'
+import {
+  planProjectDelete,
+  planProjectSave,
+  planTaskDelete,
+  planTaskSave,
+  UnknownReference,
+  type Plan,
+  type State,
+} from '@/types/operations'
 import type { Project } from '@/types/project'
 import type { Tag } from '@/types/tag'
 import type { Task } from '@/types/task'
@@ -25,6 +34,8 @@ export function fakeApi(initial: { projects?: Project[]; tasks?: Task[]; tags?: 
     // Google Calendar: the connected accounts, what a sync answers when there are any, and the
     // tasks it imports
     google: { accounts: [] as GoogleAccount[], results: [] as SyncResult[], imports: [] as Task[] },
+    // What task and project saves and deletes logged, as the Worker logs them to task_events
+    events: [] as LoggedEvent[],
     fetch: vi.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? 'GET'
       api.requests.push(`${method} ${url}`)
@@ -33,10 +44,19 @@ export function fakeApi(initial: { projects?: Project[]; tasks?: Task[]; tags?: 
       }
 
       if (url.startsWith('/api/google/')) return googleRoute(method, url.split('/').slice(3))
+      if (url.startsWith('/api/events')) {
+        const params = new URL(url, 'http://localhost').searchParams
+        const projectId = params.get('projectId') || undefined
+        const since = params.get('since') || ''
+        return Response.json(api.events.filter((e) => (!projectId || e.projectId === projectId) && e.at >= since))
+      }
       const [, , resource, rawId] = url.split('/') as [string, string, keyof typeof data, string?]
       const items: { id: string }[] = data[resource]
       if (method === 'GET') return Response.json(items)
       if (method === 'DELETE') {
+        const id = decodeURIComponent(rawId!)
+        if (resource === 'tasks') log(planTaskDelete(data, id))
+        if (resource === 'projects') log(planProjectDelete(data, id))
         items.splice(items.findIndex((i) => i.id === decodeURIComponent(rawId!)), 1)
         return new Response(null, { status: 204 })
       }
@@ -96,7 +116,13 @@ export function fakeApi(initial: { projects?: Project[]; tasks?: Task[]; tags?: 
     }
     for (const task of result.changes.tasks) upsert(data.tasks, task)
     for (const project of result.changes.projects) upsert(data.projects, project)
+    log(result.events)
     return Response.json(result.changes)
+  }
+
+  function log(events: TaskEvent[]) {
+    const at = new Date().toISOString()
+    for (const event of events) api.events.push({ ...event, id: api.events.length + 1, at })
   }
 
   vi.stubGlobal('fetch', api.fetch)
