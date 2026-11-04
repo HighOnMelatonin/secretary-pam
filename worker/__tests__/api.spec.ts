@@ -656,7 +656,7 @@ describe('separate accounts', () => {
 
     expect((await as('GET', 'projects')).body).toEqual([])
     expect((await as('GET', 'tasks')).body).toEqual([])
-    expect((await as('GET', 'tags')).body.map((t: Tag) => t.name)).toEqual(['Archive', 'Personal', 'School (SUTD)', 'Work'])
+    expect((await as('GET', 'tags')).body.map((t: Tag) => t.name)).toEqual(['Archive', 'Personal', 'School', 'Work'])
   })
 
   it("keeps each account's ids apart, so saving with the same id doesn't overwrite another's", async () => {
