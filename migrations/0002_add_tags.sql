@@ -13,4 +13,4 @@ ALTER TABLE projects ADD COLUMN tag_id TEXT REFERENCES tags (id) ON DELETE SET N
 CREATE INDEX projects_tag_id ON projects (tag_id);
 
 -- Starting tags, which can be renamed or deleted in the app
-INSERT INTO tags (id, name) VALUES ('school', 'School (SUTD)'), ('work', 'Work'), ('personal', 'Personal');
+INSERT INTO tags (id, name) VALUES ('school', 'School'), ('work', 'Work'), ('personal', 'Personal');
