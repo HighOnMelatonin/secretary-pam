@@ -37,7 +37,7 @@ const ORIGINAL_USER_ID = 'original'
 
 // What a new account starts with, like a new database did before accounts
 const STARTING_TAGS = [
-  { id: 'school', name: 'School (SUTD)' },
+  { id: 'school', name: 'School' },
   { id: 'work', name: 'Work' },
   { id: 'personal', name: 'Personal' },
   { id: ARCHIVE_TAG_ID, name: 'Archive' },

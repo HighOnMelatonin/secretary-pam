@@ -17,7 +17,7 @@ describe('signing up', () => {
     expect((await call('GET', 'tags', undefined, cookie)).body).toEqual([
       { id: 'archive', name: 'Archive', color: '#343ca6' },
       { id: 'personal', name: 'Personal', color: '#343ca6' },
-      { id: 'school', name: 'School (SUTD)', color: '#343ca6' },
+      { id: 'school', name: 'School', color: '#343ca6' },
       { id: 'work', name: 'Work', color: '#343ca6' },
     ])
   })
