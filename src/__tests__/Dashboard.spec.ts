@@ -119,6 +119,36 @@ describe('Dashboard unassigned tasks', () => {
     expect(listHidden(wrapper)).toBe(true)
   })
 
+  it('hides the completed tasks and shows them again, remembering the choice', async () => {
+    fakeApi({ tasks: [task('a'), task('b', { completed: true }), task('c', { completed: true })] })
+    const doneToggle = (w: ReturnType<typeof mount>) => w.find('.unassigned .done-toggle')
+    const names = (w: ReturnType<typeof mount>) => w.findAll('.unassigned .task-name').map((n) => n.text())
+    let wrapper = await mountDashboard()
+    expect(names(wrapper)).toEqual(['Task a', 'Task b (completed)', 'Task c (completed)'])
+    expect(doneToggle(wrapper).text()).toBe('Hide done')
+
+    await doneToggle(wrapper).trigger('click')
+    expect(names(wrapper)).toEqual(['Task a'])
+    expect(doneToggle(wrapper).text()).toBe('Show 2 done')
+    expect(doneToggle(wrapper).attributes('aria-pressed')).toBe('true')
+    expect(localStorage.getItem('pam.hideUnassignedDone')).toBe('true')
+
+    wrapper = await mountDashboard()
+    expect(names(wrapper)).toEqual(['Task a'])
+    await doneToggle(wrapper).trigger('click')
+    expect(names(wrapper)).toEqual(['Task a', 'Task b (completed)', 'Task c (completed)'])
+  })
+
+  it('says when every unassigned task is done and hidden, and offers no button when none are done', async () => {
+    fakeApi({ tasks: [task('a', { completed: true })] })
+    const wrapper = await mountDashboard()
+    await wrapper.find('.unassigned .done-toggle').trigger('click')
+    expect(wrapper.find('.unassigned').text()).toContain('All 1 are done.')
+
+    fakeApi({ tasks: [task('a')] })
+    expect((await mountDashboard()).find('.unassigned .done-toggle').exists()).toBe(false)
+  })
+
   it('offers no collapse button when every task is in a project', async () => {
     fakeApi({ tasks: [task('a')], projects: [project('p', { taskIds: ['a'] })] })
     const wrapper = await mountDashboard()
