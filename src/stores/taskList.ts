@@ -4,6 +4,7 @@ import * as api from '@/api'
 import type { TaskSave } from '@/types/operations'
 import type { Task } from '@/types/task'
 import { applyChanges } from './changes'
+import { useProjectList } from './projectList'
 
 export const useTaskList = defineStore('taskList', () => {
   const tasks = ref<Task[]>([])
@@ -18,7 +19,20 @@ export const useTaskList = defineStore('taskList', () => {
     applyChanges(await api.saveTask(input))
   }
 
-  return { tasks, load, saveTask }
+  // The API also takes the task out of its projects and other tasks' relations, so the loaded
+  // projects and tasks are updated to match
+  async function deleteTask(id: string) {
+    await api.remove('tasks', id)
+    tasks.value = tasks.value
+      .filter((t) => t.id !== id)
+      .map((t) => (t.relations.some((r) => r.taskId === id) ? { ...t, relations: t.relations.filter((r) => r.taskId !== id) } : t))
+    const projectList = useProjectList()
+    projectList.projects = projectList.projects.map((p) =>
+      p.taskIds.includes(id) ? { ...p, taskIds: p.taskIds.filter((t) => t !== id) } : p,
+    )
+  }
+
+  return { tasks, load, saveTask, deleteTask }
 })
 
 // Lets Vite hot-swap this store when the file changes, instead of keeping the old one
