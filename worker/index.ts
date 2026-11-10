@@ -555,7 +555,7 @@ function decodeId(rawId: string) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     // e.g. "/api/tasks/abc" -> ["", "api", "tasks", "abc"]
     const url = new URL(request.url)
     const [, api, name, rawId, ...rest] = url.pathname.split('/')
@@ -568,7 +568,7 @@ export default {
 
     try {
       await migrateOnce(env.DB)
-      if (name === 'auth') return await handleAuth(env.DB, request, rawId, () => readJson(request))
+      if (name === 'auth') return await handleAuth(env, ctx, request, rawId, () => readJson(request))
 
       const user = await currentUser(env.DB, request)
       if (!user) return error(401, 'Sign in to continue')

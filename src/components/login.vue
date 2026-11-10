@@ -21,6 +21,8 @@ const error = ref<string | null>(null)
 const busy = ref(false)
 
 const isSignUp = computed(() => props.mode === 'signup')
+// Set by the reset page (resetPassword.vue) once the new password is saved
+const justReset = computed(() => !isSignUp.value && route.query.reset === 'done')
 
 // Switching between the two pages keeps the email but starts the passwords again
 watch(
@@ -60,6 +62,9 @@ async function submit() {
     <h2>{{ isSignUp ? 'Create an account' : 'Sign in' }}</h2>
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
+    <p v-else-if="justReset" class="notice" role="status">
+      Your password has been changed, and every device signed out. Sign in with the new password.
+    </p>
 
     <form @submit.prevent="submit">
       <label>
@@ -80,6 +85,9 @@ async function submit() {
         />
         <small v-if="isSignUp" id="password-hint">At least {{ MIN_PASSWORD_LENGTH }} characters.</small>
       </label>
+      <p v-if="!isSignUp" class="forgot">
+        <small><RouterLink :to="{ name: 'forgot-password' }">Forgot your password?</RouterLink></small>
+      </p>
 
       <label v-if="isSignUp">
         Confirm password
@@ -113,5 +121,9 @@ h2 {
 .switch {
   margin: 0;
   text-align: center;
+}
+
+.forgot {
+  margin-top: calc(var(--pico-spacing) * -0.5);
 }
 </style>

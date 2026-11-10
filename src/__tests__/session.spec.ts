@@ -83,6 +83,16 @@ describe('session', () => {
     stubApi({ email: 'me@example.com' })
     expect((await guardedRouterAt('/tasks/new')).currentRoute.value.name).toBe('new-task')
     expect((await guardedRouterAt('/login')).currentRoute.value.name).toBe('dashboard')
+    expect((await guardedRouterAt('/forgot-password')).currentRoute.value.name).toBe('dashboard')
+  })
+
+  it('opens the reset page from an email whether or not the browser is signed in', async () => {
+    stubApi(null)
+    expect((await guardedRouterAt('/forgot-password')).currentRoute.value.name).toBe('forgot-password')
+    expect((await guardedRouterAt('/reset-password?token=abc')).currentRoute.value.fullPath).toBe('/reset-password?token=abc')
+    setActivePinia(createPinia())
+    stubApi({ email: 'me@example.com' })
+    expect((await guardedRouterAt('/reset-password?token=abc')).currentRoute.value.fullPath).toBe('/reset-password?token=abc')
   })
 
   it('reloads at the sign-in page when the session ends while the app is open', async () => {

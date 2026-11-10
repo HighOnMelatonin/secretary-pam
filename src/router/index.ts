@@ -4,12 +4,15 @@
 import { createRouter, createWebHistory, type Router, type RouteRecordRaw } from 'vue-router'
 import * as api from '@/api'
 import Dashboard from '@/components/dashboard.vue'
+import ForgotPassword from '@/components/forgotPassword.vue'
 import Login from '@/components/login.vue'
+import ResetPassword from '@/components/resetPassword.vue'
 import { browser, useSession } from '@/stores/session'
 
 declare module 'vue-router' {
   interface RouteMeta {
     public?: boolean // for signed-out users only; every other route needs an account
+    anyone?: boolean // for signed-in and signed-out users alike
   }
 }
 
@@ -18,6 +21,10 @@ export const routes: RouteRecordRaw[] = [
   { path: '/calendar', name: 'calendar', component: Dashboard }, // ?month=YYYY-MM
   { path: '/login', name: 'login', component: Login, props: { mode: 'login' }, meta: { public: true } },
   { path: '/signup', name: 'signup', component: Login, props: { mode: 'signup' }, meta: { public: true } },
+  { path: '/forgot-password', name: 'forgot-password', component: ForgotPassword, meta: { public: true } },
+  // Where reset emails link to (?token=). Open to signed-in users too, so following the link in a
+  // browser that is still signed in doesn't lose the token.
+  { path: '/reset-password', name: 'reset-password', component: ResetPassword, meta: { anyone: true } },
   { path: '/projects/new', name: 'new-project', component: Dashboard },
   { path: '/projects/:id', name: 'project', component: Dashboard },
   { path: '/projects/:id/edit', name: 'edit-project', component: Dashboard },
@@ -33,6 +40,7 @@ export const routes: RouteRecordRaw[] = [
 // fails and the app starts again at the sign-in page.
 export function requireSignIn(router: Router) {
   router.beforeEach(async (to) => {
+    if (to.meta.anyone) return
     const session = useSession()
     await session.check()
     if (!session.account && !to.meta.public) {
