@@ -31,7 +31,7 @@ const isOverdue = (date: string | null) => date !== null && date < today
       :title="task.completed ? 'Mark as not done' : 'Mark as done'"
       @click="$emit('toggleCompleted', task)"
     >
-      {{ task.completed ? '✓' : '○' }}
+      {{ task.completed ? '✓' : ' ' }}
     </button>
     <span class="task-body">
       <span class="task-line">
