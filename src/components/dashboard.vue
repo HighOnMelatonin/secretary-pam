@@ -36,26 +36,34 @@ const { visibleProjects } = storeToRefs(projectView)
 const { tasks } = storeToRefs(taskList)
 const { tags } = storeToRefs(tagList)
 // The tasks in no project, listed in their own section below the projects. The list can be
-// collapsed, which this browser remembers.
+// collapsed, and its completed tasks hidden, both of which this browser remembers.
 const unassigned = computed(() => unassignedTasks(tasks.value, projects.value))
-const UNASSIGNED_COLLAPSED_KEY = 'pam.unassignedCollapsed'
+const unassignedDone = computed(() => unassigned.value.filter((t) => t.completed).length)
 
-function loadUnassignedCollapsed() {
+// A flag kept in localStorage; off when storage is blocked, and still works, just unremembered
+function rememberedFlag(key: string) {
+  let initial = false
   try {
-    return localStorage.getItem(UNASSIGNED_COLLAPSED_KEY) === 'true'
+    initial = localStorage.getItem(key) === 'true'
   } catch {
-    return false // storage blocked: start expanded
+    // storage blocked: start off
   }
+  const flag = ref(initial)
+  watch(flag, () => {
+    try {
+      localStorage.setItem(key, String(flag.value))
+    } catch {
+      // Not remembered
+    }
+  })
+  return flag
 }
 
-const unassignedCollapsed = ref(loadUnassignedCollapsed())
-watch(unassignedCollapsed, () => {
-  try {
-    localStorage.setItem(UNASSIGNED_COLLAPSED_KEY, String(unassignedCollapsed.value))
-  } catch {
-    // Not remembered, but the section still collapses
-  }
-})
+const unassignedCollapsed = rememberedFlag('pam.unassignedCollapsed')
+const hideUnassignedDone = rememberedFlag('pam.hideUnassignedDone')
+const shownUnassigned = computed(() =>
+  hideUnassignedDone.value ? unassigned.value.filter((t) => !t.completed) : unassigned.value,
+)
 
 // Synced from the taskbar or from the button under Unassigned, which show the same progress
 const googleSync = useGoogleSync()
@@ -371,27 +379,43 @@ async function onToggleTask(task: Task) {
       <section class="unassigned" aria-labelledby="unassigned-heading">
         <div class="heading-row unassigned-heading">
           <h2 id="unassigned-heading">Unassigned</h2>
-          <button
-            v-if="unassigned.length"
-            type="button"
-            class="secondary outline compact collapse-toggle"
-            aria-controls="unassigned-tasks"
-            :aria-expanded="!unassignedCollapsed"
-            @click="unassignedCollapsed = !unassignedCollapsed"
-          >
-            {{ unassignedCollapsed ? `Show all ${unassigned.length}` : 'Hide' }}
-          </button>
+          <div v-if="unassigned.length" class="heading-actions">
+            <button
+              v-if="unassignedDone && !unassignedCollapsed"
+              type="button"
+              class="secondary outline compact done-toggle"
+              aria-controls="unassigned-tasks"
+              :aria-pressed="hideUnassignedDone"
+              @click="hideUnassignedDone = !hideUnassignedDone"
+            >
+              {{ hideUnassignedDone ? `Show ${unassignedDone} done` : 'Hide done' }}
+            </button>
+            <button
+              type="button"
+              class="secondary outline compact collapse-toggle"
+              aria-controls="unassigned-tasks"
+              :aria-expanded="!unassignedCollapsed"
+              @click="unassignedCollapsed = !unassignedCollapsed"
+            >
+              {{ unassignedCollapsed ? `Show all ${shownUnassigned.length}` : 'Hide' }}
+            </button>
+          </div>
         </div>
         <GoogleSync />
-        <ul v-if="unassigned.length" v-show="!unassignedCollapsed" id="unassigned-tasks" class="plain-list">
-          <TaskRow
-            v-for="task in unassigned"
-            :key="task.id"
-            :task="task"
-            @edit="open({ name: 'edit-task', params: { id: $event.id } })"
-            @toggle-completed="onToggleTask"
-          />
-        </ul>
+        <template v-if="unassigned.length">
+          <ul v-show="!unassignedCollapsed" id="unassigned-tasks" class="plain-list">
+            <TaskRow
+              v-for="task in shownUnassigned"
+              :key="task.id"
+              :task="task"
+              @edit="open({ name: 'edit-task', params: { id: $event.id } })"
+              @toggle-completed="onToggleTask"
+            />
+          </ul>
+          <p v-if="!unassignedCollapsed && shownUnassigned.length === 0" class="none">
+            <small>All {{ unassigned.length }} are done.</small>
+          </p>
+        </template>
         <p v-else class="none"><small>Every task is in a project.</small></p>
       </section>
     </template>
@@ -428,6 +452,12 @@ async function onToggleTask(task: Task) {
 
 .unassigned-heading {
   margin-bottom: 1rem;
+}
+
+.heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .none {
