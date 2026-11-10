@@ -247,9 +247,9 @@ function cancel() {
         </div>
       </fieldset>
 
-      <label>
+      <label class="completed-toggle">
         <input v-model="draft.completed" type="checkbox" />
-        Completed
+        <span>Completed</span>
       </label>
 
       <div class="actions">
@@ -259,3 +259,19 @@ function cancel() {
     </form>
   </article>
 </template>
+
+<style scoped>
+.completed-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.completed-toggle input[type='checkbox'] {
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: 0;
+  accent-color: var(--primary);
+}
+</style>

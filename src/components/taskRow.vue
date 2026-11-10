@@ -70,14 +70,19 @@ const isOverdue = (date: string | null) => date !== null && date < today
 
 .check {
   flex: none;
-  width: 1.25rem;
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
   margin: 0;
   padding: 0;
-  border: none;
-  background: none;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: transparent;
   color: var(--pico-muted-color);
   font: inherit;
-  line-height: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
   cursor: pointer;
 }
 
