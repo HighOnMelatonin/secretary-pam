@@ -32,6 +32,9 @@ export default defineConfig({
                 // Stand-ins for the secrets; the tests replace fetch, so nothing reaches Google
                 GOOGLE_CLIENT_ID: 'test-client-id',
                 GOOGLE_CLIENT_SECRET: 'test-client-secret',
+                // For reset links; the tests replace mailer.send, so no email is sent
+                APP_ORIGIN: 'https://pam.example',
+                EMAIL_FROM: 'pam@pam.example',
               },
             },
           }),

@@ -86,6 +86,11 @@ export const auth = {
   signUp: (email: string, password: string) => request<Account>('auth/signup', sendJson('POST', { email, password })),
   logIn: (email: string, password: string) => request<Account>('auth/login', sendJson('POST', { email, password })),
   logOut: () => request<void>('auth/logout', { method: 'POST' }),
+  // Emails a reset link if the email has an account. The answer is the same either way.
+  requestReset: (email: string) => request<void>('auth/forgot', sendJson('POST', { email })),
+  // Sets the password from a reset link's token, signing out every device
+  resetPassword: (token: string, password: string) =>
+    request<void>('auth/reset', sendJson('POST', { token, password })),
 }
 
 export const google = {

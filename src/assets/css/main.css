@@ -93,6 +93,14 @@
   color: var(--pico-del-color);
 }
 
+/* Like .error, for news that isn't bad, such as a reset link having been sent */
+.notice {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--pico-ins-color);
+  border-radius: var(--pico-border-radius);
+  color: var(--pico-ins-color);
+}
+
 /* A task due after its project's delivery date, in the task and project forms, with a button
    for each way to fix it */
 .date-error {

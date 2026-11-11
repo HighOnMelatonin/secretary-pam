@@ -86,6 +86,35 @@ describe('taskList', () => {
   })
 })
 
+describe('taskList deleting', () => {
+  it('deletes an unfinished task and clears it from projects and relations', async () => {
+    const api = fakeApi({
+      tasks: [task('t'), task('u', { relations: [{ taskId: 't', type: 'blocks' }] })],
+      projects: [project('p', { taskIds: ['t', 'u'] })],
+    })
+    const store = useTaskList()
+    const projectList = useProjectList()
+    await Promise.all([store.load(), projectList.load()])
+    api.requests.length = 0
+
+    await store.deleteTask('t')
+
+    expect(api.requests).toEqual(['DELETE /api/tasks/t'])
+    expect(store.tasks).toEqual([task('u')])
+    expect(projectList.projects.map((p) => p.taskIds)).toEqual([['u']])
+  })
+
+  it('keeps the task when the API fails to delete it', async () => {
+    const api = fakeApi({ tasks: [task('t')] })
+    const store = useTaskList()
+    await store.load()
+    api.failWith = 'D1 is down'
+
+    await expect(store.deleteTask('t')).rejects.toThrow('D1 is down')
+    expect(store.tasks).toEqual([task('t')])
+  })
+})
+
 describe('projectList', () => {
   it('loads projects from the API', async () => {
     fakeApi({ projects: [project('p')] })

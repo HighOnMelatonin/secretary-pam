@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // Page for one task: its status, priority, due date and description, the projects it belongs to
-// and the tasks it is related to, each linking to its own page. Edit opens the task's form.
+// and the tasks it is related to, each linking to its own page. Edit opens the task's form;
+// Delete removes the task, done or not, once confirmed.
 import { computed } from 'vue'
 import type { Project } from '@/types/project'
 import { relatedTasks, relationLabel, type Task } from '@/types/task'
@@ -11,8 +12,9 @@ const props = defineProps<{
   projects: Project[] // all projects; the ones holding this task are listed
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   edit: [task: Task]
+  delete: [task: Task]
 }>()
 
 const today = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD in local time
@@ -22,6 +24,12 @@ const isOverdue = computed(
 
 const inProjects = computed(() => props.projects.filter((p) => p.taskIds.includes(props.task.id)))
 const related = computed(() => relatedTasks(props.task, props.tasks))
+
+function confirmDelete() {
+  // An imported task comes back on the next sync while its event is still in Google Calendar
+  const comesBack = props.task.googleAccount ? ' It will be imported again on the next sync unless its event is deleted in Google Calendar.' : ''
+  if (confirm(`Delete "${props.task.name}"?${comesBack}`)) emit('delete', props.task)
+}
 </script>
 
 <template>
@@ -32,7 +40,10 @@ const related = computed(() => relatedTasks(props.task, props.tasks))
       <h2 :class="{ struck: task.completed }">
         {{ task.name }}<span v-if="task.completed" class="sr-only"> (completed)</span>
       </h2>
-      <button type="button" class="secondary outline" @click="$emit('edit', task)">Edit</button>
+      <div class="page-actions">
+        <button type="button" class="secondary outline" @click="emit('edit', task)">Edit</button>
+        <button type="button" class="secondary outline" @click="confirmDelete">Delete</button>
+      </div>
     </header>
 
     <div class="meta">
@@ -80,6 +91,12 @@ const related = computed(() => relatedTasks(props.task, props.tasks))
 </template>
 
 <style scoped>
+.page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .done-tag {
   border-color: var(--pam-cream);
   color: var(--pam-cream);

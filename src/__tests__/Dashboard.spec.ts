@@ -684,6 +684,39 @@ describe('Dashboard details pages', () => {
     expect(path(wrapper)).toBe('/projects/p')
   })
 
+  it('deletes an unfinished task from its page once confirmed, and goes to the list when opened directly', async () => {
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    const api = thesis()
+    const wrapper = await mountDashboard('/tasks/t1')
+
+    // Cancelled: nothing is deleted and the page stays open
+    await button(wrapper, 'Delete').trigger('click')
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledWith('Delete "Write report"?')
+    expect(api.requests.filter((r) => r.startsWith('DELETE'))).toEqual([])
+    expect(path(wrapper)).toBe('/tasks/t1')
+
+    // Confirmed: opened directly, so it goes to the list
+    confirm.mockReturnValue(true)
+    await button(wrapper, 'Delete').trigger('click')
+    await flushPromises()
+    expect(api.requests).toContain('DELETE /api/tasks/t1')
+    expect(api.data.tasks.map((t) => t.id)).toEqual(['t2'])
+    expect(path(wrapper)).toBe('/')
+    expect(wrapper.text()).not.toContain('Write report')
+  })
+
+  it('warns that an imported task comes back on the next sync', async () => {
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    fakeApi({ tasks: [task('g', { name: 'Standup', googleAccount: 'me@example.com' })] })
+    const wrapper = await mountDashboard('/tasks/g')
+
+    await button(wrapper, 'Delete').trigger('click')
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('imported again on the next sync'))
+  })
+
   it('goes to the list for a page whose project or task does not exist', async () => {
     thesis()
     expect(path(await mountDashboard('/projects/missing'))).toBe('/')

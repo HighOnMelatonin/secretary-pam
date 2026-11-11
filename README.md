@@ -6,7 +6,7 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 
 ## Features
 
-- **Accounts**: sign in at `/login`, or create an account at `/signup` with an email and a password of at least 8 characters. Each account has its own projects, tasks and tags, and starts with the example tags. The header shows who is signed in, with a **Sign out** button. Opening any page while signed out goes to the sign-in page first, then on to that page.
+- **Accounts**: sign in at `/login`, or create an account at `/signup` with an email and a password of at least 8 characters. Each account has its own projects, tasks and tags, and starts with the example tags. The header shows who is signed in, with a **Sign out** button. Opening any page while signed out goes to the sign-in page first, then on to that page. **Forgot your password?** on the sign-in page emails a link for choosing a new one (see [Password reset](#password-reset)).
 - **Dashboard** of live projects, with **archived projects** in a collapsible section below. When a project's last task is done, it gets the built-in **Archive** tag and moves to that section. Remove the tag in the project's form to bring it back; it stays live until its tasks go from not all done to all done again. Below the projects, **Unassigned** lists every task that isn't in any project (unfinished first, soonest due), each with its check mark, priority, due date and **Edit** button, and its name linking to its page. **Hide done** next to its heading hides the completed ones (and **Show N done** brings them back); this browser remembers the choice.
 - **Sort** the projects by delivery date, urgency (most or least urgent first) or % complete, and **filter** them by tag and urgency. The choices are remembered in the browser.
 - **Project tiles** show the project's tags, priority, due date, an overdue tag and task progress. Click a tile to expand a preview of its timeline, tasks and reference links, with an **Edit** button on each task. Click a task's check mark to mark it done or not done. Each task's name links to its page, and **View more** opens the project's page. **Expand all** above the list opens every tile at once (and **Collapse all** closes them), and open tiles stay open after a visit to a project's page.
@@ -119,6 +119,8 @@ src/
     tags.vue          add, rename, recolour and delete tags
     googleSync.vue    the Sync Google Calendar button, what the last sync did, and the connected accounts
     login.vue         the sign-in and sign-up pages
+    forgotPassword.vue  the page that emails a reset link (/forgot-password)
+    resetPassword.vue   the page reset emails link to, for choosing a new password (/reset-password)
   router/             one route per form and the calendar, all showing the dashboard, so back closes forms
   stores/             Pinia stores for projects, tasks, tags and the signed-in account; they load and save through the API
   types/              Project, Task and Tag models, shared by the app and the Worker, which tasks are upcoming,
@@ -128,13 +130,14 @@ src/
   __tests__/          unit tests
 worker/
   index.ts            the /api routes, reading and writing the signed-in user's rows in D1
-  auth.ts             the /api/auth routes: accounts, passwords and sessions
+  auth.ts             the /api/auth routes: accounts, passwords, sessions and password reset
+  email.ts            sending email through Cloudflare Email Service
   google.ts           the /api/google routes: connecting Google accounts and syncing their events into tasks
   events.ts           writing change tracking events, and the GET /api/events route
   jsonChunks.ts       passing many rows to D1 in a few statements, as JSON
   googleCalendar.ts   Google's OAuth and Calendar API: tokens, the calendar list, batched event lists,
                       and what a task takes from an event
-  secrets.d.ts        types for the Worker's secrets
+  secrets.d.ts        types for the Worker's secrets and settings
   migrate.ts          applies migrations/ to the database on the Worker's first request
   __tests__/          integration tests for the API and database
 cypress/
@@ -199,7 +202,14 @@ The reply lists every task and project the save changed, and `applyChanges` (`sr
 - **Wrong passwords**: a wrong password and an unknown email get the same answer. After 10 failed sign-ins for one email within 15 minutes, that email can't sign in until the failures are 15 minutes old.
 - **Separate data**: every route except `/api/auth/*` answers `401` without a valid session. Every table has a `user_id`, which comes from the session, never from the request. Ids are only unique within an account, so two accounts can use the same id without touching each other's rows, and a project can only list its own account's tasks and tags.
 - **Data from before accounts** (migration `0004`) belongs to the first account that signs up.
-- **Not built yet**: password reset and changing a password. To reset one by hand, delete the account's sessions and set a new hash with `wrangler d1 execute`, or delete the user row, which deletes all of their data.
+- **Password reset** follows OWASP's [Forgot Password Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html):
+  - Asking for a link (`/forgot-password`) gets the same answer, in the same time, whether or not the email has an account. The answer depends only on the email typed: looking up the account, making the link and emailing it happen after the response is sent (`waitUntil`).
+  - Each email can ask for 3 links an hour, counted whether or not it has an account, so no one can flood an inbox and the limit gives nothing away. Asking doesn't change or lock the account.
+  - The link holds a random 256-bit token. D1 stores only its SHA-256 hash (`password_resets`). It works once, for 30 minutes, and asking for another replaces it.
+  - The link is built from `APP_ORIGIN`, never from the request's `Host` header, which a request could set to another site.
+  - The reset page (`/reset-password`) takes the token out of the address bar as soon as it opens, and sends no `Referer` (`public/_headers`, and a `<meta name="referrer">`), so the token doesn't leak to history or to other sites. It opens whether or not the browser is signed in.
+  - The new password is typed twice and follows the sign-up rules. Saving it signs every device out, deletes the account's other links, lifts any lock from failed sign-ins, and emails a notice that the password changed. It doesn't sign in: the page reloads at the sign-in page to sign in with the new password.
+- **Not built yet**: changing a password while signed in.
 
 ### API
 
@@ -209,6 +219,8 @@ The reply lists every task and project the save changed, and `applyChanges` (`sr
 | `POST /api/auth/login` | Sign in with `{ email, password }`; returns `{ email }` (`401` if wrong, `429` once locked) |
 | `POST /api/auth/logout` | Sign out |
 | `GET /api/auth/me` | `{ email }` of the signed-in account, or `401` |
+| `POST /api/auth/forgot` | Email a reset link for `{ email }` if it has an account; `204` either way (`429` after 3 requests for the email within an hour, `503` until password reset is set up) |
+| `POST /api/auth/reset` | Set the password from a reset link's `{ token, password }`, signing out every device; `204`, or `400` if the link expired or was used |
 | `GET /api/projects` | All projects |
 | `PUT /api/projects/:id` | Create or update the project from `{ project, dueDates? }`; returns the changed `{ tasks, projects }` (`409` for a date clash) |
 | `DELETE /api/projects/:id` | Delete the project |
@@ -350,6 +362,17 @@ How it works:
 - **Syncing** gets an access token, lists the account's calendars and keeps the shown ones (`selected` in Google Calendar). It then lists their events in [batch requests](https://developers.google.com/workspace/calendar/api/guides/batch): one request to `/batch/calendar/v3` holds an `events.list` call per calendar (up to 1,000), with the `Authorization` header once on the batch. Google may answer in any order, so each answer is matched to its calendar by `Content-ID`. Calendars with more pages get them in further batches that hold only those calendars. Each call still counts towards Google's quota, and calls that are rate limited (`429`, or `403` with a rate limit reason) or fail on Google's side are tried again after 1, 2 and 4 seconds. `fields` asks only for the parts of each event that the import uses.
 - **Writing** happens in one D1 batch per account, so an account's sync is saved in full or not at all. Rows go to D1 as JSON read with `json_each`, a few statements for thousands of events, because D1 limits the queries one request can make.
 - **Deleted events**: a task is deleted when its calendar was listed in full but its event wasn't, and the event should have been listed: it ends after now and starts within the year ahead, more than a day from either end, since an all-day event's stored times can be up to a day off. A calendar that couldn't be read, or was hidden in Google Calendar, keeps its tasks.
+
+### Password reset
+
+Reset emails go out through [Cloudflare Email Service](https://developers.cloudflare.com/email-service/), from the `EMAIL` binding in `wrangler.jsonc`. Until it is set up, `POST /api/auth/forgot` and `/api/auth/reset` answer `503`.
+
+1. In the Cloudflare dashboard, set up a domain on your account for sending email (Email Service → onboard the domain), which adds the DNS records that let other mail servers trust its emails.
+2. Give the Worker two settings:
+   - `APP_ORIGIN`: where Pam is served, such as `https://pam.example.com`. Reset links point here.
+   - `EMAIL_FROM`: the address emails come from, on that domain, such as `pam@example.com`.
+
+   For `pnpm dev`, put them in `.dev.vars` (with `APP_ORIGIN=http://localhost:5173`). Nothing is sent under `pnpm dev`: Wrangler prints each email, link included, to the terminal. For deploys, set them with `pnpm exec wrangler secret put APP_ORIGIN`, then the same for `EMAIL_FROM`. A reset link always points at `APP_ORIGIN`, whichever address the request came to, so a Preview deploy's links open the live site unless that deploy is given its own `APP_ORIGIN`.
 
 ### Security
 

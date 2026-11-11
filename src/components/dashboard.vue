@@ -222,6 +222,20 @@ async function onSaveTask(task: Task, projectIds: string[], deadlines: Record<st
   }
 }
 
+// From a task's page. Goes back to where the page was opened from, or to the list if it was
+// opened directly; stays on the page if deleting fails.
+async function onDeleteTask(task: Task) {
+  error.value = null
+  try {
+    await taskList.deleteTask(task.id)
+  } catch (e) {
+    error.value = `Couldn't delete "${task.name}": ${messageOf(e)}`
+    return
+  }
+  if (router.options.history.state.back) await router.back()
+  else await router.replace({ name: 'dashboard' })
+}
+
 // From a task's check mark; the list keeps the old state if saving fails
 async function onToggleTask(task: Task) {
   error.value = null
@@ -288,6 +302,7 @@ async function onToggleTask(task: Task) {
       :tasks="tasks"
       :projects="projects"
       @edit="open({ name: 'edit-task', params: { id: $event.id } })"
+      @delete="onDeleteTask"
     />
 
     <CalendarView

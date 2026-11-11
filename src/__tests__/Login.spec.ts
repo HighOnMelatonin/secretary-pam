@@ -96,6 +96,21 @@ describe('Login', () => {
   it('links between the two pages, keeping where to go afterwards', async () => {
     stubAuth(() => Response.json({}))
     const { wrapper } = await mountAt('/login?redirect=/tags', 'login')
-    expect(wrapper.find('a').attributes('href')).toBe('/signup?redirect=/tags')
+    expect(wrapper.find('.switch a').attributes('href')).toBe('/signup?redirect=/tags')
+  })
+
+  it('links to the forgot password page from the sign-in page only', async () => {
+    stubAuth(() => Response.json({}))
+    const login = (await mountAt('/login', 'login')).wrapper
+    expect(login.find('a[href="/forgot-password"]').text()).toBe('Forgot your password?')
+    const signup = (await mountAt('/signup', 'signup')).wrapper
+    expect(signup.find('a[href="/forgot-password"]').exists()).toBe(false)
+  })
+
+  it('says so after a password reset', async () => {
+    stubAuth(() => Response.json({}))
+    const { wrapper } = await mountAt('/login?reset=done', 'login')
+    expect(wrapper.find('[role="status"]').text()).toContain('Your password has been changed')
+    expect((await mountAt('/login', 'login')).wrapper.find('[role="status"]').exists()).toBe(false)
   })
 })

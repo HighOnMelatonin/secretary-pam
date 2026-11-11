@@ -1,0 +1,4 @@
+# Headers for static assets (Cloudflare Workers static assets). The reset page has a reset token
+# in its address until its script takes it out, so it sends no Referer that could leak it.
+/reset-password
+  Referrer-Policy: no-referrer

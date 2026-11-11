@@ -19,6 +19,9 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Cloudflare Email Service, for password reset emails (worker/email.ts). Under `pnpm dev` and in
+  // tests nothing is sent: Wrangler prints each email instead.
+  "send_email": [{ "name": "EMAIL" }],
   // Settings for Preview deployments (`wrangler preview`), which Cloudflare builds
   // for non-production branches. Bindings aren't inherited from above, so previews
   // get their own database and can't touch the real data.
@@ -29,6 +32,7 @@
         "database_name": "secretary-pam-preview",
         "database_id": "fba30148-1a8e-498f-8c53-60dd7559e96f"
       }
-    ]
+    ],
+    "send_email": [{ "name": "EMAIL" }]
   }
 }
