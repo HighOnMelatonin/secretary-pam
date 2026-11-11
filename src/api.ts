@@ -76,6 +76,12 @@ export function saveProject(input: ProjectSave) {
   return request<Changes>(`projects/${encodeURIComponent(input.project.id)}`, sendJson('PUT', input))
 }
 
+// Creates or updates the tasks and adds the new ones to the project, as one save under the same
+// rules; nothing is saved if any of them clashes
+export function importTasks(projectId: string, tasks: Task[]) {
+  return request<Changes>(`projects/${encodeURIComponent(projectId)}/import`, sendJson('POST', { tasks }))
+}
+
 export function remove(resource: keyof Resources, id: string) {
   return request<void>(`${resource}/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }

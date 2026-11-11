@@ -52,7 +52,7 @@ afterEach(() => {
 describe('ProjectExport', () => {
   it('opens from the Export button beside Edit, with Markdown and without completed tasks to start', async () => {
     const { wrapper } = await mountProjectPage()
-    expect(wrapper.findAll('.page-header button').map((b) => b.text())).toEqual(['Edit', 'Export'])
+    expect(wrapper.findAll('.page-header button').map((b) => b.text())).toEqual(['Edit', 'Export', 'Import'])
     expect(wrapper.find('.export-dialog article').exists()).toBe(false)
 
     await openExport(wrapper)
@@ -62,7 +62,7 @@ describe('ProjectExport', () => {
       'Markdown Most readable; good for notes apps, GitHub, chat apps that render Markdown.',
       'Plain text Readable anywhere, no formatting symbols.',
       'CSV Open in Excel, Google Sheets or Numbers.',
-      'JSON Structured data for other tools; the format a future Pam import would use.',
+      'JSON Structured data for other tools; the format Import reads.',
     ])
     expect(preview(wrapper)).toBe(
       '# Final Thesis\n\nDelivery date: 2026-12-01\n\n- [ ] Write report · Due 2026-11-02 · Priority: medium\n',

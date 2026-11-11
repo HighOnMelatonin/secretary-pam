@@ -64,6 +64,24 @@ export function planProjectSave(state: State, { project, dueDates = {} }: Projec
   return finish(state, after, { tasks: [], projects: [project] })
 }
 
+// Tasks imported into a project at once (src/types/import.ts): each is created or updated, and
+// those the project doesn't list yet are added at the end, in order
+export interface TasksImport {
+  tasks: Task[]
+}
+
+export function planTasksImport(state: State, projectId: string, { tasks }: TasksImport): Plan {
+  checkKnown('project', state.projects, [projectId])
+  const project = state.projects.find((p) => p.id === projectId)!
+  const joining = tasks.map((t) => t.id).filter((id) => !project.taskIds.includes(id))
+  const withTasks = joining.length ? [{ ...project, taskIds: [...project.taskIds, ...joining] }] : []
+  const after = {
+    tasks: tasks.reduce((all, task) => upsert(all, task), state.tasks),
+    projects: replaceAll(state.projects, withTasks),
+  }
+  return finish(state, after, { tasks, projects: withTasks })
+}
+
 // What deleting a task or project logs. A deleted task also leaves its projects, as the delete
 // cascades to them.
 export function planTaskDelete(state: State, id: string): TaskEvent[] {

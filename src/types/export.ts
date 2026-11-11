@@ -118,7 +118,7 @@ export function toCsv(data: ExportData, _meta: ExportMeta): string {
 export const EXPORT_FORMAT = 'pam-project-export'
 export const EXPORT_VERSION = 1
 
-// The structure a future Pam import would read, pretty-printed
+// The structure Import reads (src/types/import.ts), pretty-printed
 export function toJson(data: ExportData, meta: ExportMeta): string {
   const document = {
     format: EXPORT_FORMAT,
@@ -176,7 +176,7 @@ export const FORMATS: ExportFormat[] = [
   {
     id: 'json',
     label: 'JSON',
-    description: 'Structured data for other tools; the format a future Pam import would use.',
+    description: 'Structured data for other tools; the format Import reads.',
     extension: 'json',
     mime: 'application/json;charset=utf-8',
     render: toJson,

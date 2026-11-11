@@ -4,6 +4,36 @@ Pam (from **PM**, project manager) is my personal project manager. It tracks the
 
 It is a Vue app that runs on Cloudflare: a single Worker serves the app and a small API, and the data lives in a Cloudflare D1 (SQLite) database.
 
+- [Pam](#pam)
+  - [Features](#features)
+  - [Tech stack](#tech-stack)
+  - [Design](#design)
+    - [Palette](#palette)
+    - [Accents](#accents)
+    - [Badges](#badges)
+    - [Shared styles](#shared-styles)
+  - [Project structure](#project-structure)
+  - [Getting started](#getting-started)
+    - [Scripts](#scripts)
+  - [Data storage](#data-storage)
+    - [Accounts](#accounts)
+    - [API](#api)
+    - [Schema](#schema)
+    - [Change tracking](#change-tracking)
+    - [Changing the schema](#changing-the-schema)
+  - [Deploying to Cloudflare](#deploying-to-cloudflare)
+    - [First-time setup](#first-time-setup)
+    - [Deploying](#deploying)
+    - [Google Calendar](#google-calendar)
+    - [Password reset](#password-reset)
+    - [Security](#security)
+  - [Testing](#testing)
+  - [Roadmap](#roadmap)
+    - [Done](#done)
+    - [Planned](#planned)
+  - [Editor setup](#editor-setup)
+
+
 ## Features
 
 - **Accounts**: sign in at `/login`, or create an account at `/signup` with an email and a password of at least 8 characters. Each account has its own projects, tasks and tags, and starts with the example tags. The header shows who is signed in, with a **Sign out** button. Opening any page while signed out goes to the sign-in page first, then on to that page. **Forgot your password?** on the sign-in page emails a link for choosing a new one (see [Password reset](#password-reset)).
@@ -13,7 +43,8 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 - **Task lookup** in the header, on every page: type part of a task's name (any case) and, once you pause, it lists the matching tasks, unfinished first, with their projects (or **Unassigned**), due date and a **done** mark on completed ones. Choose one to open its page.
 - **Calendar** (`/calendar`, linked from **Calendar** in the header, with **Projects** leading back) shows a month of unfinished tasks on their due dates and live projects' delivery dates as flags. Each is a chip in the colour of its tag (a task takes the first tag of the first live project it's in; untagged things are grey), with cream or green text, whichever reads better, and links to its page. A day shows up to three chips, then **+N more** to expand it. Overdue chips get a coral ring, and today a cream ring, as on a project's timeline. **‹**, **Today** and **›** move between months, and the month is kept in the address (`?month=2026-11`), so going back after an edit returns to it and the link can be shared. The week can start on Monday or Sunday (remembered in the browser), and the chips can be filtered by tag. Below the grid, **No due date** opens the tasks that have none. On phones the grid is compact, with a dot per item, and tapping a day lists its tasks below with their check marks, **Edit** buttons and projects. Completed tasks and archived projects aren't shown. It is view-only for now: dates are changed in the forms.
 - **Project pages** (`/projects/:id`) use the whole screen for one project: its details and progress, its timeline, every task with its description, and its reference links.
-- **Export** on a project's page copies its tasks for sharing. It only reads the project, never changes it, and works entirely in the browser. Choose **Markdown** (a checklist, for notes apps, GitHub and chat apps), **Plain text**, **CSV** (for Excel, Google Sheets or Numbers) or **JSON** (structured data, in the `pam-project-export` format a future import would read), and whether to include completed tasks (off at first). A preview shows exactly what you'll get; then **Copy** puts it on the clipboard, or **Download** saves it as `<project>-tasks-<date>.<md|txt|csv|json>`. An export has the project's name and delivery date, then each task's name, due date, priority, whether it's done and its description, in the project's order; relations, tags and links are left out. CSV files start with a byte order mark so Excel reads accents and other scripts correctly (copied CSV leaves it out, so it doesn't stick to the first cell when pasted), and any cell starting with `=`, `+`, `-` or `@` gets a `'` in front so a spreadsheet can't run it as a formula.
+- **Export** on a project's page copies its tasks for sharing. It only reads the project, never changes it, and works entirely in the browser. Choose **Markdown** (a checklist, for notes apps, GitHub and chat apps), **Plain text**, **CSV** (for Excel, Google Sheets or Numbers) or **JSON** (structured data, in the `pam-project-export` format that **Import** reads), and whether to include completed tasks (off at first). A preview shows exactly what you'll get; then **Copy** puts it on the clipboard, or **Download** saves it as `<project>-tasks-<date>.<md|txt|csv|json>`. An export has the project's name and delivery date, then each task's name, due date, priority, whether it's done and its description, in the project's order; relations, tags and links are left out. CSV files start with a byte order mark so Excel reads accents and other scripts correctly (copied CSV leaves it out, so it doesn't stick to the first cell when pasted), and any cell starting with `=`, `+`, `-` or `@` gets a `'` in front so a spreadsheet can't run it as a formula.
+- **Import** on a project's page reads a JSON export back in, to update the project's tasks: choose the `.json` file, or paste its text. Before anything is saved it lists what the file would do. **New tasks** are added to the end of the project. A file task with the id of one of the project's tasks, or failing that the same name (ignoring case), is a **duplicate**. If its details are identical it's left alone. Otherwise both versions are shown side by side, with only the fields that differ, and you choose **Keep current** or **Use imported** for each (or **Keep all current** / **Use all imported**); **Import** stays off until every duplicate has a choice. Only the exported fields (name, due date, priority, done, description) are imported, so a task keeps its relations and other projects. A task whose id belongs to a task in another project is imported as a separate copy rather than changing that task. Everything is saved in one request under the usual rules, so if any task would be due after the project's delivery date, nothing is saved, and the dialog says which task and keeps your choices. Fields a hand-written file leaves out get a new task's defaults; anything malformed is refused with the task's number and what's wrong.
 - **Task pages** (`/tasks/:id`) show a task's status, priority, due date and description, the projects it is in, and its related tasks. Relations are shown from both sides, so if A blocks B, B's page says it is blocked by A.
 - **Projects** have a name, description, delivery date, priority, any number of tags, tasks and reference links.
 - **Taskbar** hidden on the left edge of the screen. Hover over it to slide it out over the page, with buttons for **Tags**, **Add task** and **Add project**. On phones and other touch screens these are behind a **+** button in the bottom-right corner instead.
@@ -114,6 +145,7 @@ src/
     upcomingPanel.vue the upcoming tasks section above the projects, and the overdue counter that floats once it scrolls away
     projectTile.vue   one project on the dashboard; expands into a preview
     projectExport.vue the Export button and dialog on a project's page: format, preview, Copy and Download
+    projectImport.vue the Import button and dialog on a project's page: the file, new tasks, and a choice per duplicate
     project.vue       create/edit a project
     task.vue          create/edit a task, including which projects it is in
     tags.vue          add, rename, recolour and delete tags
@@ -124,7 +156,7 @@ src/
   router/             one route per form and the calendar, all showing the dashboard, so back closes forms
   stores/             Pinia stores for projects, tasks, tags and the signed-in account; they load and save through the API
   types/              Project, Task and Tag models, shared by the app and the Worker, which tasks are upcoming,
-                      the calendar's items, dates and month grid (calendar.ts), the export formats (export.ts),
+                      the calendar's items, dates and month grid (calendar.ts), the export formats (export.ts), reading and matching imports (import.ts),
                       what the Google Calendar routes answer (google.ts), and the change tracking log (events.ts)
   api.ts              client for the Worker API, including signing in
   __tests__/          unit tests
@@ -224,6 +256,7 @@ The reply lists every task and project the save changed, and `applyChanges` (`sr
 | `GET /api/projects` | All projects |
 | `PUT /api/projects/:id` | Create or update the project from `{ project, dueDates? }`; returns the changed `{ tasks, projects }` (`409` for a date clash) |
 | `DELETE /api/projects/:id` | Delete the project |
+| `POST /api/projects/:id/import` | Create or update each task in `{ tasks }` and add the new ones to the end of the project, all in one transaction; returns the changed `{ tasks, projects }` (`409` for a date clash, which saves none of them) |
 | `GET /api/tasks` | All tasks |
 | `PUT /api/tasks/:id` | Create or update the task from `{ task, projectIds?, deliveryDates? }`; returns the changed `{ tasks, projects }` (`409` for a date clash) |
 | `DELETE /api/tasks/:id` | Delete the task, removing it from projects and relations |
@@ -396,18 +429,36 @@ If Cypress fails to start with `bad option: --smoke-test`, the `ELECTRON_RUN_AS_
 
 ## Roadmap
 
-Planned, not built yet:
+### Done
+
+Built so far, oldest first. [Features](#features) describes each in full.
+
+- **Foundations** (October 2026): the Vue app on one Cloudflare Worker with a D1 database, deployed from Git, with unit, integration and end-to-end tests. Projects and tasks with priorities, due and delivery dates, and relations between tasks.
+- **Organising projects**: tags, the taskbar, sorting and filtering the project list, editing tasks from a project.
+- **Seeing progress**: the project timeline, project and task pages, **Expand all**, ticking tasks off without opening a form, the Archive tag for completed projects, and the **Upcoming tasks** section.
+- **Scheduling rules**: a task can't be due after a project's delivery date. Since then the Worker enforces this along with membership and archiving, using planners in `src/types/operations.ts` that it shares with the test fake. Each save is one request and one transaction.
+- **Accounts and security**: email and password accounts, each with its own data (data from before accounts moved to the first account to sign up), and bound parameters for every query.
+- **Calendar and lookup**: the month calendar, task lookup in the header, the **Unassigned** section, and tag colours of your own choosing.
+- **Export**: a project's tasks as Markdown, plain text, CSV or JSON.
+- **Google Calendar import**: events become tasks, one way, synced from the taskbar or under **Unassigned**.
+- **Change tracking**: every save logs what it changed to `task_events`, ready for analytics (see [Change tracking](#change-tracking)).
+- **November 2026**: bigger check marks, hiding completed unassigned tasks, deleting a task without completing it, password reset by email, and **Import**, which reads a JSON export back into a project and asks which version to keep of each duplicate task.
+
+### Planned
+
+Not built yet:
 
 - Task list view
 - Project list view, including completed projects
 - Messages
-- Settings and profile (the calendar's week start would move there from the browser's storage)
+- Settings and profile (the calendar's week start would move there from the browser's storage), including changing your password while signed in
 - **Rescheduling from the calendar**: drag a chip to another day on wide screens; on phones (where drag and drop doesn't work) tap it, then **Move to…** with a date picker. Dragging a task from **No due date** onto a day gives it that date. Saves through `taskList.saveTask` or `projectList.saveProject`, showing the move straight away and undoing it if the save fails. Items already carry `editable` (false for now) to decide what can be moved. A move that clashes with a delivery date comes back from the Worker as a `409`, and should offer the same clash fixes the forms do.
 - **Google Calendar, both ways**: events are imported as tasks one way (see [Google Calendar](#google-calendar)). Still to do: send changes made in Pam back to Google, using the event's etag and update time to detect conflicting edits, and show events on the calendar without making them tasks, through a third adapter beside `taskToItems` and `projectToItems` in `src/types/calendar.ts`. That adapter already asks for items by date range (as Google's API does), keeps a loading and error state per source, places timed events after all-day ones, and has room for time zones and Google's exclusive end dates on all-day events. Syncing on a schedule (a Cron Trigger) rather than by button would also fit here.
 - **Logo**: a logo for Pam, to make it look the part.
 - **LLM layer**: summarise what needs doing, quickly pick out the high priority tasks, and explain how tasks relate to each other.
 - **Android app**: Pam on Android, for home screen widgets and notifications.
-- **Data analytics**: track how Pam is used over time: the rate tasks and projects are created, the rate tasks are completed, and the number of tasks per project.
+- **Data analytics**: track how Pam is used over time: the rate tasks and projects are created, the rate tasks are completed, and the number of tasks per project. The data is already being logged ([Change tracking](#change-tracking)), and `isPlanned` can tell planned tasks from ones added later. What's left is a view that reads the log through `GET /api/events`.
+- **Fuller export and import**: exports leave out relations, tags and links, so an import can't bring them back. Adding them would mean a new export `version`, which Import already checks for.
 - **Team Pam**: a collaborative Pam for group projects. Scope out the use cases first.
 
 Maintenance:

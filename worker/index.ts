@@ -5,6 +5,7 @@
 //   GET    /api/projects       -> Project[]
 //   PUT    /api/projects/:id   -> saves { project, dueDates? }, returns the Changes it made
 //   DELETE /api/projects/:id   -> 204
+//   POST   /api/projects/:id/import -> saves { tasks } into the project, returns the Changes it made
 //   GET    /api/tasks          -> Task[]
 //   PUT    /api/tasks/:id      -> saves { task, projectIds?, deliveryDates? }, returns the Changes it made
 //   DELETE /api/tasks/:id      -> 204
@@ -56,12 +57,14 @@ import {
   planProjectSave,
   planTaskDelete,
   planTaskSave,
+  planTasksImport,
   UnknownReference,
   type Changes,
   type Plan,
   type ProjectSave,
   type State,
   type TaskSave,
+  type TasksImport,
 } from '../src/types/operations'
 import type { Clash } from '../src/types/rules'
 import { currentUser, handleAuth, HttpError } from './auth'
@@ -70,6 +73,8 @@ import { handleGoogle } from './google'
 import { migrateOnce } from './migrate'
 
 const MAX_BODY_BYTES = 100_000
+// An import can carry a whole project's tasks, each with a full-length description
+const MAX_IMPORT_BODY_BYTES = MAX_LIST_LENGTH * (MAX_DESCRIPTION_LENGTH + 2_000)
 const NOW = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
 
 // Thrown for requests that can't be stored; becomes a 400 response
@@ -261,6 +266,24 @@ function parseProjectSave(body: unknown, id: string): ProjectSave {
   return { project: parseProject(body.project, id), dueDates }
 }
 
+// An import: { tasks }, each a whole Task. A task's problem is reported with its place in the
+// list, e.g. "tasks[2]: name must be a non-empty string".
+function parseTasksImport(body: unknown): TasksImport {
+  check(isObject(body) && Object.hasOwn(body, 'tasks'), 'Body must be { tasks }')
+  const { tasks } = body
+  check(isList(tasks), `tasks must be a list of at most ${MAX_LIST_LENGTH} tasks`)
+  const parsed = tasks.map((task, i) => {
+    try {
+      check(isObject(task) && isId(task.id), `id must be a string of at most ${MAX_ID_LENGTH} characters`)
+      return parseTask(task, task.id)
+    } catch (e) {
+      throw e instanceof BadRequest ? new BadRequest(`tasks[${i}]: ${e.message}`) : e
+    }
+  })
+  check(allDifferent(parsed.map((t) => t.id)), 'tasks must not list a task twice')
+  return { tasks: parsed }
+}
+
 // A tag to save. color may be left out, as by clients from before tags had colours: a new tag
 // is then indigo and an existing one keeps its colour.
 type TagBody = Omit<Tag, 'color'> & { color?: string }
@@ -425,6 +448,28 @@ function clashMessage(clash: Clash, tasks: Task[], projects: Project[]) {
   )
 }
 
+// Saves imported tasks into a project as one batch, so a clash or a failure saves none of them.
+// As with a task save, a task keeps the Google account it was synced from.
+function importTasks(db: D1Database, userId: string, projectId: string, body: unknown): Promise<Changes> {
+  const { tasks } = parseTasksImport(body)
+  return saveWithRules(
+    db,
+    userId,
+    (state) => {
+      const project = state.projects.find((p) => p.id === projectId)
+      const total = new Set([...(project?.taskIds ?? []), ...tasks.map((t) => t.id)]).size
+      check(total <= MAX_LIST_LENGTH, `A project can have at most ${MAX_LIST_LENGTH} tasks; this import would give it ${total}`)
+      const accounts = new Map(state.tasks.map((t) => [t.id, t.googleAccount]))
+      const withSource = tasks.map((t) => {
+        const googleAccount = accounts.get(t.id)
+        return googleAccount ? { ...t, googleAccount } : t
+      })
+      return planTasksImport(state, projectId, { tasks: withSource })
+    },
+    { tasks, projects: [] },
+  )
+}
+
 // Deletes a task or project, logging what the delete does in the same batch. The events are
 // worked out from the stored data, read first, with the same race as saveWithRules.
 async function deleteLogged(
@@ -531,11 +576,11 @@ function error(status: number, message: string) {
 
 // Only JSON is accepted, so a form on another site (which can't send JSON without the browser
 // asking this Worker's permission first) can't save anything
-async function readJson(request: Request): Promise<unknown> {
+async function readJson(request: Request, maxLength = MAX_BODY_BYTES): Promise<unknown> {
   const type = request.headers.get('Content-Type') ?? ''
   check(type.split(';')[0]!.trim().toLowerCase() === 'application/json', 'Body must be sent as application/json')
   const text = await request.text()
-  check(text.length <= MAX_BODY_BYTES, 'Body too large')
+  check(text.length <= maxLength, 'Body too large')
   try {
     return JSON.parse(text)
   } catch {
@@ -562,7 +607,8 @@ export default {
     const resource = name !== undefined && Object.hasOwn(RESOURCES, name) ? RESOURCES[name] : undefined
     const isGoogle = name === 'google' // the only routes with more than one part after the name
     const isEvents = name === 'events' && !rawId // read only, so there is no /api/events/:id
-    if (api !== 'api' || !(resource || name === 'auth' || isGoogle || isEvents) || (rest.length > 0 && !isGoogle)) {
+    const isImport = name === 'projects' && rest.length === 1 && rest[0] === 'import'
+    if (api !== 'api' || !(resource || name === 'auth' || isGoogle || isEvents) || (rest.length > 0 && !isGoogle && !isImport)) {
       return error(404, 'Not found')
     }
 
@@ -578,6 +624,10 @@ export default {
       }
       if (!resource) return await handleGoogle(env, request, user, [rawId, ...rest], () => readJson(request))
       const id = rawId ? decodeId(rawId) : undefined
+      if (isImport) {
+        if (!id || request.method !== 'POST') return error(405, 'Method not allowed')
+        return json(await importTasks(env.DB, user.id, id, await readJson(request, MAX_IMPORT_BODY_BYTES)))
+      }
       if (!id && request.method === 'GET') return json(await resource.list(env.DB, user.id))
       if (id && request.method === 'PUT') {
         return json(await resource.save(env.DB, user.id, id, await readJson(request)))

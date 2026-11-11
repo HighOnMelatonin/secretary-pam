@@ -8,6 +8,7 @@ import {
   planProjectSave,
   planTaskDelete,
   planTaskSave,
+  planTasksImport,
   UnknownReference,
   type Plan,
   type State,
@@ -50,7 +51,12 @@ export function fakeApi(initial: { projects?: Project[]; tasks?: Task[]; tags?: 
         const since = params.get('since') || ''
         return Response.json(api.events.filter((e) => (!projectId || e.projectId === projectId) && e.at >= since))
       }
-      const [, , resource, rawId] = url.split('/') as [string, string, keyof typeof data, string?]
+      const [, , resource, rawId, action] = url.split('/') as [string, string, keyof typeof data, string?, string?]
+      if (resource === 'projects' && action === 'import') {
+        const body = JSON.parse(init!.body as string)
+        if (method !== 'POST' || !('tasks' in body)) return Response.json({ error: 'Body must be { tasks }' }, { status: 400 })
+        return applyPlan(() => planTasksImport(data, decodeURIComponent(rawId!), body), { tasks: body.tasks, projects: [] })
+      }
       const items: { id: string }[] = data[resource]
       if (method === 'GET') return Response.json(items)
       if (method === 'DELETE') {
