@@ -623,6 +623,83 @@ describe('due dates after a delivery date', () => {
   })
 })
 
+describe('importing tasks into a project', () => {
+  const importTasks = (projectId: string, tasks: unknown) => call('POST', `projects/${projectId}/import`, { tasks })
+  const existing = task('a', { name: 'Draft', relations: [{ taskId: 'b', type: 'blocks' }] })
+
+  beforeEach(async () => {
+    await saveTask(task('b'))
+    await saveTask(existing)
+    await saveProject(project('p', { name: 'Thesis', deliveryDate: '2026-12-10', taskIds: ['a'] }))
+  })
+
+  it('updates the tasks it names, creates the rest and adds those to the end of the project', async () => {
+    const updated = { ...existing, name: 'Final draft', completed: true }
+    const created = task('c', { name: 'Print', dueDate: '2026-12-01' })
+    const withTasks = project('p', { name: 'Thesis', deliveryDate: '2026-12-10', taskIds: ['a', 'c'] })
+
+    expect(await importTasks('p', [updated, created])).toEqual({
+      status: 200,
+      body: { tasks: [updated, created], projects: [withTasks] },
+    })
+    expect(await listTasks()).toEqual([task('b'), updated, created])
+    expect(await listProjects()).toEqual([withTasks])
+  })
+
+  it('adds a task from elsewhere to the project as well', async () => {
+    expect((await importTasks('p', [task('b')])).status).toBe(200)
+    expect((await listProjects())[0]!.taskIds).toEqual(['a', 'b'])
+  })
+
+  it('refuses the whole import when one task clashes, naming it', async () => {
+    const response = await importTasks('p', [task('c', { name: 'Fine' }), task('d', { name: 'Too late', dueDate: '2026-12-14' })])
+    expect(response).toEqual({
+      status: 409,
+      body: {
+        error: `"Too late" is due 2026-12-14, after "Thesis"'s delivery date (2026-12-10)`,
+        clashes: [{ taskId: 'd', projectId: 'p', dueDate: '2026-12-14', deliveryDate: '2026-12-10' }],
+      },
+    })
+    expect(await listTasks()).toEqual([task('b'), existing])
+  })
+
+  it.each([
+    ['a body without tasks', {}, 'Body must be { tasks }'],
+    ['tasks that are not a list', { tasks: {} }, 'tasks must be a list of at most 500 tasks'],
+    ['a task without an id', { tasks: [{ ...task('c'), id: undefined }] }, 'tasks[0]: id must be a string of at most 100 characters'],
+    ['an invalid task, by its place', { tasks: [task('c'), task('d', { name: '' })] }, 'tasks[1]: name must be a non-empty string'],
+    ['the same task twice', { tasks: [task('c'), task('c')] }, 'tasks must not list a task twice'],
+  ])('refuses %s, saving nothing', async (_, body, error) => {
+    expect(await call('POST', 'projects/p/import', body)).toEqual({ status: 400, body: { error } })
+    expect(await listTasks()).toEqual([task('b'), existing])
+  })
+
+  it('refuses an unknown project', async () => {
+    expect(await importTasks('missing', [task('c')])).toEqual({ status: 400, body: { error: 'Unknown project: missing' } })
+    expect(await count('tasks')).toBe(2)
+  })
+
+  it('refuses an import that would take the project past 500 tasks', async () => {
+    const many = Array.from({ length: 500 }, (_, i) => task(`n${i}`))
+    expect(await importTasks('p', many)).toEqual({
+      status: 400,
+      body: { error: 'A project can have at most 500 tasks; this import would give it 501' },
+    })
+  })
+
+  it('answers 405 for anything but POST, and 404 for other actions', async () => {
+    expect((await call('GET', 'projects/p/import')).status).toBe(405)
+    expect((await call('POST', 'projects/p/export', { tasks: [] })).status).toBe(404)
+    expect((await call('POST', 'tasks/a/import', { tasks: [] })).status).toBe(404)
+  })
+
+  it('logs what it changed', async () => {
+    await importTasks('p', [task('c')])
+    const events: LoggedEvent[] = (await call('GET', 'events?projectId=p')).body
+    expect(events.map((e) => [e.kind, e.taskId])).toContainEqual(['task_added_to_project', 'c'])
+  })
+})
+
 describe('bare bodies', () => {
   it('refuses a bare task, saving nothing', async () => {
     expect(await call('PUT', 'tasks/t', task('t'))).toEqual({

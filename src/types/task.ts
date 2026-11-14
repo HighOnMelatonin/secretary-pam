@@ -1,5 +1,6 @@
 // Task data model. Every field is a plain JSON value (strings, numbers, arrays,
 // null) so a Task can be saved with JSON.stringify and loaded with JSON.parse.
+import { MAX_EFFORT_MINUTES } from './limits'
 
 export const PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const
 export type Priority = (typeof PRIORITIES)[number]
@@ -29,6 +30,11 @@ export interface Task {
   relations: TaskRelation[]
   priority: Priority
   completed: boolean
+  // Scheduling inputs for prioritisation (docs/priority-algorithm.md). Each is left out when it
+  // isn't set, so a task saved without one has none.
+  effortMinutes?: number // estimated work, a whole number of minutes above 0
+  startDate?: string // ISO 8601 date work can start from; never after dueDate
+  pinnedDate?: string // ISO 8601 date the task was pinned to with "Do today"
   // Email of the Google account whose calendar the task was imported from. Only the Worker's sync
   // sets it; it is left out of saves, and is absent on tasks made in Pam.
   googleAccount?: string
@@ -67,6 +73,26 @@ export function relatedTasks(task: Task, tasks: Task[]): RelatedTask[] {
     }
   }
   return [...found.values()]
+}
+
+// Estimates are typed in hours, decimals allowed, and stored as whole minutes. Hours are shown to
+// two decimal places, which round to the same minutes again, so saving a form unchanged keeps them.
+export const minutesFromHours = (hours: number) => Math.round(hours * 60)
+export const hoursFromMinutes = (minutes: number) => Math.round((minutes / 60) * 100) / 100
+
+// An estimate typed in hours, as minutes: undefined when blank, NaN when it isn't a number of hours
+// that rounds to 1 minute to MAX_EFFORT_MINUTES. Some phones' decimal keyboards only have a
+// comma, so "1,5" is read as 1.5.
+export function parseEstimateHours(text: string): number | undefined {
+  const typed = text.trim().replace(',', '.')
+  if (typed === '') return undefined
+  const minutes = minutesFromHours(Number(typed))
+  return Number.isFinite(minutes) && minutes > 0 && minutes <= MAX_EFFORT_MINUTES ? minutes : NaN
+}
+
+// The priority one level up or down, or null past either end
+export function stepPriority(priority: Priority, direction: 'up' | 'down'): Priority | null {
+  return PRIORITIES[PRIORITIES.indexOf(priority) + (direction === 'up' ? 1 : -1)] ?? null
 }
 
 // "blocked_by" reads as "blocked by"

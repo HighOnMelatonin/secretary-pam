@@ -3,6 +3,7 @@
 // The e2e server keeps its data in .wrangler/e2e-state, separate from `pnpm dev`. Tests run as
 // the account below, which is created the first time it is needed.
 import type { Project as ProjectData } from '../../src/types/project'
+import { DEFAULT_SETTINGS } from '../../src/types/settings'
 import type { Tag as TagData } from '../../src/types/tag'
 import type { Task as TaskData } from '../../src/types/task'
 import { tag } from './factories'
@@ -11,7 +12,7 @@ declare global {
   namespace Cypress {
     interface Chainable {
       // Signs in to the test account (creating it if needed), then deletes its every project, task
-      // and tag, including the starting tags
+      // and tag, including the starting tags, and puts its settings back to the defaults
       resetData(): Chainable<void>
       // Signs the browser in to the test account, creating it if it doesn't exist yet
       signIn(): Chainable<void>
@@ -46,6 +47,7 @@ Cypress.Commands.add('resetData', () => {
       }
     })
   }
+  cy.request('PUT', '/api/settings', DEFAULT_SETTINGS)
 })
 
 Cypress.Commands.add('taskbar', (action) => {

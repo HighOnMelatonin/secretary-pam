@@ -300,6 +300,24 @@ describe('syncing', () => {
     expect(tasks[1]).toMatchObject({ id: a!.id, name: 'Renamed', dueDate: inDays(4), completed: true, priority: 'urgent' })
   })
 
+  it('keeps estimates, start and pinned dates, moving a start date back when its event moves before it', async () => {
+    google.calendars.set('primary', { events: [allDay('a', inDays(6)), allDay('b', inDays(6))] })
+    await connect()
+    await sync()
+    for (const task of await listTasks()) {
+      const scheduled = { ...task, effortMinutes: 120, startDate: inDays(5), pinnedDate: inDays(1) }
+      expect((await call('PUT', `tasks/${task.id}`, { task: scheduled })).status).toBe(200)
+    }
+
+    // a moves before its start date; b moves later
+    google.calendars.set('primary', { events: [allDay('a', inDays(3)), allDay('b', inDays(9))] })
+    expect((await sync())[0]).toMatchObject({ updated: 2 })
+
+    const [a, b] = byName(await listTasks())
+    expect(a).toMatchObject({ dueDate: inDays(3), startDate: inDays(3), effortMinutes: 120, pinnedDate: inDays(1) })
+    expect(b).toMatchObject({ dueDate: inDays(9), startDate: inDays(5), effortMinutes: 120, pinnedDate: inDays(1) })
+  })
+
   it('deletes the tasks whose events were deleted, and takes them out of their projects', async () => {
     google.calendars.set('primary', { events: [allDay('a', inDays(2)), allDay('b', inDays(3))] })
     await connect()

@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { acceptHMRUpdate, defineStore } from 'pinia'
 import * as api from '@/api'
-import type { TaskSave } from '@/types/operations'
+import type { TaskAction, TaskPatchSave, TaskSave } from '@/types/operations'
 import type { Task } from '@/types/task'
 import { applyChanges } from './changes'
 import { useProjectList } from './projectList'
@@ -19,6 +19,21 @@ export const useTaskList = defineStore('taskList', () => {
     applyChanges(await api.saveTask(input))
   }
 
+  // Changes only the fields in the patch (see api.patchTask), such as ticking the task off
+  async function patchTask(taskId: string, input: TaskPatchSave) {
+    applyChanges(await api.patchTask(taskId, input))
+  }
+
+  // Does a quick action to the task, such as pinning it to today (see api.taskAction)
+  async function act(taskId: string, action: TaskAction) {
+    applyChanges(await api.taskAction(taskId, action))
+  }
+
+  // Saves the tasks into the project in one request (see api.importTasks)
+  async function importTasks(projectId: string, imported: Task[]) {
+    applyChanges(await api.importTasks(projectId, imported))
+  }
+
   // The API also takes the task out of its projects and other tasks' relations, so the loaded
   // projects and tasks are updated to match
   async function deleteTask(id: string) {
@@ -32,7 +47,7 @@ export const useTaskList = defineStore('taskList', () => {
     )
   }
 
-  return { tasks, load, saveTask, deleteTask }
+  return { tasks, load, saveTask, patchTask, act, importTasks, deleteTask }
 })
 
 // Lets Vite hot-swap this store when the file changes, instead of keeping the old one

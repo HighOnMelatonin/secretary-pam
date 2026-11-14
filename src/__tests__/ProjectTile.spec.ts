@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 
 import { mount } from '@vue/test-utils'
 import ProjectTile from '../components/projectTile.vue'
+import type { ProjectForecast } from '../types/forecast'
 import { createEmptyProject, type Project } from '../types/project'
 import type { Tag } from '../types/tag'
 import { createEmptyTask, type Task } from '../types/task'
@@ -20,10 +21,32 @@ const project: Project = {
   links: [{ label: 'GitHub repo', url: 'https://example.com/repo' }],
 }
 
-const mountTile = (props: { tags?: Tag[]; expanded?: boolean } = {}) =>
+const mountTile = (props: { tags?: Tag[]; expanded?: boolean; pace?: ProjectForecast | null } = {}) =>
   mount(ProjectTile, { props: { project, tasks, tags: [], ...props }, global: { plugins: [memoryRouter()] } })
 
 describe('ProjectTile', () => {
+  it("shows the forecast pace as a badge, with the forecast's sentence for when it should finish", () => {
+    const text = '"Thesis" is tight: it should finish 2026-11-19, 1 working day before delivery.'
+    const pace = (fields: Partial<ProjectForecast>): ProjectForecast => ({
+      projectId: 'p1',
+      name: 'Thesis',
+      deliveryDate: '2026-11-20',
+      openHours: 10,
+      finish: '2026-11-19',
+      workingDaysLeft: 1,
+      pace: 'tight',
+      paceReason: { code: 'pace', params: {}, text },
+      ...fields,
+    })
+    const badge = (forecast: ProjectForecast | null) => mountTile({ pace: forecast }).find('.tag.pace')
+
+    expect([badge(pace({})).classes('pace-tight'), badge(pace({})).attributes('title')]).toEqual([true, text])
+    expect(badge(pace({})).text()).toBe(`Tight (${text})`)
+    expect(badge(pace({ pace: 'on_pace' })).text()).toMatch(/^On pace/)
+    expect(badge(pace({ pace: null, paceReason: null })).exists()).toBe(false)
+    expect(badge(null).exists()).toBe(false)
+  })
+
   it('starts collapsed, showing the summary but not the preview', () => {
     const wrapper = mountTile()
     expect(wrapper.text()).toContain('Thesis')

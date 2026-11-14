@@ -2,9 +2,10 @@
 // Page for one project, using the whole width of the screen: its details and progress, its
 // timeline, every task with its description, and its reference links. Each task links to its own
 // page and its check mark marks it done or not done; the Edit buttons open the project's or a
-// task's form, and Export shares a copy of its tasks.
+// task's form, Export shares a copy of its tasks, and Import reads such a copy back in.
 import { computed } from 'vue'
 import ProjectExport from './projectExport.vue'
+import ProjectImport from './projectImport.vue'
 import ProjectTimeline from './projectTimeline.vue'
 import TaskRow from './taskRow.vue'
 import { completionStatus, resolveTasks, type Project } from '@/types/project'
@@ -40,6 +41,7 @@ const status = computed(() => completionStatus(props.project, props.tasks))
       <div class="page-actions">
         <button type="button" class="secondary outline" @click="$emit('edit', project)">Edit</button>
         <ProjectExport :project="project" :tasks="tasks" />
+        <ProjectImport :project="project" :tasks="tasks" />
       </div>
     </header>
 
@@ -91,10 +93,12 @@ const status = computed(() => completionStatus(props.project, props.tasks))
 </template>
 
 <style scoped>
-/* Edit and Export, together at the end of the title */
+/* Edit, Export and Import, together at the end of the title */
 .page-actions {
   display: flex;
   flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 0.5rem;
 }
 

@@ -24,6 +24,7 @@ const TABLES = [
   'password_resets',
   'login_failures',
   'reset_requests',
+  'user_settings',
   'users',
 ]
 
@@ -65,6 +66,7 @@ describe('migrate', () => {
       '0006_google_calendar.sql',
       '0007_task_events.sql',
       '0008_password_resets.sql',
+      '0009_task_scheduling.sql',
     ])
     expect((await call('GET', 'projects', undefined, await signUp())).body).toEqual([])
   })

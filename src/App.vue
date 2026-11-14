@@ -27,6 +27,7 @@ async function signOut() {
       <TaskSearch v-if="session.account" />
       <div v-if="session.account" class="account">
         <small>{{ session.account.email }}</small>
+        <RouterLink :to="{ name: 'settings' }" class="settings-link">Settings</RouterLink>
         <button type="button" class="secondary outline" @click="signOut">Sign out</button>
       </div>
     </header>
@@ -71,6 +72,17 @@ async function signOut() {
   align-items: center;
   gap: 0.75rem;
   min-width: 0;
+}
+
+.settings-link {
+  flex: none;
+  color: var(--pico-muted-color);
+  text-decoration: none;
+}
+
+.settings-link:hover,
+.settings-link[aria-current='page'] {
+  color: var(--pam-cream);
 }
 
 /* A long email is cut short rather than pushing the button off a narrow screen */
