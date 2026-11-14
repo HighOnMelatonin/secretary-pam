@@ -6,6 +6,9 @@
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-01",
   "observability": { "enabled": true },
+  // Every 15 minutes, the scheduled handler sends the Telegram morning briefs that are due
+  // (worker/pamBot/brief.ts). Cron Triggers don't run on Preview deploys, so none goes under "previews".
+  "triggers": { "crons": ["*/15 * * * *"] },
   "assets": {
     // Unknown paths fall back to index.html so client-side routes work
     "not_found_handling": "single-page-application",

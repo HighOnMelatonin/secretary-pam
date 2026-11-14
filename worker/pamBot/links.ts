@@ -100,6 +100,12 @@ export async function claimUpdate(db: D1Database, chatId: number, updateId: numb
   return row ? toLink(row) : null
 }
 
+// Every chat whose morning brief is on
+export async function enabledLinks(db: D1Database): Promise<Link[]> {
+  const { results } = await db.prepare(`SELECT ${COLUMNS} FROM telegram_links WHERE enabled = 1`).all<LinkRow>()
+  return results.map(toLink)
+}
+
 export async function isLinked(db: D1Database, chatId: number) {
   return (await db.prepare('SELECT 1 FROM telegram_links WHERE chat_id = ?1').bind(chatId).first()) !== null
 }
@@ -120,4 +126,14 @@ export async function deleteLink(db: D1Database, userId: string): Promise<number
     db.prepare('DELETE FROM telegram_link_codes WHERE user_id = ?1').bind(userId),
   ])
   return deleted!.results[0]?.chat_id ?? null
+}
+
+// Turns the chat's morning brief off (/stop), as the switch in the settings does
+export async function stopBrief(db: D1Database, chatId: number) {
+  await db.prepare('UPDATE telegram_links SET enabled = 0 WHERE chat_id = ?1').bind(chatId).run()
+}
+
+// Remembers the task the chat last added with /add, for /desc
+export async function setLastAdded(db: D1Database, chatId: number, taskId: string) {
+  await db.prepare('UPDATE telegram_links SET last_added_task_id = ?2 WHERE chat_id = ?1').bind(chatId, taskId).run()
 }

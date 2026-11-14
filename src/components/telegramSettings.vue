@@ -7,6 +7,7 @@
 import { computed, onMounted, ref } from 'vue'
 import * as api from '@/api'
 import {
+  BRIEF_STEP_MINUTES,
   formatMinutes,
   isTimeZone,
   LINK_CODE_MINUTES,
@@ -72,7 +73,11 @@ const connect = () => run('get a link code', async () => void (linkCode.value = 
 // After following the link, the chat is linked once the bot has seen the code
 const checkAgain = () => run('check the link', async () => show(await api.telegram.status()))
 
-const briefMinutes = computed(() => parseMinutes(time.value))
+// On the quarter hour, as the Worker checks for the brief every 15 minutes
+const briefMinutes = computed(() => {
+  const minutes = parseMinutes(time.value)
+  return minutes !== null && minutes % BRIEF_STEP_MINUTES === 0 ? minutes : null
+})
 const zoneInvalid = computed(() => !isTimeZone(timeZone.value.trim()))
 const changed = computed(
   () =>
@@ -134,7 +139,7 @@ const zones = supportedValuesOf ? supportedValuesOf('timeZone') : []
       <div class="grid">
         <label>
           Brief time
-          <input v-model="time" type="time" required :aria-invalid="briefMinutes === null || undefined" />
+          <input v-model="time" type="time" :step="BRIEF_STEP_MINUTES * 60" required :aria-invalid="briefMinutes === null || undefined" />
         </label>
         <label>
           Time zone
@@ -144,6 +149,7 @@ const zones = supportedValuesOf ? supportedValuesOf('timeZone') : []
           </datalist>
         </label>
       </div>
+      <p v-if="briefMinutes === null" class="error" role="alert">Choose a time on the quarter hour, such as 07:30.</p>
       <p v-if="zoneInvalid" class="error" role="alert">Choose a time zone such as {{ browserZone }}.</p>
       <p v-else-if="timeZone.trim() !== browserZone" class="hint">
         <small>This browser is in {{ browserZone }}.</small>

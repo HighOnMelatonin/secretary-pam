@@ -5,6 +5,10 @@
 // When the morning brief goes out, in minutes after local midnight: 07:30 until changed
 export const DEFAULT_BRIEF_MINUTES = 7 * 60 + 30
 export const MINUTES_PER_DAY = 24 * 60
+// Brief times are on the quarter hour, since the scheduled handler runs every 15 minutes. Every UTC
+// offset in use is a whole number of quarter hours, so each run is on a local quarter hour too,
+// and a brief time between runs (say 23:50, after the day's last run) can't be missed.
+export const BRIEF_STEP_MINUTES = 15
 // How long a link code from the settings page works
 export const LINK_CODE_MINUTES = 10
 // IANA names are far shorter; this only stops a huge string from being stored

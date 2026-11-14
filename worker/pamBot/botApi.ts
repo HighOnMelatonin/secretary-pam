@@ -16,11 +16,15 @@ export interface TelegramChat {
   type: 'private' | 'group' | 'supergroup' | 'channel'
 }
 
+// A callback query's message is an InaccessibleMessage (date 0, and nothing but its chat and id)
+// when it's too old for the bot to see
 export interface TelegramMessage {
   message_id: number
+  date: number
   chat: TelegramChat
   from?: TelegramUser
   text?: string
+  reply_markup?: { inline_keyboard?: InlineButton[][] }
 }
 
 export interface TelegramCallbackQuery {
@@ -85,4 +89,21 @@ export function sendMessage(token: string, chatId: number, message: OutgoingMess
     link_preview_options: { is_disabled: true },
     ...markup(message),
   })
+}
+
+// Replaces a message's text and buttons. An empty list of rows takes the buttons away.
+export function editMessageText(token: string, chatId: number, messageId: number, message: OutgoingMessage) {
+  return callBotApi(token, 'editMessageText', {
+    chat_id: chatId,
+    message_id: messageId,
+    text: message.text,
+    link_preview_options: { is_disabled: true },
+    reply_markup: { inline_keyboard: message.buttons ?? [] },
+  })
+}
+
+// Tells Telegram a button press was handled, so it stops showing a spinner on the button, with an
+// optional note it shows briefly at the top of the chat
+export function answerCallbackQuery(token: string, callbackQueryId: string, text?: string) {
+  return callBotApi(token, 'answerCallbackQuery', { callback_query_id: callbackQueryId, ...(text ? { text } : {}) })
 }

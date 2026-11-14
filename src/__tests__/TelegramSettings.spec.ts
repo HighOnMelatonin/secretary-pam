@@ -101,6 +101,17 @@ describe('Telegram settings', () => {
     expect(button(wrapper, 'Save').attributes('disabled')).toBeUndefined()
   })
 
+  it('takes brief times on the quarter hour only', async () => {
+    const { wrapper } = await mountSection(linked)
+    expect(field(wrapper, 'Brief time').attributes('step')).toBe('900')
+    await field(wrapper, 'Brief time').setValue('08:10')
+    expect(wrapper.find('[role="alert"]').text()).toBe('Choose a time on the quarter hour, such as 07:30.')
+    expect(button(wrapper, 'Save').attributes('disabled')).toBeDefined()
+    await field(wrapper, 'Brief time').setValue('08:45')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(button(wrapper, 'Save').attributes('disabled')).toBeUndefined()
+  })
+
   it('disconnects, going back to Connect', async () => {
     const { api, wrapper } = await mountSection(linked)
     await button(wrapper, 'Disconnect').trigger('click')
