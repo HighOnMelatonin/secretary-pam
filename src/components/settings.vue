@@ -4,7 +4,8 @@
 // types/settings.ts and docs/priority-algorithm.md). Nothing is saved until Apply: until then a
 // preview shows the Suggested list as the new settings would order it, with the rows that move
 // marked, next to the order now, and the projects whose forecast pace or finish would change.
-// Cancel discards the changes.
+// Cancel discards the changes. Below it, the Telegram bot's section (telegramSettings.vue), which
+// saves on its own.
 import { computed, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useProjectList } from '@/stores/projectList'
@@ -16,6 +17,7 @@ import { CATEGORY_LABELS } from '@/types/priority'
 import { describePace, previewSettings, type PaceSummary } from '@/types/settingsPreview'
 import { PRESET_NAMES, PRESETS, WEEKDAYS, type PresetName, type UserSettings, type WeekdayKey } from '@/types/settings'
 import { hoursFromMinutes } from '@/types/task'
+import TelegramSettings from './telegramSettings.vue'
 
 const props = defineProps<{
   today?: string // YYYY-MM-DD; this browser's today when omitted
@@ -132,85 +134,88 @@ async function retry() {
 </script>
 
 <template>
-  <article class="settings edit-form">
-    <form @submit.prevent="apply">
-      <h2>Settings</h2>
+  <div class="settings-page">
+    <article class="settings edit-form">
+      <form @submit.prevent="apply">
+        <h2>Settings</h2>
 
-      <div v-if="loadError" class="error" role="alert">
-        <p>Couldn't load your settings: {{ loadError }}</p>
-        <button type="button" class="secondary compact" @click="retry">Try again</button>
-      </div>
-      <p v-else-if="!loaded" aria-busy="true">Loading your settings…</p>
-      <p v-if="saveError" class="error" role="alert">{{ saveError }}</p>
-
-      <fieldset>
-        <legend>Hours for tasks each day</legend>
-        <p class="hint"><small>Suggested and the warnings in the task form plan work into these hours. 0 means a day off.</small></p>
-        <div class="days">
-          <label v-for="day in WEEKDAYS" :key="day">
-            {{ DAY_LABELS[day] }}
-            <input v-model="hours[day]" type="text" inputmode="decimal" :aria-invalid="dayInvalid(day) || undefined" />
-          </label>
+        <div v-if="loadError" class="error" role="alert">
+          <p>Couldn't load your settings: {{ loadError }}</p>
+          <button type="button" class="secondary compact" @click="retry">Try again</button>
         </div>
-        <p v-if="WEEKDAYS.some(dayInvalid)" class="error" role="alert">
-          Each day needs a number of hours from 0 to {{ MAX_DAY_CAPACITY_MINUTES / 60 }}.
-        </p>
-        <p v-else-if="noTime" class="error" role="alert">At least one day needs some hours.</p>
-      </fieldset>
+        <p v-else-if="!loaded" aria-busy="true">Loading your settings…</p>
+        <p v-if="saveError" class="error" role="alert">{{ saveError }}</p>
 
-      <label>
-        Buffer
-        <input v-model="buffer" type="text" inputmode="decimal" :aria-invalid="bufferInvalid || undefined" />
-        <small>Every estimate is multiplied by this: 1.25 allows a quarter more time than estimated.</small>
-      </label>
-      <p v-if="bufferInvalid" class="error" role="alert">The buffer must be from {{ MIN_BUFFER }} to {{ MAX_BUFFER }}.</p>
+        <fieldset>
+          <legend>Hours for tasks each day</legend>
+          <p class="hint"><small>Suggested and the warnings in the task form plan work into these hours. 0 means a day off.</small></p>
+          <div class="days">
+            <label v-for="day in WEEKDAYS" :key="day">
+              {{ DAY_LABELS[day] }}
+              <input v-model="hours[day]" type="text" inputmode="decimal" :aria-invalid="dayInvalid(day) || undefined" />
+            </label>
+          </div>
+          <p v-if="WEEKDAYS.some(dayInvalid)" class="error" role="alert">
+            Each day needs a number of hours from 0 to {{ MAX_DAY_CAPACITY_MINUTES / 60 }}.
+          </p>
+          <p v-else-if="noTime" class="error" role="alert">At least one day needs some hours.</p>
+        </fieldset>
 
-      <fieldset>
-        <legend>How Suggested weighs tasks</legend>
-        <label v-for="name in PRESET_NAMES" :key="name" class="preset">
-          <input v-model="preset" type="radio" name="preset" :value="name" />
-          <span>
-            {{ PRESETS[name].label }}
-            <small>{{ PRESET_DESCRIPTIONS[name] }}</small>
-          </span>
+        <label>
+          Buffer
+          <input v-model="buffer" type="text" inputmode="decimal" :aria-invalid="bufferInvalid || undefined" />
+          <small>Every estimate is multiplied by this: 1.25 allows a quarter more time than estimated.</small>
         </label>
-      </fieldset>
+        <p v-if="bufferInvalid" class="error" role="alert">The buffer must be from {{ MIN_BUFFER }} to {{ MAX_BUFFER }}.</p>
 
-      <section v-if="changed && preview" class="preview" aria-labelledby="preview-heading">
-        <h3 id="preview-heading" class="section-heading">Preview</h3>
-        <p v-if="preview.rows.length === 0"><small>There are no tasks to suggest yet.</small></p>
-        <p v-else-if="preview.moved === 0"><small>The Suggested list stays in the same order.</small></p>
-        <p v-else><small>{{ preview.moved }} of {{ preview.rows.length }} tasks move in Suggested:</small></p>
-        <ol v-if="preview.rows.length" class="preview-list">
-          <li v-for="row in preview.rows" :key="row.taskId" :class="{ moved: row.move }">
-            <span class="row">
-              <span>{{ row.name }}</span>
-              <small class="category">{{ CATEGORY_LABELS[row.category] }}</small>
-              <span v-if="row.move" class="tag">{{ row.move.text }}</span>
+        <fieldset>
+          <legend>How Suggested weighs tasks</legend>
+          <label v-for="name in PRESET_NAMES" :key="name" class="preset">
+            <input v-model="preset" type="radio" name="preset" :value="name" />
+            <span>
+              {{ PRESETS[name].label }}
+              <small>{{ PRESET_DESCRIPTIONS[name] }}</small>
             </span>
-          </li>
-        </ol>
+          </label>
+        </fieldset>
 
-        <h3 class="section-heading">Forecast</h3>
-        <p v-if="preview.projects.length === 0 && !preview.allDone"><small>No project's pace or finish changes.</small></p>
-        <ul v-else class="plain-list forecast-changes">
-          <li v-for="change in preview.projects" :key="change.projectId">
-            <strong>{{ change.name }}</strong>: {{ paceText(change.before) }} →
-            <span class="will">{{ paceText(change.after) }}</span>
-          </li>
-          <li v-if="preview.allDone">
-            <strong>Everything</strong>: done by {{ preview.allDone.before ?? 'no date' }} →
-            <span class="will">done by {{ preview.allDone.after ?? 'no date' }}</span>
-          </li>
-        </ul>
-      </section>
+        <section v-if="changed && preview" class="preview" aria-labelledby="preview-heading">
+          <h3 id="preview-heading" class="section-heading">Preview</h3>
+          <p v-if="preview.rows.length === 0"><small>There are no tasks to suggest yet.</small></p>
+          <p v-else-if="preview.moved === 0"><small>The Suggested list stays in the same order.</small></p>
+          <p v-else><small>{{ preview.moved }} of {{ preview.rows.length }} tasks move in Suggested:</small></p>
+          <ol v-if="preview.rows.length" class="preview-list">
+            <li v-for="row in preview.rows" :key="row.taskId" :class="{ moved: row.move }">
+              <span class="row">
+                <span>{{ row.name }}</span>
+                <small class="category">{{ CATEGORY_LABELS[row.category] }}</small>
+                <span v-if="row.move" class="tag">{{ row.move.text }}</span>
+              </span>
+            </li>
+          </ol>
 
-      <div class="actions">
-        <button type="submit" :disabled="!loaded || !changed || !draft || saving">Apply</button>
-        <button type="button" class="secondary" @click="emit('close')">Cancel</button>
-      </div>
-    </form>
-  </article>
+          <h3 class="section-heading">Forecast</h3>
+          <p v-if="preview.projects.length === 0 && !preview.allDone"><small>No project's pace or finish changes.</small></p>
+          <ul v-else class="plain-list forecast-changes">
+            <li v-for="change in preview.projects" :key="change.projectId">
+              <strong>{{ change.name }}</strong>: {{ paceText(change.before) }} →
+              <span class="will">{{ paceText(change.after) }}</span>
+            </li>
+            <li v-if="preview.allDone">
+              <strong>Everything</strong>: done by {{ preview.allDone.before ?? 'no date' }} →
+              <span class="will">done by {{ preview.allDone.after ?? 'no date' }}</span>
+            </li>
+          </ul>
+        </section>
+
+        <div class="actions">
+          <button type="submit" :disabled="!loaded || !changed || !draft || saving">Apply</button>
+          <button type="button" class="secondary" @click="emit('close')">Cancel</button>
+        </div>
+      </form>
+    </article>
+    <TelegramSettings />
+  </div>
 </template>
 
 <style scoped>

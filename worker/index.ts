@@ -21,7 +21,8 @@
 //   GET    /api/priorities?today=YYYY-MM-DD -> exactly what prioritise() returns (src/types/priority.ts)
 //   GET    /api/forecast?today=YYYY-MM-DD   -> exactly what forecast() returns (src/types/forecast.ts)
 //
-// plus the sign-in routes in auth.ts and the Google Calendar routes in google.ts. Each object is split across its own table and the tables
+// plus the sign-in routes in auth.ts, the Google Calendar routes in google.ts and the Telegram bot's
+// routes in pamBot/index.ts. Each object is split across its own table and the tables
 // holding its arrays when saved, and put back together when read.
 //
 // Saving a task or project applies the scheduling rules in src/types/operations.ts: a save that
@@ -91,6 +92,8 @@ import { migrateOnce } from './migrate'
 import { forecast } from '../src/types/forecast'
 import { prioritise } from '../src/types/priority'
 import { getSettings, handleSettings } from './settings'
+import { botConfig, handleTelegram, handleWebhook, type PamData } from './pamBot'
+import { sendBriefs } from './pamBot/brief'
 
 const MAX_BODY_BYTES = 100_000
 // An import can carry a whole project's tasks, each with a full-length description
@@ -633,6 +636,16 @@ async function planning(db: D1Database, userId: string, name: 'priorities' | 'fo
   return name === 'priorities' ? priorities : forecast(tasks, projects, settings, today, priorities)
 }
 
+// What the Telegram bot reads, as the planning routes read it, and how it saves, as the task routes
+// save
+const pamData: PamData = {
+  async load(db, userId) {
+    const [tasks, projects, settings] = await Promise.all([listTasks(db, userId), listProjects(db, userId), getSettings(db, userId)])
+    return { tasks, projects, settings }
+  },
+  save: (db, userId, plan) => saveWithRules(db, userId, plan, { tasks: [], projects: [] }),
+}
+
 // Events
 
 // ?projectId= and ?since=, where an empty value means no filter
@@ -760,9 +773,11 @@ export default {
     const isPatch = name === 'tasks' && rawId !== undefined && rest.length === 0 && request.method === 'PATCH'
     const isImport = name === 'projects' && rest.length === 1 && rest[0] === 'import'
     const isAction = name === 'tasks' && rest.length === 1 && rest[0] === 'action'
+    // /api/telegram, /api/telegram/link-code and /api/telegram/webhook
+    const isTelegram = name === 'telegram' && rest.length === 0
     if (
       api !== 'api' ||
-      !(resource || name === 'auth' || isGoogle || isEvents || isSettings || isPlanning) ||
+      !(resource || name === 'auth' || isGoogle || isEvents || isSettings || isPlanning || isTelegram) ||
       (rest.length > 0 && !isGoogle && !isImport && !isAction)
     ) {
       return error(404, 'Not found')
@@ -771,9 +786,14 @@ export default {
     try {
       await migrateOnce(env.DB)
       if (name === 'auth') return await handleAuth(env, ctx, request, rawId, () => readJson(request))
+      // The bot is off until its secrets are set. Telegram has no session, so the webhook comes first.
+      const bot = isTelegram ? botConfig(env) : null
+      if (isTelegram && !bot) return error(404, 'Not found')
+      if (bot && rawId === 'webhook') return await handleWebhook(env, bot, pamData, request)
 
       const user = await currentUser(env.DB, request)
       if (!user) return error(401, 'Sign in to continue')
+      if (bot) return await handleTelegram(env, ctx, bot, request, user, rawId, () => readJson(request))
       if (isEvents) {
         if (request.method !== 'GET') return error(405, 'Method not allowed')
         return json(await listEvents(env.DB, user.id, parseEventQuery(url.searchParams)))
@@ -840,5 +860,14 @@ export default {
       console.error(e)
       return error(500, 'Internal error')
     }
+  },
+
+  // The Cron Trigger in wrangler.jsonc, every 15 minutes: sends the Telegram morning briefs that are
+  // due. The run's scheduled time is the clock everything else is worked out from.
+  async scheduled(controller, env) {
+    const bot = botConfig(env)
+    if (!bot) return
+    await migrateOnce(env.DB)
+    await sendBriefs(env.DB, bot, pamData, new Date(controller.scheduledTime))
   },
 } satisfies ExportedHandler<Env>

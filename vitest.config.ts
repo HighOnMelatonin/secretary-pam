@@ -35,6 +35,10 @@ export default defineConfig({
                 // For reset links; the tests replace mailer.send, so no email is sent
                 APP_ORIGIN: 'https://pam.example',
                 EMAIL_FROM: 'pam@pam.example',
+                // The Telegram bot; the tests replace fetch with a fake Bot API, so nothing reaches Telegram
+                TELEGRAM_BOT_TOKEN: '123456:test-bot-token',
+                TELEGRAM_WEBHOOK_SECRET: 'test-webhook-secret',
+                TELEGRAM_BOT_USERNAME: 'PamTestBot',
               },
             },
           }),

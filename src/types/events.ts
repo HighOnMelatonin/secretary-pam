@@ -20,9 +20,10 @@ export const EVENT_KINDS = [
 ] as const
 export type EventKind = (typeof EVENT_KINDS)[number]
 
-// Who made the change: the user in the app, a Google Calendar sync, or the migration that logged
-// the data from before tracking began, whose times and order are only a guess
-export type EventSource = 'app' | 'google' | 'backfill'
+// Who made the change: the user in the app, a Google Calendar sync, the user through the Telegram
+// bot (worker/pamBot/), or the migration that logged the data from before tracking began, whose
+// times and order are only a guess
+export type EventSource = 'app' | 'google' | 'telegram' | 'backfill'
 // Where the task itself came from, so app changes to imported tasks can be told apart
 export type TaskSource = 'app' | 'google'
 

@@ -1,6 +1,7 @@
 // Client for the Worker API in worker/index.ts, which stores projects, tasks and tags in D1, for
-// signing in through worker/auth.ts, and for importing Google Calendar through worker/google.ts. The session cookie is HttpOnly, so this code never sees
-// it: the browser sends it with every request.
+// signing in through worker/auth.ts, for importing Google Calendar through worker/google.ts, and for
+// linking the Telegram bot through worker/pamBot/. The session cookie is HttpOnly, so this code never
+// sees it: the browser sends it with every request.
 import type { GoogleAccount, SyncResult } from '@/types/google'
 import type { Changes, ProjectSave, TaskAction, TaskPatchSave, TaskSave } from '@/types/operations'
 import type { Project } from '@/types/project'
@@ -8,6 +9,7 @@ import type { UserSettings } from '@/types/settings'
 import type { Clash } from '@/types/rules'
 import type { Tag } from '@/types/tag'
 import type { Task } from '@/types/task'
+import type { TelegramLinkCode, TelegramPreferences, TelegramStatus } from '@/types/telegram'
 
 interface Resources {
   projects: Project
@@ -17,6 +19,17 @@ interface Resources {
 
 export interface Account {
   email: string
+}
+
+// A request the Worker refused, with the status it answered
+export class ApiError extends Error {
+  readonly status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
 }
 
 // A save the Worker refused (409) because it would make a task due after a project's delivery date
@@ -44,7 +57,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const body = await response.json().catch(() => null)
     const message = body?.error ?? `${init?.method ?? 'GET'} /api/${path} failed (${response.status})`
     if (response.status === 409) throw new ApiConflict(message, body?.clashes ?? [])
-    throw new Error(message)
+    throw new ApiError(message, response.status)
   }
   if (response.status === 204) return undefined as T
   return response.json()
@@ -125,4 +138,18 @@ export const google = {
 export const settings = {
   get: () => request<UserSettings>('settings'),
   save: (value: UserSettings) => request<UserSettings>('settings', sendJson('PUT', value)),
+}
+
+// The Telegram companion bot: whether a chat is linked, a code to link one, and the morning brief
+export const telegram = {
+  // null when the bot isn't set up on this deploy, which the Worker answers with 404
+  status: () =>
+    request<TelegramStatus>('telegram').catch((e) => {
+      if (e instanceof ApiError && e.status === 404) return null
+      throw e
+    }),
+  // A one-time code for linking a chat, with this browser's time zone for the brief
+  linkCode: (timeZone: string) => request<TelegramLinkCode>('telegram/link-code', sendJson('POST', { timeZone })),
+  save: (preferences: TelegramPreferences) => request<TelegramStatus>('telegram', sendJson('PUT', preferences)),
+  disconnect: () => request<void>('telegram', { method: 'DELETE' }),
 }
