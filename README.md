@@ -49,10 +49,33 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 - **Projects** have a name, description, delivery date, priority, any number of tags, tasks and reference links.
 - **Taskbar** hidden on the left edge of the screen. Hover over it to slide it out over the page, with buttons for **Tags**, **Add task** and **Add project**. On phones and other touch screens these are behind a **+** button in the bottom-right corner instead.
 - **Upcoming tasks** in a section at the top of the dashboard, above the projects. It lists every unfinished task that is overdue or due in the next 14 days, from all projects, soonest first, with each task's projects, check mark and **Edit** button. Tasks with no due date, or only in archived projects, are left out. **Show fewer** collapses the section to its first two tasks (and **Show all** expands it again); the browser remembers which. Once the section scrolls out of view, a coral **overdue** counter floats in the top-right corner; click it to scroll back up to it.
+- **Suggested**: the **By date / Suggested** switch on **Upcoming** (remembered in the browser) swaps the list by date for every open task ranked by what to do next (see [docs/priority-algorithm.md](docs/priority-algorithm.md)), under **Overdue**, **Do nowww** and **Do next**:
+  - Each row says why it's there, such as *Due tomorrow*, *Unblocks 6 h of work* or *"Review" goes critical in 2 days unless this is done*. Rows are marked **pinned**, **no estimate** (counted as 2 hours) or **in a loop** (part of a loop of blocking tasks).
+  - Tasks waiting on another task, or with a start date still to come, are left out, and a line under the list counts them. Do next shows its first 10, with **Show N more** for the rest.
+  - Quick actions on each row:
+    - **Do today** pins the task to today, moving it to the end of Do nowww, and **Unpin** undoes that.
+    - **Not today** starts it tomorrow. It's greyed out, with the reason beside it, on a task due today or overdue.
+    - **Priority ↑ / ↓** moves its priority one level.
+    - The **estimate** button edits the estimate in place, in hours, or clears it when left blank.
+  - Each action is its own small request, never a whole task save, so it changes only what it names.
+  - Completed tasks, tasks only in archived projects, and Google Calendar events without an estimate aren't ranked.
+- **Workload** above **Upcoming** forecasts how the open work plays out. It walks forward from today and fills each day's hours with tasks in Suggested order, skipping tasks not started yet or still waiting on another task.
+  - **Brief:** a short summary, for example: *Today: 3 tasks, 7.5 h of 8 h. "Thesis" is tight. 1 of the next 14 days is overbooked. Of 20 h of open work, 4 h come from the 2-hour default for tasks with no estimate, and 6 h have no deadline. All of it is done by 2026-12-04.* It always says how much of the forecast is guesswork.
+  - **Seven days:** each day's hours planned out of the hours there are. A day is marked **over** (coral) when more work is due by its end than there's time for from today.
+  - **Project tiles** get a pace badge: **On pace** (2 or more working days to spare), **Tight** (finishing on the delivery day or the working day before) or **Behind** (finishing after it). Hover over it for the projected finish. Projects with no delivery date get none.
+  - Nothing is stored: it's worked out again from the current tasks whenever they change.
+- **Settings** (`/settings`, linked beside the account in the header):
+  - the hours for tasks on each weekday;
+  - the **buffer** every estimate is multiplied by;
+  - how Suggested weighs tasks: **Balanced**, **Deadline-driven**, **Importance-driven** or **Blockers-first**.
+
+  Any change shows a preview before **Apply** saves it: the Suggested list in its new order with the rows that would move marked, and the projects whose pace or projected finish would change. **Cancel** discards it. If the settings can't be loaded, the page says so and won't save over them.
 - **Works on phones**: each form has its own address (such as `/projects/new` or `/tags`), so the back button or gesture closes it, and the forms keep Save and Cancel pinned to the bottom of the screen.
 - **Tags** such as School, Work and Personal file projects by area of life. Add, rename, recolour and delete them from **Tags** in the taskbar. Each tag shows its colour beside a **Choose colour** button, which opens the browser's colour picker: any colour can be chosen, and it fills the tag's badges and filter chip, with cream or green text, whichever is easier to read on it. Tags start indigo. Renaming a tag renames it on every project, and deleting one removes it from its projects. The Archive tag can be renamed but not deleted.
-- **Google Calendar import**: **Sync Google Calendar**, under **Unassigned** on the dashboard, imports the events of every calendar shown in your Google Calendar, from now to a year ahead, as unassigned tasks. Each one has a tag with the Google account's email. A task is due the day its event starts. An event that ends on a later day starts its description with **Ends** and that day, followed by the event's own description (Google's HTML turned into plain text). Repeating events become one task per occurrence. Cancelled events and working locations ("Home", "Office") are left out. The first time, the button sends you to Google to connect an account, then comes back and syncs. **Google accounts** beside it lists the connected accounts, each with **Disconnect**, and connects more. Syncing again updates each task's name, due date and description from its event, keeping the done mark, priority, relations and projects set in Pam. It adds new events and deletes the tasks whose events were deleted. A task in a project keeps its due date when its event moves past the project's delivery date, and the sync says so. The import is one-way: changes made in Pam are not sent to Google, and the next sync replaces an imported task's name, due date and description, which the task's form and page point out. A task deleted in Pam comes back at the next sync if its event still exists.
+- **Google Calendar import**: **Sync Google Calendar**, under **Unassigned** on the dashboard, imports the events of every calendar shown in your Google Calendar, from now to a year ahead, as unassigned tasks. Each one has a tag with the Google account's email. A task is due the day its event starts. An event that ends on a later day starts its description with **Ends** and that day, followed by the event's own description (Google's HTML turned into plain text). Repeating events become one task per occurrence. Cancelled events and working locations ("Home", "Office") are left out. The first time, the button sends you to Google to connect an account, then comes back and syncs. **Google accounts** beside it lists the connected accounts, each with **Disconnect**, and connects more. Syncing again updates each task's name, due date and description from its event, keeping the done mark, priority, relations, projects, estimate and start and pinned dates set in Pam. It adds new events and deletes the tasks whose events were deleted. A task in a project keeps its due date when its event moves past the project's delivery date, and the sync says so. The import is one-way: changes made in Pam are not sent to Google, and the next sync replaces an imported task's name, due date and description, which the task's form and page point out. A task deleted in Pam comes back at the next sync if its event still exists.
 - **Tasks** have a name, description, due date, priority, completed flag and relations to other tasks (blocks, blocked by, subtask of, parent of, related to). A task can be assigned to several projects, from either the project form or the task form. A task can't be due after the delivery date of a project it's in: once both dates are set, either form points out the clash, offers to extend the project's deadline or move the task's due date, and won't add the task or save until it's fixed.
+- **Estimates and start dates** (the first step towards suggesting what to do next, see [docs/priority-algorithm.md](docs/priority-algorithm.md)): the task form has an optional **Estimate (hours)**, decimals allowed and saved to the minute, and an optional **Start date**, which can't be after the due date. When the estimate is more than the working time from the start date (or today, if that's later) to the due date, the form says how much time there is, but still saves. Working time comes from each weekday's capacity in the account's settings: 8 hours Monday to Friday and none at the weekend until changed (changed on the **Settings** page). Moving a due date from the project form, an import or a Google Calendar sync moves a start date it passes back to the new due date, since those don't show start dates.
+- **Blocking loops are refused**: a task can't end up blocking itself through other tasks (A blocks B, B blocks C, C blocks A), whichever task each relation was added to. The task form names the tasks in the loop and won't save until a relation is removed, and the API refuses such a save with `400`. Loops saved before this check don't stop saves that leave them as they are.
 
 ## Tech stack
 
@@ -142,22 +165,29 @@ src/
     calendarDay.vue   one day of the grid (with data-date): its chips, or its dots in the compact grid
     undatedTray.vue   the tasks with no due date, below the calendar
     taskbar.vue       the Tags, Add task and Add project buttons: a hidden bar on the left, or a + button on phones
-    upcomingPanel.vue the upcoming tasks section above the projects, and the overdue counter that floats once it scrolls away
+    upcomingPanel.vue the upcoming tasks section above the projects, its By date / Suggested switch, and the overdue counter that floats once it scrolls away
+    suggestedList.vue the Suggested view: ranked tasks with their reasons, markers and quick actions
+    forecastStrip.vue the workload above Upcoming: the forecast's brief and the next seven days
+    settings.vue      the settings page: hours per weekday, buffer and presets, with a preview before Apply
     projectTile.vue   one project on the dashboard; expands into a preview
     projectExport.vue the Export button and dialog on a project's page: format, preview, Copy and Download
     projectImport.vue the Import button and dialog on a project's page: the file, new tasks, and a choice per duplicate
     project.vue       create/edit a project
-    task.vue          create/edit a task, including which projects it is in
+    task.vue          create/edit a task, including which projects it is in, its estimate and start date
     tags.vue          add, rename, recolour and delete tags
     googleSync.vue    the Sync Google Calendar button, what the last sync did, and the connected accounts
     login.vue         the sign-in and sign-up pages
     forgotPassword.vue  the page that emails a reset link (/forgot-password)
     resetPassword.vue   the page reset emails link to, for choosing a new password (/reset-password)
-  router/             one route per form and the calendar, all showing the dashboard, so back closes forms
-  stores/             Pinia stores for projects, tasks, tags and the signed-in account; they load and save through the API
+  router/             one route per form, the settings page and the calendar, all showing the dashboard, so back closes forms
+  stores/             Pinia stores for projects, tasks, tags, settings and the signed-in account; they load and save through the API
   types/              Project, Task and Tag models, shared by the app and the Worker, which tasks are upcoming,
                       the calendar's items, dates and month grid (calendar.ts), the export formats (export.ts), reading and matching imports (import.ts),
-                      what the Google Calendar routes answer (google.ts), and the change tracking log (events.ts)
+                      what the Google Calendar routes answer (google.ts), the change tracking log (events.ts),
+                      each account's capacity and prioritisation weights (settings.ts), and the scoring that
+                      ranks open tasks into Overdue, Do nowww and Do next (priority.ts), and the workload
+                      forecast built on it (forecast.ts), what a settings change would change (settingsPreview.ts),
+                      and the sentence type every reason, brief and refusal uses (sentence.ts)
   api.ts              client for the Worker API, including signing in
   __tests__/          unit tests
 worker/
@@ -166,6 +196,7 @@ worker/
   email.ts            sending email through Cloudflare Email Service
   google.ts           the /api/google routes: connecting Google accounts and syncing their events into tasks
   events.ts           writing change tracking events, and the GET /api/events route
+  settings.ts         the /api/settings routes: reading and saving settings, preset changes and the preview
   jsonChunks.ts       passing many rows to D1 in a few statements, as JSON
   googleCalendar.ts   Google's OAuth and Calendar API: tokens, the calendar list, batched event lists,
                       and what a task takes from an event
@@ -176,6 +207,7 @@ cypress/
   e2e/                end-to-end tests
   support/            commands and builders for test data
 migrations/           SQL that creates the database tables
+docs/                 designs for features being built, such as task prioritisation (priority-algorithm.md)
 wrangler.jsonc        Worker and database configuration
 ```
 
@@ -222,7 +254,10 @@ Vue app (Pinia stores)  ──fetch──▶  Worker /api/*  ──SQL──▶ 
 The Worker enforces the scheduling rules, so the app sends each save as one request and stores whatever comes back. Saving a task or project goes through the planners in `src/types/operations.ts`, which the Worker and the unit tests' fake API both run:
 
 - **Archiving**: a project whose last task is completed gets the Archive tag. Only projects the save completes are archived, so one taken out of the archive stays out.
+- **Quick actions** (`planTaskAction`): each changes one thing about a stored task, then goes through the same steps as a task save.
 - **Membership**: a task save can say which projects the task is in (`projectIds`); the Worker adds it to or removes it from each project. A project save's `taskIds` is its membership.
+- **Blocking loops**: a save whose relations would make a loop of blocking tasks is refused with `400`, naming the tasks (`findBlockCycle` in `src/types/rules.ts`). Only loops the save makes count, so ones already stored don't block other saves.
+- **Start dates**: a project save's `dueDates` and an import move a task's start date back to its new due date when the due date moves before it (`clampStartDate`), as the Google Calendar sync does too. A task save with a start date after its due date is refused with `400` instead, since the task form shows both.
 - **Date clashes**: a save that would make a task due after the delivery date of one of its projects is refused with `409` and the clashes, and nothing is written. The forms offer to move the dates first, and send the moves with the save (`deliveryDates` on a task save, `dueDates` on a project save) so they're checked and written together. Clashes already in the stored data don't block a save that doesn't touch them.
 
 The reply lists every task and project the save changed, and `applyChanges` (`src/stores/changes.ts`) puts each one into the stores, replacing the item with the same id or adding it.
@@ -258,7 +293,9 @@ The reply lists every task and project the save changed, and `applyChanges` (`sr
 | `DELETE /api/projects/:id` | Delete the project |
 | `POST /api/projects/:id/import` | Create or update each task in `{ tasks }` and add the new ones to the end of the project, all in one transaction; returns the changed `{ tasks, projects }` (`409` for a date clash, which saves none of them) |
 | `GET /api/tasks` | All tasks |
-| `PUT /api/tasks/:id` | Create or update the task from `{ task, projectIds?, deliveryDates? }`; returns the changed `{ tasks, projects }` (`409` for a date clash) |
+| `PUT /api/tasks/:id` | Create or update the task from `{ task, projectIds?, deliveryDates? }`; returns the changed `{ tasks, projects }` (`409` for a date clash, `400` with the task ids as `loop` for a blocking loop) |
+| `PATCH /api/tasks/:id` | Change only the fields in `{ task, projectIds?, deliveryDates? }`, where `task` holds any of `name`, `description`, `dueDate`, `relations`, `priority`, `completed`, `effortMinutes`, `startDate` and `pinnedDate` (`TaskPatch` in `src/types/operations.ts`). A field left out keeps its value; `null` clears `dueDate`, `effortMinutes`, `startDate` or `pinnedDate`. The task is then checked and saved as a `PUT` would be. Returns the changed `{ tasks, projects }` (`400` for an unknown or invalid field, `404` for an unknown task, `409` for a date clash) |
+| `POST /api/tasks/:id/action` | Do one quick action (`TaskAction` in `src/types/operations.ts`) and nothing else: `{ action: 'do_today', today }`, `{ action: 'unpin' }`, `{ action: 'not_today', today }`, `{ action: 'importance', direction: 'up' \| 'down' }` or `{ action: 'estimate', effortMinutes }` (`null` clears it). `today` is the user's local date. Returns the changed `{ tasks, projects }`; `400` if the action can't be done, with `code` (`due_today`, `overdue`, `priority_at_top` or `priority_at_bottom`), `params` and `text` besides `error`, or is malformed; `404` for an unknown task |
 | `DELETE /api/tasks/:id` | Delete the task, removing it from projects and relations |
 | `GET /api/tags` | All tags, by name |
 | `PUT /api/tags/:id` | Create, rename or recolour the tag in the body; returns it. `color` is a `#rrggbb` code (stored in lower case); leaving it out keeps an existing tag's colour, or makes a new one indigo |
@@ -268,15 +305,39 @@ The reply lists every task and project the save changed, and `applyChanges` (`sr
 | `GET /api/google/accounts` | The connected Google accounts, `{ email, syncedAt }` |
 | `DELETE /api/google/accounts/:email` | Disconnect the account, revoking Pam's access at Google; its tasks stay |
 | `POST /api/google/sync` | Import every connected account's events; returns a `SyncResult` per account (`src/types/google.ts`), or `[]` when none is connected. `503` until the Google secrets are set |
+| `GET /api/settings` | The account's `UserSettings` (`src/types/settings.ts`): capacity in minutes per weekday, buffer, weights and preset. The defaults until the account saves its own |
+| `PUT /api/settings` | Save the whole `UserSettings` in the body; returns them as stored. `wU`, `k` and `horizonDays` must be the named preset's (`400` otherwise) |
+| `POST /api/settings/preset` | Switch to `{ preset }`, setting its weights and keeping the capacity and buffer; returns the settings |
+| `POST /api/settings/preview` | What `{ today, preset?, capacityMinutes?, buffer? }` would change, saving nothing: a `SettingsPreview` (`src/types/settingsPreview.ts`) with the new Suggested order, the projects whose pace or finish would move, and a `summary` in sentences |
+| `GET /api/priorities?today=YYYY-MM-DD` | Exactly what `prioritise` (`src/types/priority.ts`) returns for the account's tasks, projects and settings: every open task's category, tier, score, factors and reason, and the Overdue, Do nowww and Do next lists (`400` without a `today`) |
+| `GET /api/forecast?today=YYYY-MM-DD` | Exactly what `forecast` (`src/types/forecast.ts`) returns: each task's and project's projected finish and pace, 14 days of load, today's plan, the totals and the brief (`400` without a `today`) |
 | `GET /api/events?projectId=&since=` | The account's change tracking events (`LoggedEvent` in `src/types/events.ts`), oldest first. `projectId` keeps one project's events; `since` (a `YYYY-MM-DD` date or a UTC timestamp) keeps those at or after it. Both are optional (`400` if malformed) |
 
 Tasks imported from Google Calendar have `googleAccount`, the account's email. Only the sync sets it: a task save keeps the stored one, whatever the body says.
 
+A task's `effortMinutes` (a whole number of minutes, 1 to 60,000), `startDate` and `pinnedDate` are only in the JSON when set. A `PUT` that leaves one out, or sends it as `null`, clears it; to change some fields and keep the rest, use `PATCH`. The app ticks tasks off with `PATCH`, sending only `completed`.
+
+#### For a voice front-end
+
+A small on-device model is planned to turn speech into a fixed set of requests and read the answers out. The model never ranks tasks or words numbers itself, since everything it needs comes back from the shared functions, finished:
+
+- **Questions**:
+  - "What should I do next?" reads `GET /api/priorities`: `sections` in order, with each task's `reason.text`.
+  - "Why is this here?" reads that task's `reason` and `factors`.
+  - "How does my week look?" reads `GET /api/forecast`, whose `brief.text` is ready to say, and whose `brief.parts` let it pick sentences.
+- **Commands**:
+  - The quick actions (`POST /api/tasks/:id/action`) and partial updates (`PATCH /api/tasks/:id`).
+  - A preset change (`POST /api/settings/preset`). It's confirmed first by reading `summary.text` from `POST /api/settings/preview`.
+- **`today`**: every request that depends on it takes it from the device, which knows the user's local date.
+- **Sentences**: every reason, brief, summary and refusal is a `code` with its `params` and a finished `text`.
+
+Not solved by this API: matching a spoken phrase to the right task.
+
 The project, task, tag and Google routes work on the signed-in account's data only. Bodies are the `Project`, `Task` and `Tag` objects from `src/types`, sent as `application/json`. The Worker checks every field and answers `400` with an error message if something is invalid, including a reference to a task or tag that doesn't exist, or a tag name that another tag already has. Each save runs as one transaction, so a failed save changes nothing.
 
-The limits in `src/types/limits.ts` apply to the forms and the API alike: names and link labels up to 200 characters, descriptions up to 10,000, ids up to 100, link URLs up to 2,000, up to 500 tasks, tags, links or relations on one item, emails up to 254, and passwords from 8 to 256. Reference links must start with `http:`, `https:` or `mailto:`, so a `javascript:` link can't run code in the app when clicked. Every value reaches D1 as a bound parameter, never as part of the SQL.
+The limits in `src/types/limits.ts` apply to the forms and the API alike: names and link labels up to 200 characters, descriptions up to 10,000, ids up to 100, link URLs up to 2,000, up to 500 tasks, tags, links or relations on one item, estimates up to 1,000 hours, emails up to 254, and passwords from 8 to 256. Reference links must start with `http:`, `https:` or `mailto:`, so a `javascript:` link can't run code in the app when clicked. Settings are checked too: each weekday's capacity is 0 to 1,440 minutes, with at least one day above 0; the buffer is 0.5 to 5; `wU` and `k` are 0 to 10; the horizon is 1 to 10 working days; and the preset is `balanced`, `deadline`, `importance` or `blockers`. Every value reaches D1 as a bound parameter, never as part of the SQL.
 
-A bare `Task` or `Project` body is still accepted, as sent by clients from before the scheduling rules: it is saved under the same rules, and the reply is the saved item.
+A bare `Task` or `Project` body, as clients from before the scheduling rules sent, is refused with `400` and nothing is saved: task saves must be wrapped as `{ task, … }` and project saves as `{ project, … }`.
 
 ### Schema
 
@@ -288,7 +349,7 @@ Defined in the files in `migrations/`. Each field has its own column, and each a
 | `sessions` | Signed-in browsers | `id` (SHA-256 of the cookie's token), `user_id` → `users`, `expires_at`, `created_at` |
 | `login_failures` | Failed sign-ins | `email`, `at` |
 | `projects` | `Project` | `user_id` → `users`, `id`, `name`, `description`, `delivery_date`, `priority`, `created_at`, `updated_at` |
-| `tasks` | `Task` | `user_id` → `users`, `id`, `name`, `description`, `due_date`, `priority`, `completed`, `created_at`, `updated_at` |
+| `tasks` | `Task` | `user_id` → `users`, `id`, `name`, `description`, `due_date`, `priority`, `completed`, `effort_minutes`, `start_date`, `pinned_date`, `created_at`, `updated_at` |
 | `project_tasks` | `Project.taskIds` | `user_id`, `project_id` → `projects`, `task_id` → `tasks`, `position` |
 | `project_links` | `Project.links` | `user_id`, `project_id` → `projects`, `position`, `label`, `url` |
 | `project_tags` | `Project.tagIds` | `user_id`, `project_id` → `projects`, `tag_id` → `tags`, `position` |
@@ -297,12 +358,14 @@ Defined in the files in `migrations/`. Each field has its own column, and each a
 | `google_accounts` | Connected Google accounts | `user_id` → `users`, `email`, `refresh_token`, `synced_at`, `created_at` |
 | `google_auth_states` | Connections to Google not back yet | `id` (the OAuth state), `user_id` → `users`, `code_verifier` (PKCE), `expires_at` |
 | `google_events` | `Task.googleAccount`, and the event each imported task came from | `user_id`, `task_id` → `tasks`, `account_email`, `calendar_id`, `event_id`, `starts_at`, `ends_at` |
+| `user_settings` | `UserSettings`, one row per account, written by its first `PUT /api/settings` | `user_id` → `users`, `capacity_mon` … `capacity_sun` (minutes), `buffer`, `w_u`, `k`, `horizon_days`, `preset`, `updated_at` |
 | `task_events` | The change tracking log (see below), append-only | `user_id` → `users`, `id` (increasing), `at`, `kind`, `task_id`, `project_id`, `old_value`, `new_value`, `delivery_date_at_time`, `source`, `task_source` |
 
 - `project_tasks` links projects to tasks. A task can be in several projects.
 - All foreign keys cascade on delete. `task_events` has none to `tasks` or `projects`, so events outlive what they're about, but deleting a user deletes their events. Deleting a task removes it from its projects and from other tasks' relations, deleting a project removes its links and tags, deleting a tag removes it from its projects, and deleting a user removes their sessions and all of their data.
 - Tag names are unique within an account, ignoring case. A new account starts with the tags School, Work and Personal, plus the built-in Archive tag (id `archive`).
-- `CHECK` constraints limit `priority` to `low`, `medium`, `high` or `urgent`; relation `type` to `blocks`, `blocked_by`, `subtask_of`, `parent_of` or `related_to`; and `completed` to `0` or `1`.
+- `CHECK` constraints limit `priority` to `low`, `medium`, `high` or `urgent`; relation `type` to `blocks`, `blocked_by`, `subtask_of`, `parent_of` or `related_to`; and `completed` to `0` or `1`. `effort_minutes` must be above 0, and `start_date` can't be after `due_date`. In `user_settings`, each capacity is 0 to 1,440, `buffer` above 0, `w_u` and `k` at least 0, `horizon_days` above 0, and `preset` one of `balanced`, `deadline`, `importance` or `blockers`.
+- Scores and forecasts worked out from estimates, dates and settings are never stored.
 - Dates are ISO 8601 strings such as `2026-10-25`. Timestamps are UTC, such as `2026-10-25T15:08:26.123Z`.
 
 ### Change tracking
@@ -327,7 +390,7 @@ Pam logs changes to `task_events` so that scope creep, and how well projects wer
 - Events are worked out from the data before and after a save, by `diffEvents` in `src/types/events.ts`, which the Worker and the fake API both run. Membership comes from each project's tasks before and after, whichever form changed it.
 - Events are written in the same batch as the change, so a refused (`409`) or failed save logs nothing. Only real changes are logged: a save that changes nothing logs nothing.
 
-**What isn't logged:** names, descriptions, priorities, relations, links, tags (including the Archive tag a completed project gets), the order of a project's tasks, and a sync's name or description updates. Nor is a sync's due date that stays put because of a clash.
+**What isn't logged:** names, descriptions, priorities, estimates, start and pinned dates, relations, links, tags (including the Archive tag a completed project gets), the order of a project's tasks, and a sync's name or description updates. Nor is a sync's due date that stays put because of a clash.
 
 **Backfilled rows are approximate.** Migration `0007` logged the data from before tracking began as `source = 'backfill'`: one `task_created` per task at its `created_at`, with its due date as it was at the migration (not necessarily its first), and one `task_added_to_project` per project it was in, also at the task's `created_at`, because when it really joined isn't known. There are no backfilled `project_created` events. Leave backfilled rows out of anything that depends on timing.
 
@@ -418,8 +481,8 @@ There are three layers of tests:
 | Layer | Command | Where | What it covers |
 |---|---|---|---|
 | Unit | `pnpm test:unit` | `src/__tests__/` | Components, stores, models and the API client in a simulated browser (jsdom). `fetch` is replaced by an in-memory fake API (`fakeApi.ts`), so no server or database is needed. |
-| Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers signing up and in, sessions, keeping accounts' data apart, routing, saving and reading every field, tags, migrations, validation, transactions, cascading deletes, the schema's constraints and change tracking. The Google Calendar import runs against a fake Google that stands in for `fetch` (`google.spec.ts`). The database is emptied before every test. |
-| End-to-end | `pnpm test:e2e` | `cypress/e2e/` | The production build in a real browser (Cypress), with the Worker and a local D1 database. Covers creating and editing projects and tasks, managing tags, the tile preview, sorting, the calendar, and how errors are shown. |
+| Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers signing up and in, sessions, keeping accounts' data apart, routing, saving and reading every field, tags, settings, estimates and start dates, blocking loops, migrations, validation, transactions, cascading deletes, the schema's constraints and change tracking. The Google Calendar import runs against a fake Google that stands in for `fetch` (`google.spec.ts`). The database is emptied before every test. |
+| End-to-end | `pnpm test:e2e` | `cypress/e2e/` | The production build in a real browser (Cypress), with the Worker and a local D1 database. Covers creating and editing projects and tasks, managing tags, the tile preview, sorting, the calendar, Suggested with its quick actions, the workload and the settings page (on a wide screen and a phone), and how errors are shown. |
 
 `pnpm test` runs the unit and integration tests together.
 
@@ -451,10 +514,11 @@ Not built yet:
 - Task list view
 - Project list view, including completed projects
 - Messages
-- Settings and profile (the calendar's week start would move there from the browser's storage), including changing your password while signed in
+- More settings and a profile (the calendar's week start would move to the settings page from the browser's storage), including changing your password while signed in
 - **Rescheduling from the calendar**: drag a chip to another day on wide screens; on phones (where drag and drop doesn't work) tap it, then **Move to…** with a date picker. Dragging a task from **No due date** onto a day gives it that date. Saves through `taskList.saveTask` or `projectList.saveProject`, showing the move straight away and undoing it if the save fails. Items already carry `editable` (false for now) to decide what can be moved. A move that clashes with a delivery date comes back from the Worker as a `409`, and should offer the same clash fixes the forms do.
 - **Google Calendar, both ways**: events are imported as tasks one way (see [Google Calendar](#google-calendar)). Still to do: send changes made in Pam back to Google, using the event's etag and update time to detect conflicting edits, and show events on the calendar without making them tasks, through a third adapter beside `taskToItems` and `projectToItems` in `src/types/calendar.ts`. That adapter already asks for items by date range (as Google's API does), keeps a loading and error state per source, places timed events after all-day ones, and has room for time zones and Google's exclusive end dates on all-day events. Syncing on a schedule (a Cron Trigger) rather than by button would also fit here.
 - **Logo**: a logo for Pam, to make it look the part.
+- **Prioritisation and workload forecast**, in stages ([docs/priority-algorithm.md](docs/priority-algorithm.md)). Built in five stages: estimates, start dates and pinned dates; refusing blocking loops; the scoring (`prioritise` in `src/types/priority.ts`); the Suggested view of Upcoming with quick actions; the settings page with presets; the workload forecast with project pace badges; and the API for a voice front-end. Still to do: the voice front-end itself (see the LLM layer below).
 - **LLM layer**: summarise what needs doing, quickly pick out the high priority tasks, and explain how tasks relate to each other.
 - **Android app**: Pam on Android, for home screen widgets and notifications.
 - **Data analytics**: track how Pam is used over time: the rate tasks and projects are created, the rate tasks are completed, and the number of tasks per project. The data is already being logged ([Change tracking](#change-tracking)), and `isPlanned` can tell planned tasks from ones added later. What's left is a view that reads the log through `GET /api/events`.

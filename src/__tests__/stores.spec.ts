@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useProjectList } from '../stores/projectList'
+import { useSettings } from '../stores/settings'
 import { NO_TAG, useProjectView } from '../stores/projectView'
 import { useTagList } from '../stores/tagList'
 import { useTaskList } from '../stores/taskList'
 import { createEmptyProject, type Project } from '../types/project'
+import { DEFAULT_SETTINGS } from '../types/settings'
 import { ARCHIVE_TAG_ID } from '../types/tag'
 import { createEmptyTask, type Task } from '../types/task'
 import { fakeApi } from './fakeApi'
@@ -299,5 +301,22 @@ describe('projectView', () => {
     localStorage.setItem('pam.projectView', JSON.stringify({ sort: 'by-colour', tagIds: [3], priorities: ['asap', 'low'] }))
     setActivePinia(createPinia())
     expect(useProjectView().$state).toMatchObject({ sort: 'delivery-date', tagIds: [], priorities: ['low'] })
+  })
+})
+
+describe('settings', () => {
+  it('starts with the defaults, then loads and saves the settings of the account', async () => {
+    const api = fakeApi()
+    const store = useSettings()
+    expect(store.settings).toEqual(DEFAULT_SETTINGS)
+
+    api.settings = { ...DEFAULT_SETTINGS, buffer: 1.5 }
+    await store.load()
+    expect(store.settings.buffer).toBe(1.5)
+
+    await store.save({ ...DEFAULT_SETTINGS, preset: 'blockers', wU: 1, k: 2, horizonDays: 2 })
+    expect(api.requests).toEqual(['GET /api/settings', 'PUT /api/settings'])
+    expect(store.settings).toEqual({ ...DEFAULT_SETTINGS, preset: 'blockers', k: 2 })
+    expect(api.settings).toEqual(store.settings)
   })
 })

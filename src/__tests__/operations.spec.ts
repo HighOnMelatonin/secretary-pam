@@ -1,5 +1,18 @@
 import { describe, it, expect } from 'vitest'
-import { planProjectSave, planTaskSave, UnknownReference, type Plan } from '../types/operations'
+import {
+  ActionRefused,
+  applyTaskPatch,
+  BlockLoop,
+  planProjectSave,
+  planTaskAction,
+  planTaskPatch,
+  planTaskSave,
+  planTasksImport,
+  UnknownReference,
+  type Plan,
+  type State,
+  type TaskAction,
+} from '../types/operations'
 import { createEmptyProject, type Project } from '../types/project'
 import { ARCHIVE_TAG_ID } from '../types/tag'
 import { createEmptyTask, type Task } from '../types/task'
@@ -266,5 +279,189 @@ describe('planProjectSave', () => {
     expect(() => planProjectSave(state, { project: state.projects[0]!, dueDates: { gone: '2026-11-01' } })).toThrow(
       UnknownReference,
     )
+  })
+})
+
+describe('blocking loops', () => {
+  const loopOf = (plan: () => Plan) => {
+    try {
+      plan()
+    } catch (e) {
+      if (e instanceof BlockLoop) return e.loop
+      throw e
+    }
+    return null
+  }
+
+  it('refuses a task save whose relation closes a loop, stored on either task', () => {
+    const state = { tasks: [task('a', { relations: [{ taskId: 'b', type: 'blocks' }] }), task('b')], projects: [] }
+    expect(loopOf(() => planTaskSave(state, { task: task('b', { relations: [{ taskId: 'a', type: 'blocks' }] }) }))).toEqual([
+      'b',
+      'a',
+    ])
+    // b blocked by a is the edge that's already there, so this one is fine
+    expect(loopOf(() => planTaskSave(state, { task: task('b', { relations: [{ taskId: 'a', type: 'blocked_by' }] }) }))).toBeNull()
+  })
+
+  it('finds a longer loop that a blocked by relation closes', () => {
+    // a blocks b, and c is blocked by b; a blocked by c closes a -> b -> c -> a
+    const state = {
+      tasks: [task('a', { relations: [{ taskId: 'b', type: 'blocks' }] }), task('b'), task('c', { relations: [{ taskId: 'b', type: 'blocked_by' }] })],
+      projects: [],
+    }
+    const saved = task('a', { relations: [{ taskId: 'b', type: 'blocks' }, { taskId: 'c', type: 'blocked_by' }] })
+    expect(loopOf(() => planTaskSave(state, { task: saved }))).toEqual(['c', 'a', 'b'])
+  })
+
+  it('lets saves through that leave a loop already in the data as it is', () => {
+    const state = {
+      tasks: [task('a', { relations: [{ taskId: 'b', type: 'blocks' }] }), task('b', { relations: [{ taskId: 'a', type: 'blocks' }] })],
+      projects: [],
+    }
+    const done = { ...state.tasks[0]!, completed: true }
+    expect(changesOf(planTaskSave(state, { task: done })).tasks).toEqual([done])
+  })
+})
+
+describe('start dates moved back with a due date', () => {
+  it('moves a start date back when a project save moves the due date before it', () => {
+    const state = {
+      tasks: [task('t', { dueDate: '2026-12-10', startDate: '2026-12-05' }), task('u', { dueDate: '2026-12-10', startDate: '2026-12-01' })],
+      projects: [project('p', { taskIds: ['t', 'u'] })],
+    }
+    const changes = changesOf(
+      planProjectSave(state, { project: state.projects[0]!, dueDates: { t: '2026-12-03', u: '2026-12-03' } }),
+    )
+    expect(changes.tasks).toEqual([
+      task('t', { dueDate: '2026-12-03', startDate: '2026-12-03' }),
+      task('u', { dueDate: '2026-12-03', startDate: '2026-12-01' }),
+    ])
+  })
+
+  it('moves the start date of an imported task back to its due date', () => {
+    const state = { tasks: [task('t', { dueDate: '2026-12-10', startDate: '2026-12-05' })], projects: [project('p', { taskIds: ['t'] })] }
+    const changes = changesOf(planTasksImport(state, 'p', { tasks: [task('t', { dueDate: '2026-12-02', startDate: '2026-12-05' })] }))
+    expect(changes.tasks).toEqual([task('t', { dueDate: '2026-12-02', startDate: '2026-12-02' })])
+  })
+
+  it('leaves a task save as it is, since the task form shows the start date', () => {
+    const late = task('t', { dueDate: '2026-12-02', startDate: '2026-12-05' })
+    expect(changesOf(planTaskSave({ tasks: [], projects: [] }, { task: late })).tasks).toEqual([late])
+  })
+})
+
+describe('planTaskAction', () => {
+  const today = '2026-11-16'
+  const stored = task('t', { dueDate: '2026-11-20', effortMinutes: 90, relations: [{ taskId: 'u', type: 'blocks' }] })
+  const state = { tasks: [stored, task('u')], projects: [project('p', { taskIds: ['t'] })] }
+  const acted = (action: TaskAction, from = state) => changesOf(planTaskAction(from, 't', action)).tasks
+  const refusal = (action: TaskAction, from = state) => {
+    try {
+      planTaskAction(from, 't', action)
+    } catch (e) {
+      if (e instanceof ActionRefused) return e.message
+      throw e
+    }
+    return null
+  }
+
+  it('pins the task to today, and unpins it', () => {
+    expect(acted({ action: 'do_today', today })).toEqual([{ ...stored, pinnedDate: today }])
+    const pinned = { tasks: [{ ...stored, pinnedDate: today }, task('u')], projects: state.projects }
+    expect(acted({ action: 'unpin' }, pinned)).toEqual([stored])
+  })
+
+  it('starts the task tomorrow, dropping a pin to today', () => {
+    expect(acted({ action: 'not_today', today })).toEqual([{ ...stored, startDate: '2026-11-17' }])
+    const pinned = { tasks: [{ ...stored, pinnedDate: today }, task('u')], projects: state.projects }
+    expect(acted({ action: 'not_today', today }, pinned)).toEqual([{ ...stored, startDate: '2026-11-17' }])
+  })
+
+  it('refuses Not today for a task due today or overdue', () => {
+    const dueToday = { tasks: [{ ...stored, dueDate: today }], projects: [] }
+    expect(refusal({ action: 'not_today', today }, dueToday)).toBe(`"t": It's due today, so it can't wait until tomorrow`)
+    const overdue = { tasks: [{ ...stored, dueDate: '2026-11-13' }], projects: [] }
+    expect(refusal({ action: 'not_today', today }, overdue)).toBe(`"t": It's overdue, so it can't wait until tomorrow`)
+  })
+
+  it('moves the priority one level, refusing past either end', () => {
+    expect(acted({ action: 'importance', direction: 'up' })).toEqual([{ ...stored, priority: 'high' }])
+    expect(acted({ action: 'importance', direction: 'down' })).toEqual([{ ...stored, priority: 'low' }])
+    const urgent = { tasks: [{ ...stored, priority: 'urgent' as const }], projects: [] }
+    expect(refusal({ action: 'importance', direction: 'up' }, urgent)).toBe('"t" is already urgent priority')
+    const low = { tasks: [{ ...stored, priority: 'low' as const }], projects: [] }
+    expect(refusal({ action: 'importance', direction: 'down' }, low)).toBe('"t" is already low priority')
+  })
+
+  it('sets or clears the estimate', () => {
+    expect(acted({ action: 'estimate', effortMinutes: 240 })).toEqual([{ ...stored, effortMinutes: 240 }])
+    const { effortMinutes: _, ...unestimated } = stored
+    expect(acted({ action: 'estimate', effortMinutes: null })).toEqual([unestimated])
+  })
+
+  it('keeps everything else about the task, its Google account included', () => {
+    const imported = { tasks: [{ ...stored, googleAccount: 'me@example.com' }], projects: [] }
+    expect(acted({ action: 'do_today', today }, imported)).toEqual([{ ...stored, googleAccount: 'me@example.com', pinnedDate: today }])
+  })
+
+  it('refuses an unknown task', () => {
+    expect(() => planTaskAction(state, 'missing', { action: 'unpin' })).toThrow(UnknownReference)
+  })
+
+  it('gives each refusal a code and its values, besides the sentence', () => {
+    const sentenceOf = (action: TaskAction, from: State) => {
+      try {
+        planTaskAction(from, 't', action)
+      } catch (e) {
+        if (e instanceof ActionRefused) return e.sentence
+        throw e
+      }
+      return null
+    }
+    const at = (fields: Partial<Task>) => ({ tasks: [{ ...stored, ...fields }], projects: [] })
+    expect(sentenceOf({ action: 'not_today', today }, at({ dueDate: today }))).toEqual({
+      code: 'due_today',
+      params: { taskId: 't', task: 't', dueDate: today },
+      text: `"t": It's due today, so it can't wait until tomorrow`,
+    })
+    expect(sentenceOf({ action: 'not_today', today }, at({ dueDate: '2026-11-13' }))!.code).toBe('overdue')
+    expect(sentenceOf({ action: 'importance', direction: 'up' }, at({ priority: 'urgent' }))).toEqual({
+      code: 'priority_at_top',
+      params: { taskId: 't', task: 't', priority: 'urgent' },
+      text: '"t" is already urgent priority',
+    })
+    expect(sentenceOf({ action: 'importance', direction: 'down' }, at({ priority: 'low' }))!.code).toBe('priority_at_bottom')
+  })
+})
+
+describe('partial task updates', () => {
+  const stored = task('t', {
+    description: 'Chapter 3',
+    dueDate: '2026-11-20',
+    effortMinutes: 90,
+    startDate: '2026-11-18',
+    pinnedDate: '2026-11-16',
+    googleAccount: 'me@example.com',
+  })
+
+  it('changes only the fields the patch names', () => {
+    expect(applyTaskPatch(stored, { completed: true, priority: 'high' })).toEqual({ ...stored, completed: true, priority: 'high' })
+    expect(applyTaskPatch(stored, {})).toEqual(stored)
+  })
+
+  it('clears the due date and the optional fields with null', () => {
+    const { effortMinutes: _e, startDate: _s, pinnedDate: _p, ...bare } = stored
+    expect(applyTaskPatch(stored, { effortMinutes: null, startDate: null, pinnedDate: null, dueDate: null })).toEqual({ ...bare, dueDate: null })
+  })
+
+  it('plans the patched task as a save, under the same rules', () => {
+    const state = { tasks: [stored, task('u', { relations: [{ taskId: 't', type: 'blocks' }] })], projects: [project('p', { taskIds: ['t'] })] }
+    expect(changesOf(planTaskPatch(state, 't', { task: { completed: true } }))).toMatchObject({
+      tasks: [{ ...stored, completed: true }],
+      projects: [{ id: 'p', tagIds: [ARCHIVE_TAG_ID] }],
+    })
+    expect(() => planTaskPatch(state, 't', { task: { relations: [{ taskId: 'u', type: 'blocks' }] } })).toThrow(BlockLoop)
+    expect(() => planTaskPatch(state, 'missing', { task: {} })).toThrow(UnknownReference)
+    expect(changesOf(planTaskPatch(state, 't', { task: {}, projectIds: [] })).projects).toEqual([project('p')])
   })
 })

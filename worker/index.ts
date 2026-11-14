@@ -8,11 +8,18 @@
 //   POST   /api/projects/:id/import -> saves { tasks } into the project, returns the Changes it made
 //   GET    /api/tasks          -> Task[]
 //   PUT    /api/tasks/:id      -> saves { task, projectIds?, deliveryDates? }, returns the Changes it made
+//   PATCH  /api/tasks/:id      -> changes only the fields in { task, projectIds?, deliveryDates? }, returns the Changes
+//   POST   /api/tasks/:id/action -> does one quick action (a TaskAction), returns the Changes it made
 //   DELETE /api/tasks/:id      -> 204
 //   GET    /api/tags           -> Tag[]
 //   PUT    /api/tags/:id       -> saves the Tag in the body, returns it
 //   DELETE /api/tags/:id       -> 204
 //   GET    /api/events         -> LoggedEvent[], oldest first; ?projectId= and ?since= narrow it down
+//   GET    /api/settings       -> UserSettings, the defaults until the user saves their own
+//   PUT    /api/settings       -> saves the UserSettings in the body, returns them
+//   POST   /api/settings/preset, /api/settings/preview -> see settings.ts
+//   GET    /api/priorities?today=YYYY-MM-DD -> exactly what prioritise() returns (src/types/priority.ts)
+//   GET    /api/forecast?today=YYYY-MM-DD   -> exactly what forecast() returns (src/types/forecast.ts)
 //
 // plus the sign-in routes in auth.ts and the Google Calendar routes in google.ts. Each object is split across its own table and the tables
 // holding its arrays when saved, and put back together when read.
@@ -21,7 +28,8 @@
 // makes a task due after a project's delivery date is refused with 409 and the clashes, and a
 // project whose last task is completed is archived. The Changes ({ tasks, projects }) are every
 // task and project whose stored value changed. A body that isn't wrapped in { task } or
-// { project } (a bare Task or Project) is refused with 400.
+// { project } (a bare Task or Project) is refused with 400. So is a task save that would make a
+// loop of blocking tasks, with the ids around it as `loop`.
 //
 // Saves and deletes of tasks and projects also log what they changed to task_events
 // (src/types/events.ts), in the same batch, so a refused or failed save logs nothing.
@@ -36,6 +44,7 @@ import {
   isSafeUrl,
   LINK_PROTOCOLS,
   MAX_DESCRIPTION_LENGTH,
+  MAX_EFFORT_MINUTES,
   MAX_ID_LENGTH,
   MAX_LIST_LENGTH,
   MAX_NAME_LENGTH,
@@ -53,24 +62,35 @@ import type { Project, ReferenceLink } from '../src/types/project'
 import { ARCHIVE_TAG_ID, DEFAULT_TAG_COLOR, isHexColor, type Tag } from '../src/types/tag'
 import type { TaskEvent } from '../src/types/events'
 import {
+  ActionRefused,
+  applyTaskPatch,
+  BlockLoop,
+  PATCH_FIELDS,
   planProjectDelete,
   planProjectSave,
   planTaskDelete,
   planTaskSave,
+  planTaskAction,
   planTasksImport,
+  TASK_ACTIONS,
   UnknownReference,
   type Changes,
   type Plan,
   type ProjectSave,
   type State,
+  type TaskAction,
+  type TaskPatch,
   type TaskSave,
   type TasksImport,
 } from '../src/types/operations'
-import type { Clash } from '../src/types/rules'
+import { describeLoop, startsAfterDue, type Clash } from '../src/types/rules'
 import { currentUser, handleAuth, HttpError } from './auth'
 import { eventStatements, listEvents, type EventQuery } from './events'
 import { handleGoogle } from './google'
 import { migrateOnce } from './migrate'
+import { forecast } from '../src/types/forecast'
+import { prioritise } from '../src/types/priority'
+import { getSettings, handleSettings } from './settings'
 
 const MAX_BODY_BYTES = 100_000
 // An import can carry a whole project's tasks, each with a full-length description
@@ -94,6 +114,16 @@ class Conflict extends HttpError {
   }
 }
 
+// Thrown for a save that would make a loop of blocking tasks; becomes a 400 response with the loop
+class LoopRefused extends HttpError {
+  constructor(
+    message: string,
+    readonly loop: string[],
+  ) {
+    super(400, message)
+  }
+}
+
 // Rows as stored in D1
 interface TaskRow {
   id: string
@@ -102,6 +132,9 @@ interface TaskRow {
   due_date: string | null
   priority: Priority
   completed: 0 | 1
+  effort_minutes: number | null
+  start_date: string | null
+  pinned_date: string | null
   account_email: string | null // from google_events, for imported tasks
 }
 
@@ -151,8 +184,10 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 const isString = (value: unknown): value is string => typeof value === 'string'
 const isId = (value: unknown): value is string => isString(value) && value.length <= MAX_ID_LENGTH
-const isDateOrNull = (value: unknown): value is string | null =>
-  value === null || (isString(value) && /^\d{4}-\d{2}-\d{2}$/.test(value))
+const isDate = (value: unknown): value is string => isString(value) && /^\d{4}-\d{2}-\d{2}$/.test(value)
+const isDateOrNull = (value: unknown): value is string | null => value === null || isDate(value)
+// Fields a body may leave out, or send as null, to say they aren't set
+const isUnset = (value: unknown): value is null | undefined => value === undefined || value === null
 const isList = (value: unknown): value is unknown[] => Array.isArray(value) && value.length <= MAX_LIST_LENGTH
 // An object from ids to dates, as in deliveryDates and dueDates
 const isDateMap = (value: unknown): value is Record<string, string | null> =>
@@ -192,11 +227,27 @@ function checkCommon(
   check(oneOf(PRIORITIES, body.priority), `priority must be one of ${PRIORITIES.join(', ')}`)
 }
 
-function parseTask(body: unknown, id: string): Task {
+// A start date after the due date is refused, except in an import, whose plan moves it back to the
+// due date instead (planTasksImport), since the import dialog doesn't show start dates
+function parseTask(body: unknown, id: string, { startAfterDue = 'refuse' } = {}): Task {
   checkCommon(body, id)
-  const { dueDate, completed, relations } = body
+  const { dueDate, completed, relations, effortMinutes, startDate, pinnedDate } = body
   check(isDateOrNull(dueDate), 'dueDate must be null or a YYYY-MM-DD date')
   check(typeof completed === 'boolean', 'completed must be true or false')
+  check(
+    isUnset(effortMinutes) ||
+      (typeof effortMinutes === 'number' &&
+        Number.isInteger(effortMinutes) &&
+        effortMinutes > 0 &&
+        effortMinutes <= MAX_EFFORT_MINUTES),
+    `effortMinutes must be left out, null or a whole number of minutes from 1 to ${MAX_EFFORT_MINUTES}`,
+  )
+  check(isUnset(startDate) || isDate(startDate), 'startDate must be left out, null or a YYYY-MM-DD date')
+  check(isUnset(pinnedDate) || isDate(pinnedDate), 'pinnedDate must be left out, null or a YYYY-MM-DD date')
+  check(
+    startAfterDue === 'allow' || !startsAfterDue({ startDate: startDate ?? undefined, dueDate }),
+    'startDate must be on or before dueDate',
+  )
   check(
     isList(relations) && relations.every(isRelation),
     `relations must be a list of at most ${MAX_LIST_LENGTH} { taskId, type } with type one of ${RELATION_TYPES.join(', ')}`,
@@ -212,6 +263,9 @@ function parseTask(body: unknown, id: string): Task {
     relations: relations.map((r) => ({ taskId: r.taskId, type: r.type })),
     priority: body.priority,
     completed,
+    ...(isUnset(effortMinutes) ? {} : { effortMinutes }),
+    ...(isUnset(startDate) ? {} : { startDate }),
+    ...(isUnset(pinnedDate) ? {} : { pinnedDate }),
   }
 }
 
@@ -244,6 +298,12 @@ function parseProject(body: unknown, id: string): Project {
 function parseTaskSave(body: unknown, id: string): TaskSave {
   check(isObject(body), 'Body must be a JSON object')
   check(Object.hasOwn(body, 'task'), 'Body must be { task, projectIds?, deliveryDates? }')
+  return { task: parseTask(body.task, id), ...parseMembership(body) }
+}
+
+// What a task save or patch may carry besides the task: the projects it should be in, and the
+// delivery dates moved to fit it
+function parseMembership(body: Record<string, unknown>): Omit<TaskSave, 'task'> {
   const { projectIds, deliveryDates } = body
   check(
     projectIds === undefined || (isList(projectIds) && projectIds.every(isId)),
@@ -254,7 +314,20 @@ function parseTaskSave(body: unknown, id: string): TaskSave {
     deliveryDates === undefined || isDateMap(deliveryDates),
     'deliveryDates must map project ids to null or a YYYY-MM-DD date',
   )
-  return { task: parseTask(body.task, id), projectIds, deliveryDates }
+  return { projectIds, deliveryDates }
+}
+
+// A partial task save: { task, projectIds?, deliveryDates? }, where task holds only the fields to
+// change (PATCH_FIELDS in operations.ts). Null clears the due date and the optional fields. The
+// patched task is checked as a whole when the save is planned, so the rules are those of a PUT.
+function parseTaskPatch(body: unknown, id: string): { patch: TaskPatch; projectIds?: string[]; deliveryDates?: Record<string, string | null> } {
+  check(isObject(body) && isObject(body.task), 'Body must be { task, projectIds?, deliveryDates? }, with task holding the fields to change')
+  const { task } = body
+  const unknown = Object.keys(task).filter((key) => !(PATCH_FIELDS as readonly string[]).includes(key) && key !== 'id')
+  check(unknown.length === 0, `task can only change ${PATCH_FIELDS.join(', ')}; not ${unknown.join(', ')}`)
+  check(task.id === undefined || task.id === id, 'id must match the URL')
+  const { id: _, ...patch } = task
+  return { patch: patch as TaskPatch, ...parseMembership(body) }
 }
 
 // A project save: { project, dueDates? }
@@ -275,13 +348,41 @@ function parseTasksImport(body: unknown): TasksImport {
   const parsed = tasks.map((task, i) => {
     try {
       check(isObject(task) && isId(task.id), `id must be a string of at most ${MAX_ID_LENGTH} characters`)
-      return parseTask(task, task.id)
+      return parseTask(task, task.id, { startAfterDue: 'allow' })
     } catch (e) {
       throw e instanceof BadRequest ? new BadRequest(`tasks[${i}]: ${e.message}`) : e
     }
   })
   check(allDifferent(parsed.map((t) => t.id)), 'tasks must not list a task twice')
   return { tasks: parsed }
+}
+
+// A quick action: { action, ... } with what that action needs (TaskAction in operations.ts)
+function parseTaskAction(body: unknown): TaskAction {
+  check(isObject(body) && oneOf(TASK_ACTIONS, body.action), `action must be one of ${TASK_ACTIONS.join(', ')}`)
+  switch (body.action) {
+    case 'do_today':
+    case 'not_today':
+      check(isDate(body.today), 'today must be a YYYY-MM-DD date')
+      return { action: body.action, today: body.today }
+    case 'unpin':
+      return { action: 'unpin' }
+    case 'importance':
+      check(body.direction === 'up' || body.direction === 'down', 'direction must be up or down')
+      return { action: 'importance', direction: body.direction }
+    case 'estimate': {
+      const { effortMinutes } = body
+      check(
+        effortMinutes === null ||
+          (typeof effortMinutes === 'number' &&
+            Number.isInteger(effortMinutes) &&
+            effortMinutes > 0 &&
+            effortMinutes <= MAX_EFFORT_MINUTES),
+        `effortMinutes must be null or a whole number of minutes from 1 to ${MAX_EFFORT_MINUTES}`,
+      )
+      return { action: 'estimate', effortMinutes }
+    }
+  }
 }
 
 // A tag to save. color may be left out, as by clients from before tags had colours: a new tag
@@ -320,6 +421,9 @@ async function listTasks(db: D1Database, userId: string): Promise<Task[]> {
     relations: (relationsByTask.get(row.id) ?? []).map((r) => ({ taskId: r.related_task_id, type: r.type })),
     priority: row.priority,
     completed: row.completed === 1,
+    ...(row.effort_minutes !== null ? { effortMinutes: row.effort_minutes } : {}),
+    ...(row.start_date !== null ? { startDate: row.start_date } : {}),
+    ...(row.pinned_date !== null ? { pinnedDate: row.pinned_date } : {}),
     ...(row.account_email ? { googleAccount: row.account_email } : {}),
   }))
 }
@@ -330,13 +434,26 @@ function taskStatements(db: D1Database, userId: string, task: Task): D1PreparedS
   return [
     db
       .prepare(
-        `INSERT INTO tasks (id, name, description, due_date, priority, completed, user_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        `INSERT INTO tasks (id, name, description, due_date, priority, completed, effort_minutes, start_date,
+           pinned_date, user_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
          ON CONFLICT (user_id, id) DO UPDATE SET name = excluded.name, description = excluded.description,
            due_date = excluded.due_date, priority = excluded.priority, completed = excluded.completed,
-           updated_at = ${NOW}`,
+           effort_minutes = excluded.effort_minutes, start_date = excluded.start_date,
+           pinned_date = excluded.pinned_date, updated_at = ${NOW}`,
       )
-      .bind(task.id, task.name, task.description, task.dueDate, task.priority, task.completed ? 1 : 0, userId),
+      .bind(
+        task.id,
+        task.name,
+        task.description,
+        task.dueDate,
+        task.priority,
+        task.completed ? 1 : 0,
+        task.effortMinutes ?? null,
+        task.startDate ?? null,
+        task.pinnedDate ?? null,
+        userId,
+      ),
     db.prepare('DELETE FROM task_relations WHERE user_id = ?1 AND task_id = ?2').bind(userId, task.id),
     ...task.relations.map((relation, position) =>
       db
@@ -429,7 +546,13 @@ async function saveWithRules(
   saving: State,
 ): Promise<Changes> {
   const [tasks, projects] = await Promise.all([listTasks(db, userId), listProjects(db, userId)])
-  const result = plan({ tasks, projects })
+  let result: Plan
+  try {
+    result = plan({ tasks, projects })
+  } catch (e) {
+    if (!(e instanceof BlockLoop)) throw e
+    throw new LoopRefused(loopMessage(e.loop, [...tasks, ...saving.tasks]), e.loop)
+  }
   if (!result.ok) {
     const message = clashMessage(result.clashes[0]!, [...tasks, ...saving.tasks], [...projects, ...saving.projects])
     throw new Conflict(message, result.clashes)
@@ -446,6 +569,13 @@ function clashMessage(clash: Clash, tasks: Task[], projects: Project[]) {
     `"${name(tasks, clash.taskId)}" is due ${clash.dueDate}, ` +
     `after "${name(projects, clash.projectId)}"'s delivery date (${clash.deliveryDate})`
   )
+}
+
+// e.g. This would make a loop of blocking tasks: "A" blocks "B", which blocks "A". The last task
+// with the id gives its name, as in clashMessage.
+function loopMessage(loop: string[], tasks: Task[]) {
+  const name = (id: string) => tasks.findLast((t) => t.id === id)?.name ?? id
+  return `This would make a loop of blocking tasks: ${describeLoop(loop, name)}`
 }
 
 // Saves imported tasks into a project as one batch, so a clash or a failure saves none of them.
@@ -484,6 +614,23 @@ async function deleteLogged(
     ...eventStatements(db, userId, new Date().toISOString(), plan({ tasks, projects }, id)),
     db.prepare(`DELETE FROM ${table} WHERE user_id = ?1 AND id = ?2`).bind(userId, id),
   ])
+}
+
+// Prioritisation and the forecast
+
+// ?today=, the user's local date, which only their device knows
+function parseToday(params: URLSearchParams): string {
+  const today = params.get('today')
+  check(isDate(today), "today must be a YYYY-MM-DD date: the user's local date")
+  return today
+}
+
+// GET /api/priorities and /api/forecast: what the shared functions return, from the stored tasks,
+// projects and settings, as the app works them out. Nothing is stored.
+async function planning(db: D1Database, userId: string, name: 'priorities' | 'forecast', today: string) {
+  const [tasks, projects, settings] = await Promise.all([listTasks(db, userId), listProjects(db, userId), getSettings(db, userId)])
+  const priorities = prioritise(tasks, projects, settings, today)
+  return name === 'priorities' ? priorities : forecast(tasks, projects, settings, today, priorities)
 }
 
 // Events
@@ -607,8 +754,17 @@ export default {
     const resource = name !== undefined && Object.hasOwn(RESOURCES, name) ? RESOURCES[name] : undefined
     const isGoogle = name === 'google' // the only routes with more than one part after the name
     const isEvents = name === 'events' && !rawId // read only, so there is no /api/events/:id
+    // One per user, so there is no /api/settings/:id, only /api/settings/preset and /preview
+    const isSettings = name === 'settings' && rest.length === 0
+    const isPlanning = (name === 'priorities' || name === 'forecast') && !rawId
+    const isPatch = name === 'tasks' && rawId !== undefined && rest.length === 0 && request.method === 'PATCH'
     const isImport = name === 'projects' && rest.length === 1 && rest[0] === 'import'
-    if (api !== 'api' || !(resource || name === 'auth' || isGoogle || isEvents) || (rest.length > 0 && !isGoogle && !isImport)) {
+    const isAction = name === 'tasks' && rest.length === 1 && rest[0] === 'action'
+    if (
+      api !== 'api' ||
+      !(resource || name === 'auth' || isGoogle || isEvents || isSettings || isPlanning) ||
+      (rest.length > 0 && !isGoogle && !isImport && !isAction)
+    ) {
       return error(404, 'Not found')
     }
 
@@ -622,11 +778,39 @@ export default {
         if (request.method !== 'GET') return error(405, 'Method not allowed')
         return json(await listEvents(env.DB, user.id, parseEventQuery(url.searchParams)))
       }
+      if (isSettings) {
+        const loadState = async () => {
+          const [tasks, projects] = await Promise.all([listTasks(env.DB, user.id), listProjects(env.DB, user.id)])
+          return { tasks, projects }
+        }
+        return json(await handleSettings(env.DB, request, user.id, rawId, () => readJson(request), loadState))
+      }
+      if (isPlanning) {
+        if (request.method !== 'GET') return error(405, 'Method not allowed')
+        return json(await planning(env.DB, user.id, name as 'priorities' | 'forecast', parseToday(url.searchParams)))
+      }
       if (!resource) return await handleGoogle(env, request, user, [rawId, ...rest], () => readJson(request))
       const id = rawId ? decodeId(rawId) : undefined
       if (isImport) {
         if (!id || request.method !== 'POST') return error(405, 'Method not allowed')
         return json(await importTasks(env.DB, user.id, id, await readJson(request, MAX_IMPORT_BODY_BYTES)))
+      }
+      if (isPatch) {
+        const { patch, projectIds, deliveryDates } = parseTaskPatch(await readJson(request), id!)
+        const plan = (state: State) => {
+          const stored = state.tasks.find((t) => t.id === id)
+          if (!stored) throw new UnknownReference('task', id!)
+          // Checked whole, as a PUT is; only the sync sets the Google account, so it's kept
+          const task = parseTask(applyTaskPatch(stored, patch), id!)
+          const saved = stored.googleAccount ? { ...task, googleAccount: stored.googleAccount } : task
+          return planTaskSave(state, { task: saved, projectIds, deliveryDates })
+        }
+        return json(await saveWithRules(env.DB, user.id, plan, { tasks: [], projects: [] }))
+      }
+      if (isAction) {
+        if (!id || request.method !== 'POST') return error(405, 'Method not allowed')
+        const action = parseTaskAction(await readJson(request))
+        return json(await saveWithRules(env.DB, user.id, (state) => planTaskAction(state, id, action), { tasks: [], projects: [] }))
       }
       if (!id && request.method === 'GET') return json(await resource.list(env.DB, user.id))
       if (id && request.method === 'PUT') {
@@ -640,8 +824,10 @@ export default {
       return error(405, 'Method not allowed')
     } catch (e) {
       if (e instanceof Conflict) return json({ error: e.message, clashes: e.clashes }, e.status)
+      if (e instanceof LoopRefused) return json({ error: e.message, loop: e.loop }, e.status)
       if (e instanceof HttpError) return error(e.status, e.message)
-      if (e instanceof UnknownReference) return error(400, e.message)
+      if (e instanceof UnknownReference) return error(e.kind === 'task' && (isAction || isPatch) ? 404 : 400, e.message)
+      if (e instanceof ActionRefused) return json({ error: e.message, ...e.sentence }, 400)
       if (String(e).includes('FOREIGN KEY constraint failed')) {
         return error(400, 'References a task or tag that does not exist')
       }

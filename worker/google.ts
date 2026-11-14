@@ -308,8 +308,13 @@ async function syncAccount(
       ...jsonChunks(updated).map((json) =>
         db
           .prepare(
+            // A start date the new due date passes moves back to it (as clampStartDate does). SET
+            // reads the row as it was, so start_date is compared with the new due date here.
             `UPDATE tasks SET name = item.value ->> '$.name', description = item.value ->> '$.description',
-               due_date = item.value ->> '$.dueDate', updated_at = ${NOW}
+               due_date = item.value ->> '$.dueDate',
+               start_date = CASE WHEN start_date > item.value ->> '$.dueDate' THEN item.value ->> '$.dueDate'
+                 ELSE start_date END,
+               updated_at = ${NOW}
              FROM json_each(?2) AS item
              WHERE tasks.user_id = ?1 AND tasks.id = item.value ->> '$.id'`,
           )

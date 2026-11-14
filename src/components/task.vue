@@ -1,10 +1,15 @@
 <script setup lang="ts">
 // Component to create or edit the details of a single task. A task can't be due after the
 // delivery date of a project it's in: each clash offers to extend the project's deadline (saved
-// with the task) or move the task's due date, and blocks saving until one is fixed.
+// with the task) or move the task's due date, and blocks saving until one is fixed. Saving is
+// also blocked by a start date after the due date, an estimate that isn't a number of hours, and
+// relations that would make a loop of blocking tasks. An estimate bigger than the working time
+// left before the due date is pointed out, but doesn't block saving.
 import { computed, ref, toRaw, watch } from 'vue'
 import {
   createEmptyTask,
+  hoursFromMinutes,
+  parseEstimateHours,
   PRIORITIES,
   RELATION_TYPES,
   relationLabel,
@@ -12,14 +17,20 @@ import {
   type Task,
 } from '@/types/task'
 import { isPastDeadline, type Project } from '@/types/project'
-import { MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH } from '@/types/limits'
+import { MAX_DESCRIPTION_LENGTH, MAX_EFFORT_MINUTES, MAX_NAME_LENGTH } from '@/types/limits'
+import { describeLoop, findBlockCycle, startsAfterDue } from '@/types/rules'
+import { capacityBetween, DEFAULT_SETTINGS, type UserSettings } from '@/types/settings'
+import { localToday } from '@/types/calendar'
 
 const props = defineProps<{
   task?: Task // task to edit; a new empty task is used when omitted
-  availableTasks?: (Pick<Task, 'id' | 'name'> & Partial<Pick<Task, 'completed'>>)[] // tasks that can be linked as relations
+  // tasks that can be linked as relations; their relations, when given, are checked for blocking loops
+  availableTasks?: (Pick<Task, 'id' | 'name'> & Partial<Pick<Task, 'completed' | 'relations'>>)[]
   projects?: Pick<Project, 'id' | 'name' | 'taskIds' | 'deliveryDate'>[] // projects the task can be assigned to
   projectIds?: string[] // projects to show as assigned; defaults to the projects whose taskIds include the task
   deadlines?: Record<string, string> // project deadlines to start out extended, by project id
+  capacity?: UserSettings['capacityMinutes'] // minutes for tasks each weekday; the defaults when omitted
+  today?: string // YYYY-MM-DD; this browser's today when omitted
 }>()
 
 const emit = defineEmits<{
@@ -40,12 +51,16 @@ const assignedIdsOf = (task?: Task): string[] => {
 const draft = ref<Task>(copyOf(props.task))
 const projectIds = ref<string[]>(assignedIdsOf(props.task))
 const deadlines = ref<Record<string, string>>({ ...props.deadlines })
+// The estimate as typed, in hours, so a half-typed number isn't lost; saved into effortMinutes
+const estimateOf = (task: Task) => (task.effortMinutes === undefined ? '' : String(hoursFromMinutes(task.effortMinutes)))
+const estimate = ref(estimateOf(draft.value))
 watch(
   () => props.task,
   (task) => {
     draft.value = copyOf(task)
     projectIds.value = assignedIdsOf(task)
     deadlines.value = { ...props.deadlines }
+    estimate.value = estimateOf(draft.value)
   },
 )
 
@@ -61,6 +76,10 @@ const assignableProjects = computed(() =>
   (props.projects ?? []).filter((p) => !projectIds.value.includes(p.id)),
 )
 
+// Relation input
+const newRelationTaskId = ref('')
+const newRelationType = ref<RelationType>('related_to')
+
 // Deadlines: a project's delivery date, or the one it's being extended to
 type AssignableProject = NonNullable<typeof props.projects>[number]
 const deadlineOf = (project: AssignableProject) => deadlines.value[project.id] ?? project.deliveryDate
@@ -74,8 +93,47 @@ const clashes = computed(() =>
   selectionIsLate.value ? [...lateProjects.value, selectedProject.value!] : lateProjects.value,
 )
 
+// Scheduling: the estimate in minutes (undefined when blank, NaN when it isn't a valid number of
+// hours), the start date, and how the estimate compares with the time left before the due date
+const estimateMinutes = computed(() => parseEstimateHours(String(estimate.value ?? '')))
+const estimateInvalid = computed(() => Number.isNaN(estimateMinutes.value))
+const startIsLate = computed(() => startsAfterDue(draft.value))
+
+const today = computed(() => props.today ?? localToday())
+// Work counts from the start date, or from today if that's later
+const workFrom = computed(() =>
+  draft.value.startDate && draft.value.startDate > today.value ? draft.value.startDate : today.value,
+)
+const workFromText = computed(() => (workFrom.value === today.value ? 'from today' : `from ${workFrom.value}`))
+// The working minutes left before the due date, when the estimate is more than that; else null
+const shortOfTime = computed(() => {
+  const minutes = estimateMinutes.value
+  if (minutes === undefined || Number.isNaN(minutes) || draft.value.dueDate === null || startIsLate.value) return null
+  const available = capacityBetween(props.capacity ?? DEFAULT_SETTINGS.capacityMinutes, workFrom.value, draft.value.dueDate)
+  return minutes > available ? available : null
+})
+
+// The blocking loop the relations would make, counting a related task picked but not linked yet,
+// since saving links it. Loops already in the other tasks' relations don't count.
+const relationLoop = computed(() => {
+  const pending = newRelationTaskId.value ? [{ taskId: newRelationTaskId.value, type: newRelationType.value }] : []
+  const saved = { id: draft.value.id, relations: [...draft.value.relations, ...pending] }
+  const before = (props.availableTasks ?? []).map((t) => ({ id: t.id, relations: t.relations ?? [] }))
+  const after = [...before.filter((t) => t.id !== saved.id), saved]
+  const loop = findBlockCycle(after, before)
+  const nameOf = (id: string) => (id === draft.value.id ? draft.value.name.trim() || 'This task' : taskName(id))
+  return loop ? describeLoop(loop, nameOf) : null
+})
+
 // The picked project counts too, since saving assigns it
-const canSave = computed(() => draft.value.name.trim() !== '' && clashes.value.length === 0)
+const canSave = computed(
+  () =>
+    draft.value.name.trim() !== '' &&
+    clashes.value.length === 0 &&
+    !estimateInvalid.value &&
+    !startIsLate.value &&
+    relationLoop.value === null,
+)
 
 function extendDeadline(project: AssignableProject) {
   deadlines.value[project.id] = draft.value.dueDate!
@@ -96,9 +154,6 @@ function unassignProject(id: string) {
   delete deadlines.value[id]
 }
 
-// Relation input
-const newRelationTaskId = ref('')
-const newRelationType = ref<RelationType>('related_to')
 
 // Completed tasks aren't offered, though relations already made to them stay listed
 const relatableTasks = computed(() =>
@@ -127,6 +182,8 @@ function save() {
   assignProject()
   addRelation()
   draft.value.name = draft.value.name.trim()
+  if (estimateMinutes.value === undefined) delete draft.value.effortMinutes
+  else draft.value.effortMinutes = estimateMinutes.value
   // Only the projects the task ends up in are extended
   const extended = Object.fromEntries(Object.entries(deadlines.value).filter(([id]) => projectIds.value.includes(id)))
   emit('save', structuredClone(toRaw(draft.value)), [...projectIds.value], extended)
@@ -134,13 +191,21 @@ function save() {
     draft.value = createEmptyTask()
     projectIds.value = []
     deadlines.value = {}
+    estimate.value = ''
   }
+}
+
+// A blank date input leaves the field out, as a task with no start date has none
+function setStartDate(value: string) {
+  if (value) draft.value.startDate = value
+  else delete draft.value.startDate
 }
 
 function cancel() {
   draft.value = copyOf(props.task)
   projectIds.value = assignedIdsOf(props.task)
   deadlines.value = { ...props.deadlines }
+  estimate.value = estimateOf(draft.value)
   emit('cancel')
 }
 </script>
@@ -177,6 +242,46 @@ function cancel() {
           </select>
         </label>
       </div>
+
+      <div class="grid">
+        <label>
+          Start date
+          <input
+            type="date"
+            :value="draft.startDate ?? ''"
+            :aria-invalid="startIsLate || undefined"
+            @input="setStartDate(($event.target as HTMLInputElement).value)"
+          />
+        </label>
+
+        <label>
+          Estimate (hours)
+          <input
+            v-model="estimate"
+            type="text"
+            inputmode="decimal"
+            placeholder="e.g. 1.5"
+            :aria-invalid="estimateInvalid || undefined"
+          />
+        </label>
+      </div>
+
+      <p v-if="startIsLate" class="error" role="alert">The start date is after the due date. Move one of them.</p>
+      <p v-if="estimateInvalid" class="error" role="alert">
+        Enter the estimate in hours: more than 0 and at most {{ MAX_EFFORT_MINUTES / 60 }}.
+      </p>
+      <p v-if="shortOfTime === 0" class="capacity-warning" role="status">
+        <small>
+          There's no working time left {{ workFromText }} to the due date, so this estimate won't fit. You can still
+          save it.
+        </small>
+      </p>
+      <p v-else-if="shortOfTime !== null" class="capacity-warning" role="status">
+        <small>
+          Only {{ hoursFromMinutes(shortOfTime) }} h of working time {{ workFromText }} to the due date, less than this
+          estimate. You can still save it.
+        </small>
+      </p>
 
       <label>
         Description
@@ -245,6 +350,10 @@ function cancel() {
           </select>
           <button type="button" :disabled="!newRelationTaskId" @click="addRelation">Link</button>
         </div>
+
+        <div v-if="relationLoop" class="date-error" role="alert">
+          <p>This would make a loop of blocking tasks: {{ relationLoop }}. Remove one of these relations.</p>
+        </div>
       </fieldset>
 
       <label class="completed-toggle">
@@ -261,6 +370,12 @@ function cancel() {
 </template>
 
 <style scoped>
+/* Needs attention but doesn't block saving: a coral edge, as coral is for borders on cards */
+.capacity-warning {
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--pam-coral);
+}
+
 .completed-toggle {
   display: inline-flex;
   align-items: center;

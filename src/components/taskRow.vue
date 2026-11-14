@@ -4,6 +4,8 @@
 // Google Calendar, the account's email as a tag, with an Edit button at the
 // end of the row. Used in the expanded project tile, on the project page, which also shows each
 // task's description, and in the upcoming tasks panel, which also names each task's projects.
+// Anything in the default slot goes under the task's details, as the Suggested list's reason and
+// quick actions do.
 import type { Task } from '@/types/task'
 
 defineProps<{
@@ -45,6 +47,7 @@ const isOverdue = (date: string | null) => date !== null && date < today
       </span>
       <small v-if="projectNames" class="task-projects">{{ projectNames.join(' · ') || 'No project' }}</small>
       <span v-if="showDescription && task.description" class="task-description">{{ task.description }}</span>
+      <slot />
     </span>
     <button
       type="button"

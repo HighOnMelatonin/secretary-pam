@@ -238,3 +238,138 @@ describe('TaskForm for an existing task', () => {
     expect(listedIn(wrapper, 'Projects')).toEqual(['Thesis'])
   })
 })
+
+describe('TaskForm scheduling', () => {
+  // 2026-11-16 is a Monday; the default capacity is 8 hours Monday to Friday
+  const today = '2026-11-16'
+  const estimateInput = (wrapper: ReturnType<typeof mount>) => wrapper.find<HTMLInputElement>('input[inputmode="decimal"]')
+  const startInput = (wrapper: ReturnType<typeof mount>) => wrapper.findAll<HTMLInputElement>('input[type="date"]')[1]!
+  const alerts = (wrapper: ReturnType<typeof mount>) => wrapper.findAll('[role="alert"]').map((a) => a.text())
+  const warning = (wrapper: ReturnType<typeof mount>) => wrapper.find('.capacity-warning')
+
+  it('saves the estimate in minutes and the start date', async () => {
+    const wrapper = mount(TaskForm, { props: { task, today } })
+    await estimateInput(wrapper).setValue('1.5')
+    await startInput(wrapper).setValue('2026-11-18')
+    await wrapper.find('form').trigger('submit')
+    expect(saved(wrapper)![0]).toEqual({ ...task, effortMinutes: 90, startDate: '2026-11-18' })
+  })
+
+  it('shows a saved estimate in hours, and leaves both fields out once cleared', async () => {
+    const scheduled = { ...task, effortMinutes: 20, startDate: '2026-11-18', pinnedDate: '2026-11-16' }
+    const wrapper = mount(TaskForm, { props: { task: scheduled, today } })
+    expect(estimateInput(wrapper).element.value).toBe('0.33')
+    expect(startInput(wrapper).element.value).toBe('2026-11-18')
+
+    await wrapper.find('form').trigger('submit')
+    expect(saved(wrapper)![0]).toEqual(scheduled)
+
+    await estimateInput(wrapper).setValue('')
+    await startInput(wrapper).setValue('')
+    await wrapper.find('form').trigger('submit')
+    // The pinned date isn't in the form, and is kept
+    expect(saved(wrapper)![0]).toEqual({ ...task, pinnedDate: '2026-11-16' })
+  })
+
+  it('takes a decimal comma, as some phone keyboards only have that', async () => {
+    const wrapper = mount(TaskForm, { props: { task, today } })
+    await estimateInput(wrapper).setValue('0,5')
+    await wrapper.find('form').trigger('submit')
+    expect(saved(wrapper)![0]).toEqual({ ...task, effortMinutes: 30 })
+  })
+
+  it.each(['abc', '0', '-1', '1000.1', '1,5,0'])('blocks saving an estimate of %s hours', async (value) => {
+    const wrapper = mount(TaskForm, { props: { task, today } })
+    await estimateInput(wrapper).setValue(value)
+    expect(alerts(wrapper)).toEqual(['Enter the estimate in hours: more than 0 and at most 1000.'])
+    expect(button(wrapper, 'Save').attributes('disabled')).toBeDefined()
+  })
+
+  it('blocks saving while the start date is after the due date', async () => {
+    const wrapper = mount(TaskForm, { props: { task: { ...task, dueDate: '2026-11-20' }, today } })
+    await startInput(wrapper).setValue('2026-11-21')
+    expect(alerts(wrapper)).toEqual(['The start date is after the due date. Move one of them.'])
+    expect(button(wrapper, 'Save').attributes('disabled')).toBeDefined()
+
+    await startInput(wrapper).setValue('2026-11-20')
+    expect(alerts(wrapper)).toEqual([])
+    expect(button(wrapper, 'Save').attributes('disabled')).toBeUndefined()
+  })
+
+  it('warns, without blocking, when the estimate is more than the working time before the due date', async () => {
+    // Monday to Wednesday is 24 hours
+    const wrapper = mount(TaskForm, { props: { task: { ...task, dueDate: '2026-11-18' }, today } })
+    await estimateInput(wrapper).setValue('24')
+    expect(warning(wrapper).exists()).toBe(false)
+
+    await estimateInput(wrapper).setValue('25')
+    expect(warning(wrapper).text()).toBe(
+      'Only 24 h of working time from today to the due date, less than this estimate. You can still save it.',
+    )
+    expect(button(wrapper, 'Save').attributes('disabled')).toBeUndefined()
+
+    // From the start date when it's later than today
+    await startInput(wrapper).setValue('2026-11-18')
+    expect(warning(wrapper).text()).toContain('Only 8 h of working time from 2026-11-18 to the due date')
+  })
+
+  it('uses the capacity it is given, and says when there is no time left at all', async () => {
+    const capacity = { mon: 120, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0, sun: 0 }
+    const wrapper = mount(TaskForm, { props: { task: { ...task, dueDate: '2026-11-18' }, today, capacity } })
+    await estimateInput(wrapper).setValue('3')
+    expect(warning(wrapper).text()).toContain('Only 2 h of working time from today')
+
+    await wrapper.setProps({ task: { ...task, dueDate: '2026-11-13', effortMinutes: 60 } })
+    expect(warning(wrapper).text()).toBe(
+      "There's no working time left from today to the due date, so this estimate won't fit. You can still save it.",
+    )
+  })
+
+  it('gives no warning without a due date or an estimate', async () => {
+    const wrapper = mount(TaskForm, { props: { task: { ...task, effortMinutes: 6000 }, today } })
+    expect(warning(wrapper).exists()).toBe(false)
+    await wrapper.setProps({ task: { ...task, dueDate: '2026-11-16' } })
+    expect(warning(wrapper).exists()).toBe(false)
+  })
+})
+
+describe('TaskForm blocking loops', () => {
+  // t2 blocks t3, stored on t3 as blocked by
+  const others = [
+    { id: 't1', name: 'Write report', relations: [] },
+    { id: 't2', name: 'Review slides', relations: [] },
+    { id: 't3', name: 'Book room', relations: [{ taskId: 't2', type: 'blocked_by' as const }] },
+  ]
+
+  it('blocks saving relations that would make a loop, naming the tasks in it', async () => {
+    const editing = { ...task, relations: [{ taskId: 't2', type: 'blocks' as const }] }
+    const wrapper = mount(TaskForm, { props: { task: editing, availableTasks: others } })
+    await selectWithOption(wrapper, 'blocked_by').setValue('blocked_by')
+    await selectWithOption(wrapper, 't3').setValue('t3')
+
+    // Picked but not linked yet still counts, since saving links it
+    const message =
+      'This would make a loop of blocking tasks: "Book room" blocks "Write report", which blocks "Review slides", ' +
+      'which blocks "Book room". Remove one of these relations.'
+    expect(wrapper.find('[role="alert"]').text()).toBe(message)
+    expect(button(wrapper, 'Save').attributes('disabled')).toBeDefined()
+
+    await button(wrapper, 'Link').trigger('click')
+    expect(wrapper.find('[role="alert"]').text()).toBe(message)
+
+    await wrapper.findAll('li').find((li) => li.text().startsWith('blocks'))!.find('button').trigger('click')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(button(wrapper, 'Save').attributes('disabled')).toBeUndefined()
+  })
+
+  it('lets a task already in a loop be saved as long as no new loop is made', async () => {
+    const looped = [
+      { id: 't1', name: 'Write report', relations: [{ taskId: 't2', type: 'blocks' as const }] },
+      { id: 't2', name: 'Review slides', relations: [{ taskId: 't1', type: 'blocks' as const }] },
+    ]
+    const wrapper = mount(TaskForm, { props: { task: { ...task, relations: looped[0]!.relations }, availableTasks: looped } })
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    await wrapper.find('form').trigger('submit')
+    expect(saved(wrapper)).toBeDefined()
+  })
+})

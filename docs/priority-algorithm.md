@@ -1,6 +1,6 @@
 # Task prioritisation and workload forecast
 
-Implementation spec, 13 Nov 2026. Status: Stage 0 (this document). Nothing below is built yet.
+Implementation spec, 13 Nov 2026. Status: all five stages built (14 Nov 2026), awaiting review; see "Decisions made while implementing".
 
 Implement task prioritisation and a workload forecast in Pam (this repo).
 Read README.md first, including the Design section, and follow the existing
@@ -144,6 +144,125 @@ Answers to questions raised against the spec. Where this section and the stages 
   - A task with no effective deadline has r = 0 and p = 0.
 - **Start date after due date.** A task save (the task form and `PUT /api/tasks/:id`) with `start_date` after `due_date` is refused with `400`. Other paths can move a due date without showing the start date: a project save's `dueDates` (the clash fix), Import, and the Google Calendar sync. When one of them moves a due date before the task's start date, the start date moves back to the new due date.
 - **"Not today" on a task due today or overdue.** Moving the start date to tomorrow would put it after the due date. The button still shows, but it's disabled (greyed out), and it says why: the task is due today, or is overdue.
+
+Stage 1 (proposed by Claude, open to review):
+
+- **Task fields are optional in the JSON.** `effortMinutes`, `startDate` and `pinnedDate` follow `googleAccount`: they're left out when not set. A save that leaves one out, or sends it as `null`, clears it. Partial updates come in Stage 5 (PATCH).
+- **Estimate limit:** 1 to 60,000 minutes (1,000 hours). The form takes decimal hours and rounds to the nearest minute. It shows hours to two decimal places, which always round back to the same minutes.
+- **Loops:** only loops that a save creates are refused, the same way date clashes work. A loop already in the stored data doesn't block saves that leave it alone. The Worker answers `400` with the message and `loop` (the task ids in order). Planners throw `BlockLoop` (`src/types/operations.ts`). The form checks the relations already linked plus one that is picked but not linked yet.
+- **Capacity warning in the form:** compares the raw estimate (no buffer) with the capacity from the later of today and the start date, through the due date. No due date means no warning.
+- **Settings:** `GET /api/settings` returns the defaults without writing a row. The row is written by the first `PUT`. A `PUT` sends the whole settings object. The checks are:
+  - each day's capacity is 0 to 1,440 minutes, and at least one day must be above 0;
+  - buffer is 0.5 to 5;
+  - `wU` and `k` are 0 to 10;
+  - `horizonDays` is a whole number from 1 to 10;
+  - `preset` is one of `balanced`, `deadline`, `importance` or `blockers`.
+
+  There is no "custom" preset, and the weights aren't checked against the named preset.
+- **Not logged in change tracking:** changes to estimates, start dates and pinned dates.
+
+Stage 2 (proposed by Claude, open to review). `prioritise(tasks, projects, settings, today)` in `src/types/priority.ts`:
+
+- **Output.**
+  - `tasks` is every scored task in Suggested order (tier 0, tier 1, pinned, then the rest of tier 2), hidden tasks included, so the Stage 4 forecast can walk the same list.
+  - `sections` holds the ids of the tasks the list shows in Overdue (`overdue`), Do nowww (`do_now`) and Do next (`do_next`).
+  - `hidden` counts the hidden tasks, and `loops` lists the groups of tasks caught in loops.
+  - Each task carries `category`, `tier`, `score`, `hidden`, `effectiveDeadline`, `deadlineSource` (`due`, `project` or `blocked`), `latestStart`, `factors`, `flags` and `reason`. A hidden task still has the category it would be shown in.
+  - Every number is rounded to 4 decimal places.
+- **"Open" means scored.** Only scored tasks count as blockers, as unlocked work, or in a project's work. A completed blocker, an unestimated Google import, or a task only in archived projects doesn't hide or lift anything.
+- **Hidden counts.** A task that is both blocked and not started yet is counted once, as blocked.
+- **Loops.** Every edge between tasks in the same loop group (a strongly connected component) is ignored, not only the edges of one cycle. A task in a loop isn't hidden by the other tasks in its loop, so it stays visible with its `inLoop` flag.
+- **r.**
+  - r is `null` when T is 0, since it would be infinite and can't go in JSON.
+  - r is compared with 1 after rounding.
+  - In `own`, r² is capped at 1: r ≥ 1 already means tier 1, so a larger value would only inflate the base that blockers inherit.
+- **R.** A project with no open work has R = 0. A project whose delivery date has passed has R = 1.
+- **Remaining hours for the boost.** Counts every distinct open task across the task's live projects, whether or not those projects have a delivery date.
+- **Ties.**
+  - Among the blocked tasks, an earlier effective deadline wins.
+  - A task's own deadline wins over an inherited one on the same day.
+  - When the base comes from a blocked task, the first one in relation order wins.
+- **Reasons.**
+  - Tier 0: `overdue`, or `blocks_overdue`.
+  - Tier 1: `blocks_critical` when the tier comes from a blocked task. Otherwise `goes_critical` when the deadline comes from a blocked task, `no_time_left` when T is 0, or `needs_all_time`.
+  - A pinned tier 2 task: `pinned`.
+  - Other tier 2 tasks: whichever of urgency, `needed_for` (base inherited from a blocked task) or `unblocks` adds the most to the score, with ties in that order.
+    - That part only becomes the reason if it adds at least 0.1 (`REASON_THRESHOLD`). Otherwise the reason is `important`, since every task has some importance.
+    - Urgency gives `tight` (r), `due_soon` (p) or `project_pace` (R). It gives `goes_critical` instead when the deadline comes from a blocked task.
+  - Day counts in sentences are calendar days: "Due in 2 days". The `goes_critical` count is the days until the blocked task's latest start.
+
+Stage 3:
+
+- **Settings page:** at `/settings`, linked beside the account in the header (decided by the user).
+- **Quick actions don't use the normal task save** (decided by the user). Each is a `TaskAction` sent to `POST /api/tasks/:id/action`. The planner is `planTaskAction` in `src/types/operations.ts`, which goes through the same steps as a task save. This is the per-action operation Stage 5 asks for.
+
+The rest of Stage 3 was proposed by Claude and is open to review:
+
+- **Quick action rules:**
+  - `today` is sent by the browser.
+  - An `unpin` action was added, so a pin can be undone the same day; a pinned row shows **Unpin** instead of **Do today**.
+  - **Not today** also drops a pin to today.
+  - A refused action (Not today on a task due today or overdue, priority past either end) answers `400` with a sentence. An unknown task answers `404`.
+- **Not today's note:** the reason a greyed-out **Not today** gives is shown as text beside it, since a tooltip doesn't show on phones.
+- **Collapsing and Do next:** the panel's **Show fewer** applies to Suggested as well (its first 2 rows). Do next starts with 10 rows, with **Show N more**, and that choice isn't remembered.
+- **Preview:** it shows for any change on the settings page (hours, buffer or preset), not only a preset.
+  - Rows are marked "up N" or "down N", and "now in *category*" when the category changes.
+  - Settings can't hide or show a task, so the preview only reorders.
+  - Choosing a preset sets `wU`, `k` and `horizonDays` from its row of the table; there are no separate fields for them.
+- **Failed loads:** if the settings fail to load, Suggested and the task form use the defaults, and the settings page shows the error and won't save until a retry succeeds.
+
+Stage 4 (decided by the user):
+
+- **Project pace** compares a project's projected finish with its delivery date. "Working days left" counts the working days after the projected finish, up to and including the delivery date.
+  - **Behind:** the projected finish is after the delivery date.
+  - **Tight:** 0 or 1 working days left, so it finishes on the delivery day or the working day before.
+  - **On pace:** 2 or more working days left.
+- **No memory:** the status is worked out from the current data every time. No previous status is stored or carried over. Hysteresis (keeping the last status inside a window) was considered and dropped, since it would need a stored status, against the rule that computed results are never stored.
+- **Projects with no delivery date** get no pace status.
+
+The rest of Stage 4 was proposed by Claude and is open to review. `forecast(tasks, projects, settings, today, priorities?)` is in `src/types/forecast.ts`:
+
+- **The walk.**
+  - Each day, it makes as many passes over the Suggested order as it takes to use up the day's hours or run out of tasks that can be worked on. So a task can start the day its blocker finishes, even when it ranks above that blocker.
+  - Edges inside blocking loops are ignored, as in scoring.
+  - It gives up after 5 years (`MAX_FORECAST_DAYS`). A task still unfinished by then has `finish: null`, and so does its project.
+- **Today's plan** lists tasks in the order the work happens, which a blocker can make differ from the Suggested order.
+- **Overbooked days.** The plan never puts more on a day than its hours, so "overbooked" can't mean planned hours over capacity. A day is overbooked when the work due by its end (effective deadlines up to that day, with overdue work counted as due today) is more than the working hours from today through that day. Overdue work is due "today", so a day off can be marked overbooked too.
+- **Output.**
+  - `tasks`: each task's start, finish and lateness, in Suggested order.
+  - `projects`: each live project's open hours, finish, working days left (negative when late) and pace.
+  - `days`: 14 days of capacity, planned and due hours, and the overbooked flag.
+  - `todayPlan`, `totals` (`hours`, `unestimatedHours`, `noDeadlineHours`) and `allDone`.
+- **The brief** is a list of sentences, each with a code, its values and its text, plus the sentences joined. The codes, in order:
+  - `today_plan`, `today_free` or `today_off`;
+  - `projects_behind`, then `projects_tight`;
+  - `overbooked_days`, then `late_tasks`;
+  - `assumptions` (always, whenever there is open work) or `no_work`;
+  - `all_done`.
+- **UI.**
+  - The workload section above Upcoming shows the brief and 7 of the 14 days.
+  - Pace badges follow the priority badges' scale: on pace is faint, tight is cream, behind is coral.
+  - The settings preview lists the projects whose pace or projected finish would change, and the date everything is done by.
+
+Stage 5 (proposed by Claude, open to review):
+
+- **`GET /api/priorities` and `GET /api/forecast`** take `?today=YYYY-MM-DD`, which is required. They return exactly what `prioritise` and `forecast` give for the stored tasks, projects and settings, and store nothing.
+- **`PATCH /api/tasks/:id`** takes the same `{ task, projectIds?, deliveryDates? }` shape as `PUT`, with `task` holding only the fields to change.
+  - A field left out keeps its value. `null` clears `dueDate` and the optional fields.
+  - The patched task is then checked whole, so start-date, clash and loop rules match `PUT`.
+  - Unknown fields, `id` and `googleAccount` are refused. An unknown task is `404`.
+  - The planner is `planTaskPatch` in `operations.ts`.
+- **The app ticks tasks off with `PATCH`**, sending only `completed`. That shrinks the risk noted in Stage 1, where an old tab's whole-task `PUT` could clear fields it doesn't know about. The task form still saves with `PUT`, since it shows every field.
+- **Preset changes** are their own operation: `POST /api/settings/preset { preset }` sets the preset's weights (`applyPreset`) and keeps the capacity and buffer. `PUT /api/settings` now refuses weights that aren't the named preset's (`matchesPreset`).
+- **The preset preview** is `POST /api/settings/preview { today, preset?, capacityMinutes?, buffer? }`.
+  - It merges the changes into the stored settings, checks them as a `PUT` would, and returns `previewSettings` from `src/types/settingsPreview.ts`.
+  - The settings page uses the same function, so what the page shows and what the voice front-end reads out always agree.
+  - Its `summary` is sentences, in order: `no_change`, `preset`, `order`, one `project_change` per project, then `all_done`.
+- **Sentences everywhere.** `src/types/sentence.ts` holds the shared shape (`code`, `params`, `text`). Additions in this stage:
+  - `hiddenSummary` on the priorities: "Hidden: 2 waiting on other tasks and 1 not started yet."
+  - `paceReason` on each project forecast: '"Thesis" is tight: it should finish 2026-11-19, 1 working day before delivery.' The tile's hover text uses it.
+  - Codes on refused quick actions: `due_today`, `overdue`, `priority_at_top` or `priority_at_bottom`, with `params` and `text` in the `400` body beside `error`.
+- **Not built:** matching a spoken phrase to a task, and the voice front-end itself.
 
 ## Appendix: design notes (13 Nov 2026)
 

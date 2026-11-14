@@ -9,8 +9,10 @@ import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import ProjectForm from './project.vue'
 import TaskForm from './task.vue'
 import TagManager from './tags.vue'
+import SettingsForm from './settings.vue'
 import Taskbar from './taskbar.vue'
 import UpcomingPanel from './upcomingPanel.vue'
+import ForecastStrip from './forecastStrip.vue'
 import ProjectTile from './projectTile.vue'
 import ProjectDetails from './projectDetails.vue'
 import TaskRow from './taskRow.vue'
@@ -21,14 +23,19 @@ import GoogleSync from './googleSync.vue'
 import { useGoogleSync } from '@/stores/googleSync'
 import { useProjectView } from '@/stores/projectView'
 import { useProjectList } from '@/stores/projectList'
+import { useSettings } from '@/stores/settings'
 import { useTagList } from '@/stores/tagList'
 import { useTaskList } from '@/stores/taskList'
+import { localToday } from '@/types/calendar'
+import { forecast } from '@/types/forecast'
 import { unassignedTasks, type Project } from '@/types/project'
+import type { TaskAction } from '@/types/operations'
 import type { Task } from '@/types/task'
 
 const projectList = useProjectList()
 const taskList = useTaskList()
 const tagList = useTagList()
+const settingsStore = useSettings()
 const { projects, liveProjects, archivedProjects } = storeToRefs(projectList)
 // The live projects with the sort and filters from ListControls applied
 const projectView = useProjectView()
@@ -65,6 +72,11 @@ const shownUnassigned = computed(() =>
   hideUnassignedDone.value ? unassigned.value.filter((t) => !t.completed) : unassigned.value,
 )
 
+// The workload forecast, for the strip above Upcoming and the pace badges on the tiles. Worked out
+// in the browser from what's loaded, never stored.
+const workload = computed(() => forecast(tasks.value, projects.value, settingsStore.settings, localToday()))
+const paceOf = (project: Project) => workload.value.projects.find((p) => p.projectId === project.id) ?? null
+
 // Synced from the taskbar or from the button under Unassigned, which show the same progress
 const googleSync = useGoogleSync()
 
@@ -96,6 +108,7 @@ type Editor =
   | { kind: 'project'; project?: Project; taskDueDates?: Record<string, string> }
   | { kind: 'task'; task?: Task; projectIds?: string[]; deadlines?: Record<string, string> }
   | { kind: 'tags' }
+  | { kind: 'settings' }
   | null
 const editor = ref<Editor>(null)
 
@@ -118,6 +131,8 @@ function editorForRoute(): Editor {
     }
     case 'tags':
       return { kind: 'tags' }
+    case 'settings':
+      return { kind: 'settings' }
     default:
       return null
   }
@@ -166,6 +181,9 @@ const error = ref<string | null>(null)
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 onMounted(async () => {
+  // If the settings can't be loaded, the defaults stand in for Suggested and the task form's
+  // warning, and the settings page shows the error (the store keeps it) rather than saving over them
+  settingsStore.load().catch(() => {})
   const stores = ['projects', 'tasks', 'tags'] as const
   const results = await Promise.allSettled([projectList.load(), taskList.load(), tagList.load()])
   results.forEach((result, i) => {
@@ -236,11 +254,23 @@ async function onDeleteTask(task: Task) {
   else await router.replace({ name: 'dashboard' })
 }
 
-// From a task's check mark; the list keeps the old state if saving fails
+// From a quick action in Suggested, sent as its own small request rather than a whole task save;
+// the list keeps the old state if it fails
+async function onTaskAction(task: Task, action: TaskAction) {
+  error.value = null
+  try {
+    await taskList.act(task.id, action)
+  } catch (e) {
+    error.value = `Couldn't update "${task.name}": ${messageOf(e)}`
+  }
+}
+
+// From a task's check mark, sending only the new completed flag; the list keeps the old state if
+// saving fails
 async function onToggleTask(task: Task) {
   error.value = null
   try {
-    await taskList.saveTask({ task: { ...task, completed: !task.completed } })
+    await taskList.patchTask(task.id, { task: { completed: !task.completed } })
   } catch (e) {
     error.value = `Couldn't save "${task.name}": ${messageOf(e)}`
   }
@@ -282,10 +312,12 @@ async function onToggleTask(task: Task) {
       :projects="projects"
       :project-ids="editor.projectIds"
       :deadlines="editor.deadlines"
+      :capacity="settingsStore.settings.capacityMinutes"
       @save="onSaveTask"
       @cancel="close"
     />
     <TagManager v-else-if="editor?.kind === 'tags'" @close="close" />
+    <SettingsForm v-else-if="editor?.kind === 'settings'" @close="close" />
 
     <ProjectDetails
       v-else-if="page?.kind === 'project'"
@@ -317,11 +349,14 @@ async function onToggleTask(task: Task) {
 
     <!-- The list: the upcoming tasks, then the projects -->
     <template v-else>
+      <ForecastStrip :forecast="workload" />
       <UpcomingPanel
         :tasks="tasks"
         :projects="projects"
+        :settings="settingsStore.settings"
         @edit-task="open({ name: 'edit-task', params: { id: $event.id } })"
         @toggle-task="onToggleTask"
+        @action="onTaskAction"
       />
 
       <article v-if="projects.length === 0" class="empty">
@@ -364,6 +399,7 @@ async function onToggleTask(task: Task) {
             :project="project"
             :tasks="tasks"
             :tags="tagsOf(project)"
+            :pace="paceOf(project)"
             :expanded="expandedIds.has(project.id)"
             @update:expanded="setExpanded(project.id, $event)"
             @edit="open({ name: 'edit-project', params: { id: $event.id } })"

@@ -4,11 +4,12 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import App from '../App.vue'
 import { browser, useSession } from '../stores/session'
+import { DEFAULT_SETTINGS } from '../types/settings'
 import { button, routerAt } from './helpers'
 
-// Stands in for the Worker API: every list request returns no items
+// Stands in for the Worker API: every list request returns no items, and the settings are the defaults
 function stubEmptyApi() {
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json([])))
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url === '/api/settings' ? DEFAULT_SETTINGS : [])))
 }
 
 describe('App', () => {
@@ -68,6 +69,16 @@ describe('App', () => {
     expect(router.currentRoute.value.name).toBe('calendar')
     expect(links()[1]![2]).toBe('page')
     expect(wrapper.find('#calendar-heading').exists()).toBe(true)
+  })
+
+  it('links to the settings page beside the account', async () => {
+    stubEmptyApi()
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useSession().account = { email: 'me@example.com' }
+    const wrapper = mount(App, { global: { plugins: [pinia, await routerAt()] } })
+    const link = wrapper.find('.account a')
+    expect([link.text(), link.attributes('href')]).toEqual(['Settings', '/settings'])
   })
 
   it('shows an error when the projects cannot be loaded', async () => {

@@ -7,17 +7,25 @@ import {
   planProjectDelete,
   planProjectSave,
   planTaskDelete,
+  planTaskAction,
+  planTaskPatch,
   planTaskSave,
   planTasksImport,
+  ActionRefused,
+  BlockLoop,
   UnknownReference,
   type Plan,
   type State,
 } from '@/types/operations'
 import type { Project } from '@/types/project'
+import { describeLoop } from '@/types/rules'
+import { DEFAULT_SETTINGS, type UserSettings } from '@/types/settings'
 import type { Tag } from '@/types/tag'
 import type { Task } from '@/types/task'
 
-export function fakeApi(initial: { projects?: Project[]; tasks?: Task[]; tags?: Tag[] } = {}) {
+export function fakeApi(
+  initial: { projects?: Project[]; tasks?: Task[]; tags?: Tag[]; settings?: UserSettings } = {},
+) {
   const data = {
     projects: structuredClone(initial.projects ?? []),
     tasks: structuredClone(initial.tasks ?? []),
@@ -37,6 +45,8 @@ export function fakeApi(initial: { projects?: Project[]; tasks?: Task[]; tags?: 
     google: { accounts: [] as GoogleAccount[], results: [] as SyncResult[], imports: [] as Task[] },
     // What task and project saves and deletes logged, as the Worker logs them to task_events
     events: [] as LoggedEvent[],
+    // GET and PUT /api/settings
+    settings: structuredClone(initial.settings ?? DEFAULT_SETTINGS),
     fetch: vi.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? 'GET'
       api.requests.push(`${method} ${url}`)
@@ -51,7 +61,15 @@ export function fakeApi(initial: { projects?: Project[]; tasks?: Task[]; tags?: 
         const since = params.get('since') || ''
         return Response.json(api.events.filter((e) => (!projectId || e.projectId === projectId) && e.at >= since))
       }
+      if (url === '/api/settings') {
+        if (method === 'PUT') api.settings = JSON.parse(init!.body as string)
+        return Response.json(api.settings)
+      }
       const [, , resource, rawId, action] = url.split('/') as [string, string, keyof typeof data, string?, string?]
+      if (resource === 'tasks' && action === 'action') {
+        const body = JSON.parse(init!.body as string)
+        return applyPlan(() => planTaskAction(data, decodeURIComponent(rawId!), body), { tasks: [], projects: [] })
+      }
       if (resource === 'projects' && action === 'import') {
         const body = JSON.parse(init!.body as string)
         if (method !== 'POST' || !('tasks' in body)) return Response.json({ error: 'Body must be { tasks }' }, { status: 400 })
@@ -70,6 +88,10 @@ export function fakeApi(initial: { projects?: Project[]; tasks?: Task[]; tags?: 
       const body = JSON.parse(init!.body as string)
       const id = decodeURIComponent(rawId!)
       // Task and project saves go through the scheduling rules, and must be wrapped, as in the Worker
+      if (resource === 'tasks' && method === 'PATCH') {
+        if (!('task' in body)) return Response.json({ error: 'Body must be { task, projectIds?, deliveryDates? }' }, { status: 400 })
+        return applyPlan(() => planTaskPatch(data, id, body), { tasks: [], projects: [] })
+      }
       if (resource === 'tasks') {
         if (!('task' in body)) return Response.json({ error: 'Body must be { task, projectIds?, deliveryDates? }' }, { status: 400 })
         expect(body.task.id).toBe(id)
@@ -110,6 +132,12 @@ export function fakeApi(initial: { projects?: Project[]; tasks?: Task[]; tags?: 
       result = plan()
     } catch (e) {
       if (e instanceof UnknownReference) return Response.json({ error: e.message }, { status: 400 })
+      if (e instanceof ActionRefused) return Response.json({ error: e.message, ...e.sentence }, { status: 400 })
+      if (e instanceof BlockLoop) {
+        const name = (id: string) => [...saving.tasks, ...data.tasks].find((t) => t.id === id)?.name ?? id
+        const error = `This would make a loop of blocking tasks: ${describeLoop(e.loop, name)}`
+        return Response.json({ error, loop: e.loop }, { status: 400 })
+      }
       throw e
     }
     if (!result.ok) {

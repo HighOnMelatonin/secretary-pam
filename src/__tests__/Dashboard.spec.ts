@@ -37,7 +37,7 @@ describe('Dashboard loading', () => {
     expect(wrapper.text()).toContain('Loading your projects')
 
     await flushPromises()
-    expect(api.requests.sort()).toEqual(['GET /api/projects', 'GET /api/tags', 'GET /api/tasks'])
+    expect(api.requests.sort()).toEqual(['GET /api/projects', 'GET /api/settings', 'GET /api/tags', 'GET /api/tasks'])
     expect(wrapper.text()).not.toContain('Loading your projects')
   })
 
@@ -388,6 +388,18 @@ describe('Dashboard routes', () => {
     expect(tileNames(wrapper)).toEqual(['Thesis'])
   })
 
+  it('opens the settings page at /settings, and closes it on Cancel', async () => {
+    fakeApi({ projects: [project('p', { name: 'Thesis' })] })
+    const wrapper = await mountDashboard('/settings')
+    expect(wrapper.find('article.settings h2').text()).toBe('Settings')
+    expect(wrapper.findAll('.days input')).toHaveLength(7)
+
+    await button(wrapper, 'Cancel').trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.$route.path).toBe('/')
+    expect(tileNames(wrapper)).toEqual(['Thesis'])
+  })
+
   it('opens the tag list from its link', async () => {
     fakeApi({ tags: [{ id: 'w', name: 'Work', color: '#343ca6' }] })
     const wrapper = await mountDashboard('/tags')
@@ -492,8 +504,12 @@ describe('Dashboard editing a task', () => {
     await wrapper.find('.tile-toggle').trigger('click')
     const check = () => wrapper.find('button[aria-label="Done: Write report"]')
 
+    api.requests.length = 0
     await check().trigger('click')
     await flushPromises()
+    // Only the flag is sent, so fields this tab doesn't know about can't be lost
+    expect(api.requests).toEqual(['PATCH /api/tasks/t'])
+    expect(JSON.parse(api.fetch.mock.calls[api.fetch.mock.calls.length - 1]![1]!.body as string)).toEqual({ task: { completed: true } })
     expect(api.data.tasks[0]).toEqual(task('t', { name: 'Write report', completed: true }))
     expect(check().attributes('aria-pressed')).toBe('true')
     expect(wrapper.text()).toContain('1 of 2 tasks completed')
@@ -769,5 +785,57 @@ describe('Dashboard expanding tiles', () => {
     localStorage.setItem('pam.projectView', JSON.stringify({ priorities: ['urgent'] }))
     const wrapper = await mountDashboard()
     expect(wrapper.find('.toggle-all').exists()).toBe(false)
+  })
+})
+
+describe('Dashboard workload', () => {
+  it('shows the brief and the next seven days above Upcoming, and each live project its pace', async () => {
+    fakeApi({
+      tasks: [task('a', { name: 'Draft' })],
+      projects: [
+        project('p', { name: 'Thesis', deliveryDate: '2030-01-07', taskIds: ['a'] }),
+        project('q', { name: 'Undated' }),
+      ],
+    })
+    const wrapper = await mountDashboard()
+
+    const sections = wrapper.findAll('section').map((s) => s.classes()[0])
+    expect(sections.indexOf('workload')).toBeLessThan(sections.indexOf('upcoming'))
+    expect(wrapper.find('.workload .brief').text()).toContain('Of 2 h of open work, 2 h come from the 2-hour default')
+    expect(wrapper.findAll('.workload .strip li')).toHaveLength(7)
+
+    const badge = (name: string) => wrapper.findAll('.project-tile').find((t) => t.text().includes(name))!.find('.tag.pace')
+    expect(badge('Thesis').text()).toMatch(/^On pace/)
+    expect(badge('Undated').exists()).toBe(false)
+  })
+})
+
+describe('Dashboard quick actions', () => {
+  it('sends a quick action from Suggested as its own request, and shows the change', async () => {
+    localStorage.setItem('pam.upcomingMode', 'suggested')
+    const api = fakeApi({ tasks: [task('a', { name: 'Draft', priority: 'low' })] })
+    const wrapper = await mountDashboard()
+    api.requests.length = 0
+
+    const raise = wrapper.findAll('.quick-actions button').find((b) => b.text() === 'Priority ↑')!
+    await raise.trigger('click')
+    await flushPromises()
+
+    expect(api.requests).toEqual(['POST /api/tasks/a/action'])
+    expect(api.data.tasks[0]!.priority).toBe('medium')
+    expect(wrapper.find('.suggested .tag.priority-medium').exists()).toBe(true)
+  })
+
+  it('shows an error when a quick action is refused, keeping the task as it was', async () => {
+    localStorage.setItem('pam.upcomingMode', 'suggested')
+    const api = fakeApi({ tasks: [task('a', { name: 'Draft' })] })
+    const wrapper = await mountDashboard()
+    api.failWith = 'D1 is down'
+
+    await wrapper.findAll('.quick-actions button').find((b) => b.text() === 'Do today')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('p.error').text()).toBe(`Couldn't update "Draft": D1 is down`)
+    expect(api.data.tasks[0]!.pinnedDate).toBeUndefined()
   })
 })

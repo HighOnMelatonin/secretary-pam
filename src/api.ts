@@ -2,8 +2,9 @@
 // signing in through worker/auth.ts, and for importing Google Calendar through worker/google.ts. The session cookie is HttpOnly, so this code never sees
 // it: the browser sends it with every request.
 import type { GoogleAccount, SyncResult } from '@/types/google'
-import type { Changes, ProjectSave, TaskSave } from '@/types/operations'
+import type { Changes, ProjectSave, TaskAction, TaskPatchSave, TaskSave } from '@/types/operations'
 import type { Project } from '@/types/project'
+import type { UserSettings } from '@/types/settings'
 import type { Clash } from '@/types/rules'
 import type { Tag } from '@/types/tag'
 import type { Task } from '@/types/task'
@@ -76,6 +77,18 @@ export function saveProject(input: ProjectSave) {
   return request<Changes>(`projects/${encodeURIComponent(input.project.id)}`, sendJson('PUT', input))
 }
 
+// Changes only the task fields in the patch (null clears an optional one), under the same rules
+// as saveTask, and returns every task and project it changed
+export function patchTask(taskId: string, input: TaskPatchSave) {
+  return request<Changes>(`tasks/${encodeURIComponent(taskId)}`, sendJson('PATCH', input))
+}
+
+// Does one quick action to a task (src/types/operations.ts), changing only what the action names,
+// and returns every task and project it changed
+export function taskAction(taskId: string, action: TaskAction) {
+  return request<Changes>(`tasks/${encodeURIComponent(taskId)}/action`, sendJson('POST', action))
+}
+
 // Creates or updates the tasks and adds the new ones to the project, as one save under the same
 // rules; nothing is saved if any of them clashes
 export function importTasks(projectId: string, tasks: Task[]) {
@@ -106,4 +119,10 @@ export const google = {
   disconnect: (email: string) => request<void>(`google/accounts/${encodeURIComponent(email)}`, { method: 'DELETE' }),
   // Imports the events of every connected account; an empty list when none is connected
   sync: () => request<SyncResult[]>('google/sync', sendJson('POST', {})),
+}
+
+// The signed-in account's capacity and prioritisation weights; the defaults until they save their own
+export const settings = {
+  get: () => request<UserSettings>('settings'),
+  save: (value: UserSettings) => request<UserSettings>('settings', sendJson('PUT', value)),
 }

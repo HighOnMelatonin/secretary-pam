@@ -7,6 +7,15 @@ export const MAX_DESCRIPTION_LENGTH = 10_000
 export const MAX_URL_LENGTH = 2_000
 export const MAX_LIST_LENGTH = 500 // tasks, links, tags or relations on one project or task
 
+export const MAX_EFFORT_MINUTES = 60_000 // a task's estimate: up to 1,000 hours
+
+// Settings (src/types/settings.ts)
+export const MAX_DAY_CAPACITY_MINUTES = 1_440 // a whole day
+export const MIN_BUFFER = 0.5
+export const MAX_BUFFER = 5
+export const MAX_WEIGHT = 10 // wU and k
+export const MAX_HORIZON_DAYS = 10
+
 export const MAX_EMAIL_LENGTH = 254
 export const MIN_PASSWORD_LENGTH = 8
 export const MAX_PASSWORD_LENGTH = 256

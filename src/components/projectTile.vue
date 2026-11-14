@@ -2,9 +2,11 @@
 // Dashboard tile for one project. Clicking it expands a preview of the project's timeline, tasks
 // and links; each task links to its own page, has an Edit button, and its check mark marks it done
 // or not done. At the top, View more opens the project's page and Edit opens the project form.
+// A live project with a delivery date and open work has a pace badge from the forecast.
 import { computed } from 'vue'
 import ProjectTimeline from './projectTimeline.vue'
 import TaskRow from './taskRow.vue'
+import { PACE_LABELS, type ProjectForecast } from '@/types/forecast'
 import { completionStatus, resolveTasks, type Project } from '@/types/project'
 import { safeHref } from '@/types/limits'
 import { tagStyle, type Tag } from '@/types/tag'
@@ -14,6 +16,7 @@ const props = defineProps<{
   project: Project
   tasks: Task[] // all tasks; the project's own are looked up by id
   tags: Tag[] // the project's tags
+  pace?: ProjectForecast | null // the forecast for the project, if it has one
 }>()
 
 defineEmits<{
@@ -28,6 +31,7 @@ const expanded = defineModel<boolean>('expanded', { default: false })
 
 const today = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD in local time
 const isOverdue = (date: string | null) => date !== null && date < today
+
 
 const projectTasks = computed(() => resolveTasks(props.project, props.tasks))
 const status = computed(() => completionStatus(props.project, props.tasks))
@@ -78,6 +82,9 @@ function onTileClick(event: MouseEvent) {
       <span v-for="tag in tags" :key="tag.id" class="tag project-tag" :style="tagStyle(tag)">{{ tag.name }}</span>
       <span class="tag" :class="`priority-${project.priority}`">{{ project.priority }}</span>
       <span v-if="isOverdue(project.deliveryDate)" class="tag overdue">overdue</span>
+      <span v-if="pace?.pace" class="tag pace" :class="`pace-${pace.pace}`" :title="pace.paceReason?.text">
+        {{ PACE_LABELS[pace.pace] }}<span class="sr-only"> ({{ pace.paceReason?.text }})</span>
+      </span>
       <small>Due {{ project.deliveryDate ?? 'whenever' }}</small>
     </div>
 
@@ -121,6 +128,22 @@ function onTileClick(event: MouseEvent) {
 </template>
 
 <style scoped>
+/* Pace badges get louder as the project falls behind: faint, then cream, then coral, like the
+   priority badges */
+.tag.pace-on_pace {
+  border-color: var(--pam-green-line);
+}
+
+.tag.pace-tight {
+  border-color: var(--pam-cream);
+  color: var(--pam-cream);
+}
+
+.tag.pace-behind {
+  border-color: var(--pam-coral);
+  color: var(--pam-cream);
+}
+
 .project-tile {
   display: flex;
   flex-direction: column;

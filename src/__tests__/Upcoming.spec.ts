@@ -226,3 +226,154 @@ describe('UpcomingPanel', () => {
     expect(counter(wrapper).exists()).toBe(false)
   })
 })
+
+describe('UpcomingPanel Suggested', () => {
+  // A Monday; the default capacity is 8 hours Monday to Friday
+  const today = '2026-11-16'
+  const tasks = [
+    task('Late', { dueDate: '2026-11-13' }),
+    task('Crunch', { dueDate: '2026-11-17', effortMinutes: 16 * 60 }),
+    task('Pinned', { pinnedDate: today, effortMinutes: 60 }),
+    task('Soon', { dueDate: '2026-11-17', priority: 'urgent' }),
+    task('Someday', { priority: 'low', effortMinutes: 30 }),
+    task('Waiting', { relations: [{ taskId: 'Someday', type: 'blocked_by' }] }),
+    task('Later', { startDate: '2026-11-18' }),
+  ]
+  const projects = [project('p', { name: 'Thesis', taskIds: ['Crunch'] })]
+  const mountPanel = (props: Record<string, unknown> = {}) =>
+    mount(UpcomingPanel, { props: { tasks, projects, today, ...props }, global: { plugins: [memoryRouter()] } })
+  const suggested = async (props: Record<string, unknown> = {}) => {
+    const wrapper = mountPanel(props)
+    await wrapper.findAll('.mode-switch button').find((b) => b.text() === 'Suggested')!.trigger('click')
+    return wrapper
+  }
+  const shown = (wrapper: ReturnType<typeof mount>) =>
+    wrapper.findAll('.group').map((s) => [s.find('h3').text(), s.findAll('.task-name').map((n) => n.text())])
+  const row = (wrapper: ReturnType<typeof mount>, name: string) =>
+    wrapper.findAll('li.task').find((li) => li.find('.task-name').text() === name)!
+  const rowButton = (wrapper: ReturnType<typeof mount>, name: string, text: string) =>
+    row(wrapper, name).findAll('button').find((b) => b.text() === text)!
+
+  afterEach(() => localStorage.clear())
+
+  it('starts by date, and switches to the ranked categories, which this browser remembers', async () => {
+    const byDate = mountPanel()
+    expect(byDate.findAll('.mode-switch button').map((b) => [b.text(), b.attributes('aria-pressed')])).toEqual([
+      ['By date', 'true'],
+      ['Suggested', 'false'],
+    ])
+    expect(shown(byDate).map(([heading]) => heading)).toEqual(['Overdue', 'Next 14 days'])
+
+    const wrapper = await suggested()
+    expect(shown(wrapper)).toEqual([
+      ['Overdue', ['Late']],
+      ['Do nowww', ['Crunch', 'Pinned']],
+      ['Do next', ['Soon', 'Someday']],
+    ])
+    expect(localStorage.getItem('pam.upcomingMode')).toBe('suggested')
+    expect(shown(mountPanel())[1]![0]).toBe('Do nowww')
+  })
+
+  it('says why each task is there, marks pinned, unestimated and looped tasks, and counts the hidden ones', async () => {
+    const looped = [
+      ...tasks,
+      task('A', { relations: [{ taskId: 'B', type: 'blocks' }] }),
+      task('B', { relations: [{ taskId: 'A', type: 'blocks' }] }),
+    ]
+    const wrapper = await suggested({ tasks: looped })
+    const reason = (name: string) => [
+      row(wrapper, name).find('.reason small').text(),
+      row(wrapper, name).findAll('.reason .tag').map((t) => t.text()),
+    ]
+    expect(reason('Late')).toEqual(['Was due 3 days ago', ['no estimate']])
+    expect(reason('Crunch')).toEqual(["Needs all the working time left before it's due", []])
+    expect(reason('Pinned')).toEqual(['Pinned to today', ['pinned']])
+    expect(reason('A')[1]).toEqual(['no estimate', 'in a loop'])
+    expect(row(wrapper, 'Crunch').find('.task-projects').text()).toBe('Thesis')
+    expect(wrapper.text()).toContain('Hidden: 1 waiting on other tasks and 1 not started yet.')
+  })
+
+  it('shows the first 10 of Do next, then the rest on request', async () => {
+    const many = Array.from({ length: 13 }, (_, i) => task(`Task ${String(i).padStart(2, '0')}`))
+    const wrapper = await suggested({ tasks: many })
+    expect(shown(wrapper)[0]![1]).toHaveLength(10)
+    await wrapper.findAll('button').find((b) => b.text() === 'Show 3 more')!.trigger('click')
+    expect(shown(wrapper)[0]![1]).toHaveLength(13)
+  })
+
+  it('collapses to its first two rows, like the list by date', async () => {
+    const wrapper = await suggested()
+    await wrapper.find('button.collapse-toggle').trigger('click')
+    expect(shown(wrapper)).toEqual([
+      ['Overdue', ['Late']],
+      ['Do nowww', ['Crunch']],
+    ])
+    expect(wrapper.find('button.collapse-toggle').text()).toBe('Show all 5')
+  })
+
+  it('ranks with the settings it is given', async () => {
+    // With 16 hours a day, Crunch has time to spare
+    const roomy = {
+      capacityMinutes: { mon: 960, tue: 960, wed: 960, thu: 960, fri: 960, sat: 0, sun: 0 },
+      buffer: 1,
+      wU: 1,
+      k: 1,
+      horizonDays: 2,
+      preset: 'balanced',
+    }
+    const wrapper = await suggested({ settings: roomy })
+    expect(shown(wrapper)[1]).toEqual(['Do nowww', ['Pinned']])
+  })
+
+  it('emits the quick actions, never a whole task save', async () => {
+    const wrapper = await suggested()
+    await rowButton(wrapper, 'Soon', 'Do today').trigger('click')
+    await rowButton(wrapper, 'Pinned', 'Unpin').trigger('click')
+    await rowButton(wrapper, 'Someday', 'Not today').trigger('click')
+    await rowButton(wrapper, 'Someday', 'Priority ↑').trigger('click')
+    await rowButton(wrapper, 'Soon', 'Priority ↓').trigger('click')
+    const emitted = wrapper.emitted<[Task, unknown]>('action')!.map(([t, action]) => [t.name, action])
+    expect(emitted).toEqual([
+      ['Soon', { action: 'do_today', today }],
+      ['Pinned', { action: 'unpin' }],
+      ['Someday', { action: 'not_today', today }],
+      ['Someday', { action: 'importance', direction: 'up' }],
+      ['Soon', { action: 'importance', direction: 'down' }],
+    ])
+    expect(wrapper.emitted('toggleTask')).toBeUndefined()
+  })
+
+  it('greys out Not today for a task due today or overdue, saying why, and priority past either end', async () => {
+    const wrapper = await suggested({ tasks: [...tasks, task('Today', { dueDate: today })] })
+    expect(rowButton(wrapper, 'Late', 'Not today').attributes('disabled')).toBeDefined()
+    expect(row(wrapper, 'Late').find('.action-note').text()).toBe("It's overdue, so it can't wait until tomorrow")
+    expect(row(wrapper, 'Today').find('.action-note').text()).toBe("It's due today, so it can't wait until tomorrow")
+    expect(rowButton(wrapper, 'Pinned', 'Not today').attributes('disabled')).toBeUndefined()
+    expect(rowButton(wrapper, 'Soon', 'Priority ↑').attributes('disabled')).toBeDefined()
+    expect(rowButton(wrapper, 'Someday', 'Priority ↓').attributes('disabled')).toBeDefined()
+  })
+
+  it('edits the estimate in place, in hours', async () => {
+    const wrapper = await suggested()
+    await rowButton(wrapper, 'Pinned', 'Estimate: 1 h').trigger('click')
+    const input = row(wrapper, 'Pinned').find<HTMLInputElement>('input')
+    expect(input.element.value).toBe('1')
+
+    await input.setValue('abc')
+    expect(row(wrapper, 'Pinned').find('[role="alert"]').exists()).toBe(true)
+    expect(rowButton(wrapper, 'Pinned', 'Save').attributes('disabled')).toBeDefined()
+
+    await input.setValue('2,5')
+    await row(wrapper, 'Pinned').find('form').trigger('submit')
+    await rowButton(wrapper, 'Soon', 'Add estimate').trigger('click')
+    await row(wrapper, 'Soon').find('form').trigger('submit') // left blank: no estimate
+    await rowButton(wrapper, 'Someday', 'Estimate: 0.5 h').trigger('click')
+    await rowButton(wrapper, 'Someday', 'Cancel').trigger('click')
+
+    expect(wrapper.emitted<[Task, unknown]>('action')!.map(([t, action]) => [t.name, action])).toEqual([
+      ['Pinned', { action: 'estimate', effortMinutes: 150 }],
+      ['Soon', { action: 'estimate', effortMinutes: null }],
+    ])
+    expect(row(wrapper, 'Someday').find('form').exists()).toBe(false)
+  })
+})
