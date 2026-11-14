@@ -73,7 +73,7 @@ const NO_ACCOUNT_HASH = `pbkdf2-sha256$${ITERATIONS}$AAAAAAAAAAAAAAAAAAAAAA==$AA
 
 const toBase64 = (bytes: ArrayBuffer | Uint8Array) => btoa(String.fromCharCode(...new Uint8Array(bytes)))
 const fromBase64 = (text: string) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0))
-const toHex = (bytes: ArrayBuffer) => [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, '0')).join('')
+export const toHex = (bytes: ArrayBuffer) => [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, '0')).join('')
 
 // Passwords
 
@@ -98,7 +98,7 @@ export async function verifyPassword(password: string, stored: string) {
 
 // Sessions
 
-const sha256 = async (text: string) => toHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))
+export const sha256 = async (text: string) => toHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))
 
 function sessionToken(request: Request) {
   for (const cookie of (request.headers.get('Cookie') ?? '').split(';')) {

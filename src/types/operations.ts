@@ -1,7 +1,7 @@
 // What a save writes, worked out up front so the Worker and the client test fake agree on it.
 // Pure functions over plain data only: no I/O, no Vue and relative imports only, since worker/
 // imports this file too.
-import { diffEvents, type TaskEvent } from './events'
+import { diffEvents, type EventSource, type TaskEvent } from './events'
 import type { Project } from './project'
 import {
   applyMembership,
@@ -68,14 +68,15 @@ export class BlockLoop extends Error {
   }
 }
 
-export function planTaskSave(state: State, { task, projectIds, deliveryDates = {} }: TaskSave): Plan {
+// `source` is who the events say made the change: the app unless the Telegram bot says otherwise
+export function planTaskSave(state: State, { task, projectIds, deliveryDates = {} }: TaskSave, source: EventSource = 'app'): Plan {
   checkKnown('project', state.projects, [...(projectIds ?? []), ...Object.keys(deliveryDates)])
   const moved = projectIds ? applyMembership(state.projects, task.id, projectIds) : []
   const after = {
     tasks: upsert(state.tasks, task),
     projects: withDates(replaceAll(state.projects, moved), 'deliveryDate', deliveryDates),
   }
-  return finish(state, after, { tasks: [task], projects: [] })
+  return finish(state, after, { tasks: [task], projects: [] }, source)
 }
 
 export function planProjectSave(state: State, { project, dueDates = {} }: ProjectSave): Plan {
@@ -135,10 +136,10 @@ export class ActionRefused extends Error {
   }
 }
 
-export function planTaskAction(state: State, taskId: string, action: TaskAction): Plan {
+export function planTaskAction(state: State, taskId: string, action: TaskAction, source: EventSource = 'app'): Plan {
   checkKnown('task', state.tasks, [taskId])
   const task = state.tasks.find((t) => t.id === taskId)!
-  return planTaskSave(state, { task: applyAction(task, action) })
+  return planTaskSave(state, { task: applyAction(task, action) }, source)
 }
 
 // The task without one of its optional fields, as a task that never had it
@@ -244,7 +245,7 @@ export function planProjectDelete(state: State, id: string): TaskEvent[] {
 // The saved entity is always in the changes; anything else only when it was replaced along the
 // way, since every step keeps the original object for an entity it leaves alone. Archiving isn't
 // an event, so the events come from the change before it.
-function finish(before: State, after: State, saved: Changes): Plan {
+function finish(before: State, after: State, saved: Changes, source: EventSource = 'app'): Plan {
   const loop = findBlockCycle(after.tasks, before.tasks)
   if (loop) throw new BlockLoop(loop)
   const clashes = touchedClashes(before, after)
@@ -259,7 +260,7 @@ function finish(before: State, after: State, saved: Changes): Plan {
   return {
     ok: true,
     changes: { tasks: differs(after.tasks, before.tasks), projects: differs(projects, before.projects) },
-    events: diffEvents(before, after, 'app'),
+    events: diffEvents(before, after, source),
   }
 }
 

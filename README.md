@@ -26,6 +26,7 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
     - [Deploying](#deploying)
     - [Google Calendar](#google-calendar)
     - [Password reset](#password-reset)
+    - [Telegram bot](#telegram-bot)
     - [Security](#security)
   - [Testing](#testing)
   - [Roadmap](#roadmap)
@@ -70,6 +71,9 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
   - how Suggested weighs tasks: **Balanced**, **Deadline-driven**, **Importance-driven** or **Blockers-first**.
 
   Any change shows a preview before **Apply** saves it: the Suggested list in its new order with the rows that would move marked, and the projects whose pace or projected finish would change. **Cancel** discards it. If the settings can't be loaded, the page says so and won't save over them.
+
+  Below them, a **Telegram** section links a Telegram chat to the account, once the bot is set up (see [Telegram bot](#telegram-bot); without it the section is hidden). **Connect** shows a one-time code and an **Open Telegram** link that sends it to the bot; the code works once, for 10 minutes. Once linked, it shows the morning brief's time (07:30 at first), the time zone (the browser's when connecting, with **Use it** when the browser is in another), an on/off switch for the brief, and **Disconnect**. These save with their own **Save**, apart from **Apply**.
+- **Telegram companion bot** (being built in stages, see [docs/telegram-bot.md](docs/telegram-bot.md)): so far, linking a chat from the settings page. A link replaces any chat the account had, and any account the chat had. Disconnecting tells the chat it's no longer linked. Every other message from a chat that isn't linked is ignored.
 - **Works on phones**: each form has its own address (such as `/projects/new` or `/tags`), so the back button or gesture closes it, and the forms keep Save and Cancel pinned to the bottom of the screen.
 - **Tags** such as School, Work and Personal file projects by area of life. Add, rename, recolour and delete them from **Tags** in the taskbar. Each tag shows its colour beside a **Choose colour** button, which opens the browser's colour picker: any colour can be chosen, and it fills the tag's badges and filter chip, with cream or green text, whichever is easier to read on it. Tags start indigo. Renaming a tag renames it on every project, and deleting one removes it from its projects. The Archive tag can be renamed but not deleted.
 - **Google Calendar import**: **Sync Google Calendar**, under **Unassigned** on the dashboard, imports the events of every calendar shown in your Google Calendar, from now to a year ahead, as unassigned tasks. Each one has a tag with the Google account's email. A task is due the day its event starts. An event that ends on a later day starts its description with **Ends** and that day, followed by the event's own description (Google's HTML turned into plain text). Repeating events become one task per occurrence. Cancelled events and working locations ("Home", "Office") are left out. The first time, the button sends you to Google to connect an account, then comes back and syncs. **Google accounts** beside it lists the connected accounts, each with **Disconnect**, and connects more. Syncing again updates each task's name, due date and description from its event, keeping the done mark, priority, relations, projects, estimate and start and pinned dates set in Pam. It adds new events and deletes the tasks whose events were deleted. A task in a project keeps its due date when its event moves past the project's delivery date, and the sync says so. The import is one-way: changes made in Pam are not sent to Google, and the next sync replaces an imported task's name, due date and description, which the task's form and page point out. A task deleted in Pam comes back at the next sync if its event still exists.
@@ -169,6 +173,7 @@ src/
     suggestedList.vue the Suggested view: ranked tasks with their reasons, markers and quick actions
     forecastStrip.vue the workload above Upcoming: the forecast's brief and the next seven days
     settings.vue      the settings page: hours per weekday, buffer and presets, with a preview before Apply
+    telegramSettings.vue  the settings page's Telegram section: Connect, the brief's time and time zone, Disconnect
     projectTile.vue   one project on the dashboard; expands into a preview
     projectExport.vue the Export button and dialog on a project's page: format, preview, Copy and Download
     projectImport.vue the Import button and dialog on a project's page: the file, new tasks, and a choice per duplicate
@@ -187,7 +192,8 @@ src/
                       each account's capacity and prioritisation weights (settings.ts), and the scoring that
                       ranks open tasks into Overdue, Do nowww and Do next (priority.ts), and the workload
                       forecast built on it (forecast.ts), what a settings change would change (settingsPreview.ts),
-                      and the sentence type every reason, brief and refusal uses (sentence.ts)
+                      and the sentence type every reason, brief and refusal uses (sentence.ts), and what the
+                      Telegram routes answer and their limits (telegram.ts)
   api.ts              client for the Worker API, including signing in
   __tests__/          unit tests
 worker/
@@ -200,6 +206,9 @@ worker/
   jsonChunks.ts       passing many rows to D1 in a few statements, as JSON
   googleCalendar.ts   Google's OAuth and Calendar API: tokens, the calendar list, batched event lists,
                       and what a task takes from an event
+  pamBot/             the Telegram companion bot: its routes and webhook (index.ts), the Bot API called with
+                      fetch (botApi.ts), the linked chats and link codes in D1 (links.ts), and what it says
+                      (messages.ts, pure)
   secrets.d.ts        types for the Worker's secrets and settings
   migrate.ts          applies migrations/ to the database on the Worker's first request
   __tests__/          integration tests for the API and database
@@ -208,6 +217,7 @@ cypress/
   support/            commands and builders for test data
 migrations/           SQL that creates the database tables
 docs/                 designs for features being built, such as task prioritisation (priority-algorithm.md)
+                      and the Telegram companion bot (telegram-bot.md)
 wrangler.jsonc        Worker and database configuration
 ```
 
@@ -311,6 +321,11 @@ The reply lists every task and project the save changed, and `applyChanges` (`sr
 | `POST /api/settings/preview` | What `{ today, preset?, capacityMinutes?, buffer? }` would change, saving nothing: a `SettingsPreview` (`src/types/settingsPreview.ts`) with the new Suggested order, the projects whose pace or finish would move, and a `summary` in sentences |
 | `GET /api/priorities?today=YYYY-MM-DD` | Exactly what `prioritise` (`src/types/priority.ts`) returns for the account's tasks, projects and settings: every open task's category, tier, score, factors and reason, and the Overdue, Do nowww and Do next lists (`400` without a `today`) |
 | `GET /api/forecast?today=YYYY-MM-DD` | Exactly what `forecast` (`src/types/forecast.ts`) returns: each task's and project's projected finish and pace, 14 days of load, today's plan, the totals and the brief (`400` without a `today`) |
+| `GET /api/telegram` | Whether a Telegram chat is linked (`TelegramStatus` in `src/types/telegram.ts`): `{ linked: false, botUsername }`, or with the chat's `timeZone`, `briefMinutes` (minutes after local midnight), `enabled` and `linkedAt`. Every `/api/telegram` route answers `404` until the bot is set up |
+| `POST /api/telegram/link-code` | A one-time code for linking a chat, from `{ timeZone }` (an IANA name, used for the brief once linked): `{ code, url, expiresAt }`, where `url` is `https://t.me/<bot>?start=<code>`. It works once, for 10 minutes, and replaces the account's earlier code |
+| `PUT /api/telegram` | Save `{ timeZone, briefMinutes, enabled }` for the linked chat; returns the status (`400` if malformed, `409` with no chat linked) |
+| `DELETE /api/telegram` | Unlink the chat, telling it so; `204` |
+| `POST /api/telegram/webhook` | Where Telegram sends the bot's updates. No session: it needs the `X-Telegram-Bot-Api-Secret-Token` header to be `TELEGRAM_WEBHOOK_SECRET` (`401` otherwise), and answers `200` to everything else, even when an update can't be handled |
 | `GET /api/events?projectId=&since=` | The account's change tracking events (`LoggedEvent` in `src/types/events.ts`), oldest first. `projectId` keeps one project's events; `since` (a `YYYY-MM-DD` date or a UTC timestamp) keeps those at or after it. Both are optional (`400` if malformed) |
 
 Tasks imported from Google Calendar have `googleAccount`, the account's email. Only the sync sets it: a task save keeps the stored one, whatever the body says.
@@ -359,12 +374,14 @@ Defined in the files in `migrations/`. Each field has its own column, and each a
 | `google_auth_states` | Connections to Google not back yet | `id` (the OAuth state), `user_id` → `users`, `code_verifier` (PKCE), `expires_at` |
 | `google_events` | `Task.googleAccount`, and the event each imported task came from | `user_id`, `task_id` → `tasks`, `account_email`, `calendar_id`, `event_id`, `starts_at`, `ends_at` |
 | `user_settings` | `UserSettings`, one row per account, written by its first `PUT /api/settings` | `user_id` → `users`, `capacity_mon` … `capacity_sun` (minutes), `buffer`, `w_u`, `k`, `horizon_days`, `preset`, `updated_at` |
+| `telegram_links` | Telegram chats linked to accounts, at most one each way | `user_id` → `users` (key), `chat_id` (unique), `time_zone`, `brief_minutes` (default 450, 07:30), `enabled`, `last_brief_date`, `last_added_task_id`, `last_update_id`, `linked_at` |
+| `telegram_link_codes` | Codes for linking a chat, not used yet | `id` (SHA-256 of the code), `user_id` → `users`, `time_zone`, `expires_at` |
 | `task_events` | The change tracking log (see below), append-only | `user_id` → `users`, `id` (increasing), `at`, `kind`, `task_id`, `project_id`, `old_value`, `new_value`, `delivery_date_at_time`, `source`, `task_source` |
 
 - `project_tasks` links projects to tasks. A task can be in several projects.
 - All foreign keys cascade on delete. `task_events` has none to `tasks` or `projects`, so events outlive what they're about, but deleting a user deletes their events. Deleting a task removes it from its projects and from other tasks' relations, deleting a project removes its links and tags, deleting a tag removes it from its projects, and deleting a user removes their sessions and all of their data.
 - Tag names are unique within an account, ignoring case. A new account starts with the tags School, Work and Personal, plus the built-in Archive tag (id `archive`).
-- `CHECK` constraints limit `priority` to `low`, `medium`, `high` or `urgent`; relation `type` to `blocks`, `blocked_by`, `subtask_of`, `parent_of` or `related_to`; and `completed` to `0` or `1`. `effort_minutes` must be above 0, and `start_date` can't be after `due_date`. In `user_settings`, each capacity is 0 to 1,440, `buffer` above 0, `w_u` and `k` at least 0, `horizon_days` above 0, and `preset` one of `balanced`, `deadline`, `importance` or `blockers`.
+- `CHECK` constraints limit `priority` to `low`, `medium`, `high` or `urgent`; relation `type` to `blocks`, `blocked_by`, `subtask_of`, `parent_of` or `related_to`; and `completed` to `0` or `1`. `effort_minutes` must be above 0, and `start_date` can't be after `due_date`. In `user_settings`, each capacity is 0 to 1,440, `buffer` above 0, `w_u` and `k` at least 0, `horizon_days` above 0, and `preset` one of `balanced`, `deadline`, `importance` or `blockers`. In `telegram_links`, `brief_minutes` is 0 to 1,439 and `enabled` `0` or `1`. `task_events.source` is `app`, `google`, `telegram` or `backfill`.
 - Scores and forecasts worked out from estimates, dates and settings are never stored.
 - Dates are ISO 8601 strings such as `2026-10-25`. Timestamps are UTC, such as `2026-10-25T15:08:26.123Z`.
 
@@ -386,7 +403,7 @@ Pam logs changes to `task_events` so that scope creep, and how well projects wer
 
 - An event about a task is logged once for each project the task is in, with that project's `project_id` and `delivery_date_at_time` (its delivery date once the change is made). A task in no project gets one event with no project. `task_created` always has no project, since a task is made before it joins any: a task saved with its projects logs `task_created`, then `task_added_to_project` for each.
 - Deleting a task logs `task_deleted`, then its removal from each project. Deleting a project logs `project_deleted`, then the removal of each of its tasks.
-- `source` says who made the change: `app`, `google` (a sync) or `backfill`. `task_source` says where the task came from (`app` or `google`), so adding an imported task to a project is `source = 'app'`, `task_source = 'google'`.
+- `source` says who made the change: `app`, `google` (a sync), `telegram` (the Telegram bot) or `backfill`. Migration `0010` rebuilt the table to allow `telegram`, keeping every event and its id. `task_source` says where the task came from (`app` or `google`), so adding an imported task to a project is `source = 'app'`, `task_source = 'google'`.
 - Events are worked out from the data before and after a save, by `diffEvents` in `src/types/events.ts`, which the Worker and the fake API both run. Membership comes from each project's tasks before and after, whichever form changed it.
 - Events are written in the same batch as the change, so a refused (`409`) or failed save logs nothing. Only real changes are logged: a save that changes nothing logs nothing.
 
@@ -470,6 +487,33 @@ Reset emails go out through [Cloudflare Email Service](https://developers.cloudf
 
    For `pnpm dev`, put them in `.dev.vars` (with `APP_ORIGIN=http://localhost:5173`). Nothing is sent under `pnpm dev`: Wrangler prints each email, link included, to the terminal. For deploys, set them with `pnpm exec wrangler secret put APP_ORIGIN`, then the same for `EMAIL_FROM`. A reset link always points at `APP_ORIGIN`, whichever address the request came to, so a Preview deploy's links open the live site unless that deploy is given its own `APP_ORIGIN`.
 
+### Telegram bot
+
+The companion bot ([docs/telegram-bot.md](docs/telegram-bot.md)) runs inside the same Worker, at `/api/telegram/webhook`. It is off until all of `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_BOT_USERNAME` and `APP_ORIGIN` are set: until then every `/api/telegram` route answers `404`, and the settings page hides its section.
+
+1. **Create the bot.** In Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`, and choose a name and a username ending in `bot`. BotFather replies with the bot's token. Anyone with the token can act as the bot, so keep it secret.
+2. **Make a webhook secret**: 1 to 256 of `A-Z`, `a-z`, `0-9`, `_` and `-`, for example from `openssl rand -hex 32`. Telegram sends it back with every update, and the Worker refuses requests without it.
+3. **Give the Worker the settings** (`APP_ORIGIN` too, if it isn't set yet; links to Pam's pages are built from it):
+   ```sh
+   pnpm exec wrangler secret put TELEGRAM_BOT_TOKEN
+   pnpm exec wrangler secret put TELEGRAM_WEBHOOK_SECRET
+   pnpm exec wrangler secret put TELEGRAM_BOT_USERNAME   # without the @
+   ```
+   Don't add them to the Previews base configuration: Preview deploys have their own database, and a second Worker receiving the same bot's updates would answer chats it can't see. For `pnpm dev`, they can go in `.dev.vars`, but Telegram can only reach a public https address, so linking a chat needs a deploy (or a tunnel to the dev server).
+4. **Point Telegram at the Worker** once it's deployed, with only the updates the bot handles:
+   ```sh
+   curl "https://api.telegram.org/bot<token>/setWebhook" \
+     -H "Content-Type: application/json" \
+     -d '{"url": "https://<your domain>/api/telegram/webhook", "secret_token": "<webhook secret>", "allowed_updates": ["message", "callback_query"]}'
+   ```
+   It answers `{"ok":true,"result":true,...}`. `getWebhookInfo` (`https://api.telegram.org/bot<token>/getWebhookInfo`) shows the address and the last delivery error, if any.
+
+How it works:
+
+- **Linking.** **Connect** on the settings page asks for a code: 128 random bits as hex. D1 stores only its SHA-256 hash, with the browser's time zone, for 10 minutes. The **Open Telegram** link (`https://t.me/<bot>?start=<code>`) opens the bot, which receives `/start <code>`. The code is deleted by the same statement that finds it, so it links one chat at most.
+- **Updates.** Only private chats are answered. Each chat's `last_update_id` is checked and set in one statement, so an update Telegram sends again is skipped. Anything that goes wrong while handling an update is logged, and still answered with `200`, so Telegram doesn't keep sending it.
+- **Messages** are plain text, with no `parse_mode`, so nothing in a task's name can format or break one. The token is part of every Bot API URL, so neither the URL nor anything `fetch` throws is logged: errors name only the method and Telegram's description.
+
 ### Security
 
 Pam has its own accounts (see [Accounts](#accounts)), and anyone who can reach it can create one. To choose who can reach it, put the Worker behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-public-app/) and allow only the emails you want. You can enable it from the Worker's Settings → Domains & Routes in the dashboard. Access only covers the hostnames you add to it, so also turn off the `workers.dev` route and Preview URLs (or add them to Access), or they stay open to everyone.
@@ -481,7 +525,7 @@ There are three layers of tests:
 | Layer | Command | Where | What it covers |
 |---|---|---|---|
 | Unit | `pnpm test:unit` | `src/__tests__/` | Components, stores, models and the API client in a simulated browser (jsdom). `fetch` is replaced by an in-memory fake API (`fakeApi.ts`), so no server or database is needed. |
-| Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers signing up and in, sessions, keeping accounts' data apart, routing, saving and reading every field, tags, settings, estimates and start dates, blocking loops, migrations, validation, transactions, cascading deletes, the schema's constraints and change tracking. The Google Calendar import runs against a fake Google that stands in for `fetch` (`google.spec.ts`). The database is emptied before every test. |
+| Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers signing up and in, sessions, keeping accounts' data apart, routing, saving and reading every field, tags, settings, estimates and start dates, blocking loops, migrations, validation, transactions, cascading deletes, the schema's constraints and change tracking. The Google Calendar import runs against a fake Google that stands in for `fetch` (`google.spec.ts`), and the Telegram bot against a fake Bot API (`telegram.spec.ts`); what the bot says is unit-tested in `telegramMessages.spec.ts`. The database is emptied before every test. |
 | End-to-end | `pnpm test:e2e` | `cypress/e2e/` | The production build in a real browser (Cypress), with the Worker and a local D1 database. Covers creating and editing projects and tasks, managing tags, the tile preview, sorting, the calendar, Suggested with its quick actions, the workload and the settings page (on a wide screen and a phone), and how errors are shown. |
 
 `pnpm test` runs the unit and integration tests together.
@@ -519,6 +563,7 @@ Not built yet:
 - **Google Calendar, both ways**: events are imported as tasks one way (see [Google Calendar](#google-calendar)). Still to do: send changes made in Pam back to Google, using the event's etag and update time to detect conflicting edits, and show events on the calendar without making them tasks, through a third adapter beside `taskToItems` and `projectToItems` in `src/types/calendar.ts`. That adapter already asks for items by date range (as Google's API does), keeps a loading and error state per source, places timed events after all-day ones, and has room for time zones and Google's exclusive end dates on all-day events. Syncing on a schedule (a Cron Trigger) rather than by button would also fit here.
 - **Logo**: a logo for Pam, to make it look the part.
 - **Prioritisation and workload forecast**, in stages ([docs/priority-algorithm.md](docs/priority-algorithm.md)). Built in five stages: estimates, start dates and pinned dates; refusing blocking loops; the scoring (`prioritise` in `src/types/priority.ts`); the Suggested view of Upcoming with quick actions; the settings page with presets; the workload forecast with project pace badges; and the API for a voice front-end. Still to do: the voice front-end itself (see the LLM layer below).
+- **Telegram companion bot**, in stages ([docs/telegram-bot.md](docs/telegram-bot.md)): linking a chat from the settings page is built. Still to do: the morning brief, buttons and commands for the next two tasks, and adding tasks from the chat.
 - **LLM layer**: summarise what needs doing, quickly pick out the high priority tasks, and explain how tasks relate to each other.
 - **Android app**: Pam on Android, for home screen widgets and notifications.
 - **Data analytics**: track how Pam is used over time: the rate tasks and projects are created, the rate tasks are completed, and the number of tasks per project. The data is already being logged ([Change tracking](#change-tracking)), and `isPlanned` can tell planned tasks from ones added later. What's left is a view that reads the log through `GET /api/events`.

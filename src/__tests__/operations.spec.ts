@@ -408,6 +408,16 @@ describe('planTaskAction', () => {
     expect(() => planTaskAction(state, 'missing', { action: 'unpin' })).toThrow(UnknownReference)
   })
 
+  it('logs its events as the app, unless told they come from the Telegram bot', () => {
+    const sources = (plan: Plan) => (plan.ok ? plan.events.map((e) => [e.kind, e.source]) : null)
+    const done = { ...stored, completed: true }
+    expect(sources(planTaskSave(state, { task: done }))).toEqual([['task_completed', 'app']])
+    expect(sources(planTaskSave(state, { task: done }, 'telegram'))).toEqual([['task_completed', 'telegram']])
+    expect(sources(planTaskSave(state, { task: { ...stored, dueDate: '2026-11-21' } }, 'telegram'))).toEqual([
+      ['due_date_changed', 'telegram'],
+    ])
+  })
+
   it('gives each refusal a code and its values, besides the sentence', () => {
     const sentenceOf = (action: TaskAction, from: State) => {
       try {

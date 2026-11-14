@@ -29,9 +29,10 @@ async function mountSettings(options: { failSettings?: boolean; tasks?: Task[]; 
     api.failOn = 'settings'
   }
   await useSettings().load().catch(() => {})
-  api.requests.length = 0
   const wrapper = mount(SettingsForm, { props: { today } })
   await flushPromises()
+  // Only what the tests do counts, not what the page asks for as it opens
+  api.requests.length = 0
   return { api, wrapper }
 }
 

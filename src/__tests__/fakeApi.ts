@@ -22,6 +22,7 @@ import { describeLoop } from '@/types/rules'
 import { DEFAULT_SETTINGS, type UserSettings } from '@/types/settings'
 import type { Tag } from '@/types/tag'
 import type { Task } from '@/types/task'
+import type { TelegramStatus } from '@/types/telegram'
 
 export function fakeApi(
   initial: { projects?: Project[]; tasks?: Task[]; tags?: Tag[]; settings?: UserSettings } = {},
@@ -47,6 +48,10 @@ export function fakeApi(
     events: [] as LoggedEvent[],
     // GET and PUT /api/settings
     settings: structuredClone(initial.settings ?? DEFAULT_SETTINGS),
+    // The Telegram bot's status, or null when it's off on this deploy (every route answers 404),
+    // and the link codes it has handed out
+    telegram: null as TelegramStatus | null,
+    telegramCodes: [] as { code: string; timeZone: string }[],
     fetch: vi.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? 'GET'
       api.requests.push(`${method} ${url}`)
@@ -55,6 +60,7 @@ export function fakeApi(
       }
 
       if (url.startsWith('/api/google/')) return googleRoute(method, url.split('/').slice(3))
+      if (url === '/api/telegram' || url === '/api/telegram/link-code') return telegramRoute(method, url, init)
       if (url.startsWith('/api/events')) {
         const params = new URL(url, 'http://localhost').searchParams
         const projectId = params.get('projectId') || undefined
@@ -122,6 +128,25 @@ export function fakeApi(
       return new Response(null, { status: 204 })
     }
     return Response.json({ error: 'Not found' }, { status: 404 })
+  }
+
+  function telegramRoute(method: string, url: string, init?: RequestInit): Response {
+    const status = api.telegram
+    if (!status) return Response.json({ error: 'Not found' }, { status: 404 })
+    if (url === '/api/telegram/link-code') {
+      const { timeZone } = JSON.parse(init!.body as string)
+      const code = `code${api.telegramCodes.length + 1}`
+      api.telegramCodes.push({ code, timeZone })
+      return Response.json({ code, url: `https://t.me/${status.botUsername}?start=${code}`, expiresAt: '2026-11-16T09:10:00.000Z' })
+    }
+    if (method === 'GET') return Response.json(status)
+    if (method === 'PUT') {
+      if (!status.linked) return Response.json({ error: 'This account isn’t linked to a Telegram chat' }, { status: 409 })
+      api.telegram = { ...status, ...JSON.parse(init!.body as string) }
+      return Response.json(api.telegram)
+    }
+    api.telegram = { linked: false, botUsername: status.botUsername }
+    return new Response(null, { status: 204 })
   }
 
   // Stores what a planned save changes and replies as the Worker does: the changes, a 400 for an

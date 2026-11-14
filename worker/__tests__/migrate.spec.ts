@@ -25,6 +25,8 @@ const TABLES = [
   'login_failures',
   'reset_requests',
   'user_settings',
+  'telegram_links',
+  'telegram_link_codes',
   'users',
 ]
 
@@ -67,6 +69,7 @@ describe('migrate', () => {
       '0007_task_events.sql',
       '0008_password_resets.sql',
       '0009_task_scheduling.sql',
+      '0010_telegram.sql',
     ])
     expect((await call('GET', 'projects', undefined, await signUp())).body).toEqual([])
   })
@@ -208,6 +211,40 @@ describe('migrate', () => {
       ['2026-02-01', 'task_created', 'b', null, null, null, 'app'],
     ])
     expect(events.every((e) => e.source === 'backfill' && e.oldValue === null)).toBe(true)
+  })
+
+  it("rebuilds task_events to allow the 'telegram' source, keeping every event and its id (0010)", async () => {
+    await databaseBefore(9)
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO task_events (user_id, id, at, kind, task_id, project_id, old_value, new_value, delivery_date_at_time, source, task_source)
+         VALUES ('original', 7, '2026-11-01T00:00:00.000Z', 'due_date_changed', 'a', 'p', '2026-11-02', '2026-11-03', '2026-12-01', 'app', 'app'),
+                ('original', 9, '2026-11-02T00:00:00.000Z', 'project_created', NULL, 'p', NULL, '2026-12-01', '2026-12-01', 'google', NULL)`,
+      ),
+    ])
+
+    await migrate(env.DB)
+
+    const rows = (await env.DB.prepare('SELECT * FROM task_events ORDER BY id').all()).results
+    expect(rows).toEqual([
+      {
+        user_id: 'original', id: 7, at: '2026-11-01T00:00:00.000Z', kind: 'due_date_changed', task_id: 'a', project_id: 'p',
+        old_value: '2026-11-02', new_value: '2026-11-03', delivery_date_at_time: '2026-12-01', source: 'app', task_source: 'app',
+      },
+      {
+        user_id: 'original', id: 9, at: '2026-11-02T00:00:00.000Z', kind: 'project_created', task_id: null, project_id: 'p',
+        old_value: null, new_value: '2026-12-01', delivery_date_at_time: '2026-12-01', source: 'google', task_source: null,
+      },
+    ])
+    // New events carry on after the largest id, may come from the bot, and still can't name another source
+    const insert = (source: string) =>
+      env.DB.prepare(`INSERT INTO task_events (user_id, at, kind, source) VALUES ('original', 'now', 'task_created', ?1) RETURNING id`)
+        .bind(source)
+        .first<number>('id')
+    expect(await insert('telegram')).toBe(10)
+    await expect(insert('fax')).rejects.toThrow(/CHECK constraint failed/)
+    const indexes = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'task_events' ORDER BY name").all<{ name: string }>()
+    expect(indexes.results.map((r) => r.name)).toEqual(['task_events_project', 'task_events_task'])
   })
 
   it('skips migrations that wrangler already applied', async () => {
