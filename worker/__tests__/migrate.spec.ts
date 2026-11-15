@@ -25,6 +25,7 @@ const TABLES = [
   'login_failures',
   'reset_requests',
   'user_settings',
+  'telegram_unrecognised',
   'telegram_links',
   'telegram_link_codes',
   'users',
@@ -70,6 +71,7 @@ describe('migrate', () => {
       '0008_password_resets.sql',
       '0009_task_scheduling.sql',
       '0010_telegram.sql',
+      '0011_telegram_unrecognised.sql',
     ])
     expect((await call('GET', 'projects', undefined, await signUp())).body).toEqual([])
   })

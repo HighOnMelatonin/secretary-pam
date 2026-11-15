@@ -1,6 +1,6 @@
 # Telegram companion bot
 
-Implementation spec, 14 Nov 2026. Status: Stages 1 to 4 (linking, morning brief, buttons and commands, capture) built (14 Nov 2026), awaiting review; see "Decisions made while implementing".
+Implementation spec, 14 Nov 2026. Status: Stages 1 to 4 (linking, morning brief, buttons and commands, capture) built (14 Nov 2026); Stage 5 (lookup commands) added and built 16 Nov 2026, awaiting review; see "Decisions made while implementing".
 
 Add a Telegram companion bot to Pam (this repo). Read README.md and
 docs/priority-algorithm.md first and follow the existing conventions. Work in
@@ -98,6 +98,29 @@ at a time, takes one-tap actions and captures new tasks. Anything else is an
   a task.
 - Not in the bot: deleting, projects, relations, exact dates, settings.
 
+## Stage 5: lookup commands
+Each lookup is a pure function beside forecast.ts and priority.ts, with unit
+tests. The bot only formats the result. Every reply ends with an Open Pam
+button to the most relevant page.
+
+- "/tasks <text>": the open tasks of the live project whose name contains the
+  text (case-insensitive), grouped by category, each with its hours, plus the
+  project's open task count and total hours. Several matches: reply with one
+  button per matching project. No match: say so and list the project names.
+  No text: how to use it.
+- "/late": the tasks the forecast projects to finish after their deadline,
+  each with its deadline and projected finish. It must list exactly the tasks
+  the brief counts.
+- "/offtrack": the live projects whose pace is not on_pace, each with its
+  pace, projected finish and delivery date.
+- "/quickwins": visible open tasks of at most 60 minutes (the hours the
+  forecast counts), in Suggested order, with their total hours. Tasks on the
+  2-hour default are left out.
+- Unrecognised text: keep the current hint, and also store the text (chat,
+  text, time) in a small new table, so I can later see what I tried to ask.
+  Add a migration for it.
+- Update /help and the README's setMyCommands call with the new commands.
+
 ## Decisions made while implementing
 
 Answers to questions raised against the spec. Where this section and the stages above disagree, this section wins.
@@ -171,3 +194,23 @@ Stage 4 (proposed by Claude, open to review):
 - **`/desc <text>`** replaces the description of the chat's last added task, keeping line breaks, up to 10,000 characters, and replies `Saved the description of "<name>".` It works on a task ticked off since. With no task added yet, it says to `/add` first; with an empty text, how to use it; if the task was deleted, `That task is no longer in Pam.` Only `/add` sets the last added task, so a task made in Pam isn't described by mistake.
 - **Any other text** gets `To add a task, send /add and its name. /help lists everything else.` That includes unknown commands, and commands addressed to another bot, which Stage 3 ignored. A message with no text (a photo, a sticker) gets nothing. Nothing but `/add` makes a task.
 - **`/help`** now lists `/add` and `/desc` too, and the README's `setMyCommands` call includes them.
+
+Before Stage 5 (decided by the user):
+
+- **"Category" in `/tasks`** is the Suggested category (Overdue, Do nowww, Do next), since tasks have no category field. A project's hidden open tasks get groups of their own after those: *Waiting on other tasks* (an open blocker) and *Not started yet* (a later start date). Open tasks that prioritising leaves out (imported from Google Calendar with no estimate) come last, under *Not counted (from Google Calendar, no estimate)*, with no hours, and aren't in the open task count or the total hours.
+- **Which projects `/offtrack` lists**: those that are tight or behind, and those with a delivery date and open work that never finish in the forecast (their pace is null). Projects with no delivery date or no open work are left out, though their pace is null too.
+- **The unrecognised text table** keeps the chat, the account (`user_id`, deleted with it), the text and the time, with no cap. Rows stay after unlinking.
+
+Stage 5 (proposed by Claude, open to review):
+
+- **Where the lookups live.** `src/types/lookups.ts`, beside `forecast.ts` and `priority.ts`, with its unit tests in `src/__tests__/lookups.spec.ts`. They take what `prioritise` and `forecast` return rather than working anything out again: `lookupProject` / `projectTasks` / `projectTasksById`, `lateTasks`, `offTrackProjects` and `quickWins`. `visibleTasks` (the Suggested list's tasks in order) moved there from `messages.ts`, which re-exports it.
+- **`/tasks` matching.** The text is trimmed and compared without case against live (not archived) projects' names. Exactly one match gets its tasks. Several get a button each, in the projects' own order (oldest first), even when one of their names is exactly the text. The no-match reply lists every live project, or says there are none. `/tasks` with no text says how to use it.
+- **Inside a group**, tasks are in Suggested order, and the uncounted ones in the project's order. Each line is `- Intro (1.5 h)`, or `- Draft (2 h, no estimate)` on the default, the hours as the brief shows them. The first line is `Thesis: 3 open tasks, 7.5 h.`; a project with no open tasks gets `"Thesis" has no open tasks.`
+- **A project button** carries `tp:<project id>` (a longest id of 61 bytes; one longer gets a link to the project's page instead). Pressing it is answered, then sends that project's tasks worked out afresh. A project deleted or archived since gets `That project is no longer open in Pam.` These buttons are left in place, since pressing one changes nothing.
+- **`/late`** starts with the brief's own `late_tasks` sentence ("2 tasks are projected to finish after their deadline."), so the count and the list come from the same `forecast.tasks[].late`. Hidden tasks are included, as the brief counts them. Tasks are in Suggested order, each as `1. Report: deadline 2026-11-17 (Tuesday), projected 2026-11-18 (Wednesday).` The deadline is the effective one, which may come from a project or a blocked task. A task the forecast never finishes says `doesn't finish in the forecast`. With none: `No task is projected to finish after its deadline.`
+- **`/offtrack`** lines are `1. Thesis: Behind, projected 2026-11-23 (Monday), delivery 2026-11-20 (Friday).`, or `doesn't finish in the forecast, delivery …`, in the forecast's (the projects') order, under `2 projects are off track:`. With none: `Every project with a delivery date is on pace.`
+- **`/quickwins`** keeps the tasks the Suggested list shows whose hours (estimate × buffer) are 1 h or less, so the buffer can push a 45-minute task out. Lines are the brief's (`1. Email Sam (0.5 h). Due tomorrow`), under `Quick wins: 2 tasks, 1.5 h in all.` They have no Done or Not today buttons, which stay with the top two. With none, the reply says tasks with no estimate count as 2 h, so short ones need an estimate.
+- **Open Pam** goes to the project's page for `/tasks` with a match, to the one task's or project's page when `/late` or `/offtrack` lists just one, and to the dashboard otherwise.
+- **Long lists** are cut to fit Telegram's 4,096 characters, ending `And 12 more in Pam.` A group heading left with none of its tasks is cut too.
+- **What's stored as unrecognised** is exactly the text that gets the hint: anything that isn't a known command, including unknown commands and commands addressed to another bot. A known command used wrongly (`/tasks` with no text, `/add` with no name) gets its usage reply and isn't stored, and nor are messages without text. It's stored before the hint is sent; if storing fails, that's logged and the hint still goes out. The table is `telegram_unrecognised` (migration `0011`): `id`, `user_id`, `chat_id`, `text` and `at` (UTC). There's no route or page for it; the README gives the `wrangler d1 execute` query to read it.
+- **`/help`** lists the four lookups after `/desc`, and the README's `setMyCommands` call includes them.

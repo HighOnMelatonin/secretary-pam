@@ -5,6 +5,7 @@ import { createExecutionContext, createScheduledController, env, SELF, waitOnExe
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Forecast } from '../../src/types/forecast'
 import type { Priorities } from '../../src/types/priority'
+import { createEmptyProject, type Project } from '../../src/types/project'
 import { createEmptyTask, type Task } from '../../src/types/task'
 import worker from '../index'
 import { localDateTime } from '../pamBot/schedule'
@@ -896,5 +897,149 @@ describe('capture', () => {
     bot.calls = []
     await webhook({ update_id: nextUpdateId++, message: { message_id: 2, date: 0, chat: { id: CHAT, type: 'private' }, photo: [] } })
     expect(bot.calls).toEqual([])
+  })
+})
+
+describe('lookups', () => {
+  const today = () => localDateTime(new Date(), ZONE).date
+  const inDays = (days: number) => new Date(Date.parse(`${today()}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10)
+  const lastText = () => sent()[sent().length - 1]![1] as string
+  const lastButtons = () => (bot.calls[bot.calls.length - 1]!.body.reply_markup as { inline_keyboard: unknown[][] }).inline_keyboard
+  const dashboard = [[{ text: 'Open Pam', url: 'https://pam.example/' }]]
+
+  const saveTask = (session: string, id: string, fields: Partial<Task>) =>
+    call('PUT', `tasks/${id}`, { task: { ...createEmptyTask(), id, name: id, ...fields } }, session)
+  const saveProject = (session: string, id: string, fields: Partial<Project>) =>
+    call('PUT', `projects/${id}`, { project: { ...createEmptyProject(), id, name: id, ...fields } }, session)
+  const forecastOf = async (session: string): Promise<Forecast> => (await call('GET', `forecast?today=${today()}`, undefined, session)).body
+
+  // Two projects called Thesis…, and a task in neither
+  async function projects() {
+    const session = await linkedAccount()
+    await saveTask(session, 'intro', { name: 'Intro', effortMinutes: 90 })
+    await saveTask(session, 'method', { name: 'Method' })
+    await saveTask(session, 'done', { name: 'Done', completed: true, effortMinutes: 60 })
+    await saveTask(session, 'slides', { name: 'Slides', effortMinutes: 30 })
+    await saveProject(session, 'thesis', { name: 'Thesis', taskIds: ['intro', 'method', 'done'] })
+    await saveProject(session, 'defence', { name: 'Thesis defence', taskIds: ['slides'] })
+    return session
+  }
+
+  it("/tasks lists the matching project's open tasks, linking to its page", async () => {
+    await projects()
+    await webhook(textUpdate('/tasks DEFENCE'))
+    expect(lastText()).toBe('Thesis defence: 1 open task, 0.5 h.\nDo next\n- Slides (0.5 h)')
+    expect(lastButtons()).toEqual([[{ text: 'Open Pam', url: 'https://pam.example/projects/defence' }]])
+  })
+
+  it('/tasks offers a button per project when several match, which sends its tasks', async () => {
+    const session = await projects()
+    await webhook(textUpdate('/tasks thesis'))
+    expect(lastText()).toBe('2 projects match "thesis". Which one?')
+    expect(lastButtons()).toEqual([
+      [{ text: 'Thesis', callback_data: 'tp:thesis' }],
+      [{ text: 'Thesis defence', callback_data: 'tp:defence' }],
+      ...dashboard,
+    ])
+
+    bot.calls = []
+    await webhook(pressUpdate('tp:thesis'))
+    expect(bot.calls.map((c) => c.method)).toEqual(['answerCallbackQuery', 'sendMessage'])
+    expect(lastText()).toBe('Thesis: 2 open tasks, 3.5 h.\nDo next\n- Intro (1.5 h)\n- Method (2 h, no estimate)')
+
+    // A project archived or deleted since only gets a note
+    await call('DELETE', 'projects/thesis', undefined, session)
+    await webhook(pressUpdate('tp:thesis'))
+    expect(lastText()).toBe('That project is no longer open in Pam.')
+  })
+
+  it('/tasks lists the projects when nothing matches, and says how to use it with no text', async () => {
+    await projects()
+    await webhook(textUpdate('/tasks garden'))
+    expect(lastText()).toBe('No project matches "garden". Your projects:\n- Thesis\n- Thesis defence')
+    expect(lastButtons()).toEqual(dashboard)
+    await webhook(textUpdate('/tasks'))
+    expect(lastText()).toBe("Send /tasks and part of a project's name, such as /tasks thesis.")
+  })
+
+  it('/late lists exactly the tasks the brief counts as late', async () => {
+    const session = await linkedAccount()
+    await saveTask(session, 'big', { name: 'Big', dueDate: inDays(1), effortMinutes: 40 * 60 })
+    await saveTask(session, 'small', { name: 'Small', dueDate: inDays(30), effortMinutes: 60 })
+    const forecast = await forecastOf(session)
+    const late = forecast.tasks.filter((t) => t.late)
+    expect(late.map((t) => t.taskId)).toEqual(['big'])
+
+    await webhook(textUpdate('/late'))
+    const lines = lastText().split('\n')
+    expect(lines[0]).toBe(forecast.brief.parts.find((p) => p.code === 'late_tasks')!.text)
+    expect(lines.slice(1)).toEqual(late.map((t, i) => expect.stringMatching(new RegExp(`^${i + 1}\\. ${t.name}: deadline ${t.deadline} \\(\\w+\\), projected ${t.finish} \\(\\w+\\)\\.$`))))
+    expect(lastButtons()).toEqual([[{ text: 'Open Pam', url: 'https://pam.example/tasks/big' }]])
+  })
+
+  it('/offtrack lists the projects that are tight or behind', async () => {
+    const session = await linkedAccount()
+    await saveTask(session, 'big', { name: 'Big', effortMinutes: 60 * 60 })
+    await saveTask(session, 'small', { name: 'Small', effortMinutes: 60 })
+    await saveProject(session, 'late', { name: 'Late', deliveryDate: inDays(2), taskIds: ['big'] })
+    await saveProject(session, 'fine', { name: 'Fine', deliveryDate: inDays(60), taskIds: ['small'] })
+    const forecast = await forecastOf(session)
+    const late = forecast.projects.find((p) => p.projectId === 'late')!
+    expect(late.pace).toBe('behind')
+
+    await webhook(textUpdate('/offtrack'))
+    expect(lastText()).toMatch(
+      new RegExp(`^1 project is off track:\\n1\\. Late: Behind, projected ${late.finish} \\(\\w+\\), delivery ${inDays(2)} \\(\\w+\\)\\.$`),
+    )
+    expect(lastButtons()).toEqual([[{ text: 'Open Pam', url: 'https://pam.example/projects/late' }]])
+  })
+
+  it('/quickwins lists the visible tasks of an hour or less, leaving out the 2-hour default', async () => {
+    const session = await linkedAccount()
+    await saveTask(session, 'a', { name: 'Email', effortMinutes: 30, dueDate: inDays(1) })
+    await saveTask(session, 'b', { name: 'Call', effortMinutes: 60, dueDate: inDays(2) })
+    await saveTask(session, 'c', { name: 'Essay', effortMinutes: 90 })
+    await saveTask(session, 'd', { name: 'Unsized' })
+    await webhook(textUpdate('/quickwins'))
+    expect(lastText()).toMatch(/^Quick wins: 2 tasks, 1\.5 h in all\.\n1\. Email \(0\.5 h\)\. .*\n2\. Call \(1 h\)\. /)
+    expect(lastButtons()).toEqual(dashboard)
+  })
+
+  it('stores the text it gets the hint for, with the chat, account and time, and keeps it after unlinking', async () => {
+    const session = await linkedAccount()
+    const before = new Date().toISOString()
+    for (const text of ['what is due friday?', '/unknown', '/next@SomeOtherBot']) await webhook(textUpdate(text))
+    // A command it knows, even used wrongly, and a message with no text aren't stored
+    await webhook(textUpdate('/tasks'))
+    await webhook({ update_id: nextUpdateId++, message: { message_id: 2, date: 0, chat: { id: CHAT, type: 'private' }, photo: [] } })
+
+    const rows = async () =>
+      (await env.DB.prepare('SELECT user_id, chat_id, text, at FROM telegram_unrecognised ORDER BY id').all<Record<string, string | number>>()).results
+    const userId = await env.DB.prepare('SELECT user_id FROM telegram_links WHERE chat_id = ?1').bind(CHAT).first<string>('user_id')
+    const stored = await rows()
+    expect(stored.map((r) => [r.user_id, r.chat_id, r.text])).toEqual([
+      [userId, CHAT, 'what is due friday?'],
+      [userId, CHAT, '/unknown'],
+      [userId, CHAT, '/next@SomeOtherBot'],
+    ])
+    for (const row of stored) expect(row.at >= before && row.at <= new Date().toISOString()).toBe(true)
+    expect(sent().slice(0, 3)).toEqual(Array(3).fill([CHAT, 'To add a task, send /add and its name. /help lists everything else.']))
+
+    expect((await call('DELETE', 'telegram', undefined, session)).status).toBe(204)
+    expect(await rows()).toHaveLength(3)
+  })
+
+  it('still sends the hint when storing the text fails, logging the failure', async () => {
+    await linkedAccount()
+    // Taken away for this test only, so the insert fails
+    await env.DB.prepare('ALTER TABLE telegram_unrecognised RENAME TO telegram_unrecognised_away').run()
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await webhook(textUpdate('hello'))
+    } finally {
+      await env.DB.prepare('ALTER TABLE telegram_unrecognised_away RENAME TO telegram_unrecognised').run()
+    }
+    expect(sent()).toEqual([[CHAT, 'To add a task, send /add and its name. /help lists everything else.']])
+    expect(errors).toHaveBeenCalledWith('Storing unrecognised Telegram text failed:', expect.stringContaining('telegram_unrecognised'))
   })
 })

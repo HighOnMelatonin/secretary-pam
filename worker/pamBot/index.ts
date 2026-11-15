@@ -10,7 +10,8 @@
 //
 // A linked chat can send /next, /today, /brief, /stop and /help, and press the buttons under the
 // tasks: Done, Not today and Next. It can add a task with /add, set its priority, due date and
-// estimate with the buttons under the reply, and describe it with /desc. Every change goes through
+// estimate with the buttons under the reply, and describe it with /desc. It can look things up with
+// /tasks, /late, /offtrack and /quickwins (src/types/lookups.ts). Every change goes through
 // the app's own planners (src/types/operations.ts) and its save (PamData.save), logged with the
 // source 'telegram'.
 //
@@ -22,6 +23,7 @@
 // Telegram doesn't send it again and again; the failure is logged instead (never the token).
 import { forecast } from '../../src/types/forecast'
 import { MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH } from '../../src/types/limits'
+import { lateTasks, lookupProject, offTrackProjects, projectTasksById, quickWins } from '../../src/types/lookups'
 import { ActionRefused, planTaskAction, planTaskSave, type Changes, type Plan, type State } from '../../src/types/operations'
 import { prioritise } from '../../src/types/priority'
 import type { Project } from '../../src/types/project'
@@ -65,20 +67,29 @@ import {
   goneNote,
   helpMessage,
   hintMessage,
+  lateMessage,
   linkedMessage,
   markTask,
   nameTooLong,
   nextMessage,
+  noProjectMessage,
   noTaskToDescribe,
   notTodayLine,
+  offTrackMessage,
   parseCommand,
+  projectGoneNote,
+  projectTasksMessage,
+  quickWinsMessage,
+  severalProjectsMessage,
   startCode,
   stoppedMessage,
+  tasksUsage,
   todayMessage,
   unlinkedMessage,
   type ButtonPress,
 } from './messages'
 import { dueDateFor, localDateTime } from './schedule'
+import { storeUnrecognised } from './unrecognised'
 
 export interface BotConfig {
   token: string
@@ -237,11 +248,30 @@ async function planning({ db, data }: Bot, link: Link, now: Date) {
   const today = localDateTime(now, link.timeZone).date
   const { tasks, projects, settings } = await data.load(db, link.userId)
   const priorities = prioritise(tasks, projects, settings, today)
-  return { priorities, forecast: () => forecast(tasks, projects, settings, today, priorities) }
+  return { tasks, projects, priorities, forecast: () => forecast(tasks, projects, settings, today, priorities) }
 }
 
-// /next, /today, /brief, /stop, /add, /desc and /help (and a bare /start). Any other text gets a
-// one-line hint.
+// /tasks <text>: the open tasks of the live project whose name contains the text
+async function findProject(bot: Bot, link: Link, query: string, now: Date): Promise<OutgoingMessage> {
+  const { origin } = bot.config
+  if (!query.trim()) return tasksUsage(origin)
+  const { tasks, projects, priorities } = await planning(bot, link, now)
+  const found = lookupProject(query, tasks, projects, priorities)
+  switch (found.kind) {
+    case 'found':
+      return projectTasksMessage(origin, found.project)
+    case 'several':
+      return severalProjectsMessage(origin, query, found.projects)
+    case 'none':
+      return noProjectMessage(origin, query, found.projects)
+    case 'blank':
+      return tasksUsage(origin)
+  }
+}
+
+// /next, /today, /brief, /stop, /add, /desc, /tasks, /late, /offtrack, /quickwins and /help (and a
+// bare /start). Any other text gets a one-line hint, and is stored so the user can see what they
+// tried to ask.
 async function handleCommand(bot: Bot, link: Link, text: string | undefined, now: Date) {
   const { config } = bot
   const send = (message: OutgoingMessage) => sendMessage(config.token, link.chatId, message)
@@ -269,13 +299,34 @@ async function handleCommand(bot: Bot, link: Link, text: string | undefined, now
     case 'desc':
       await send(await describeTask(bot, link, command!.args))
       return
+    case 'tasks':
+      await send(await findProject(bot, link, command!.args, now))
+      return
+    case 'late': {
+      const forecast = (await planning(bot, link, now)).forecast()
+      await send(lateMessage(config.origin, forecast, lateTasks(forecast)))
+      return
+    }
+    case 'offtrack':
+      await send(offTrackMessage(config.origin, offTrackProjects((await planning(bot, link, now)).forecast())))
+      return
+    case 'quickwins':
+      await send(quickWinsMessage(config.origin, quickWins((await planning(bot, link, now)).priorities)))
+      return
     case 'help':
     case 'start':
       await send(helpMessage(config.origin))
       return
     default:
       // Any other text, which never makes a task. A photo or sticker has no text and gets nothing.
-      if (text !== undefined) await send(hintMessage)
+      if (text === undefined) return
+      try {
+        await storeUnrecognised(bot.db, link, text, now)
+      } catch (e) {
+        // The hint still goes out
+        console.error('Storing unrecognised Telegram text failed:', String(e))
+      }
+      await send(hintMessage)
   }
 }
 
@@ -410,6 +461,13 @@ async function handleButton(bot: Bot, updateId: number, query: TelegramCallbackQ
     if (press.action === 'next') {
       await answer()
       await sendNext(press.offset)
+      return
+    }
+    if (press.action === 'project') {
+      const { tasks, projects, priorities } = await planning(bot, link, now)
+      const project = projectTasksById(press.projectId, tasks, projects, priorities)
+      await answer()
+      await send(project ? projectTasksMessage(config.origin, project) : projectGoneNote)
       return
     }
     if (press.action === 'priority' || press.action === 'due' || press.action === 'estimate') {

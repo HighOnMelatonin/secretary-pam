@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest'
 import { forecast } from '../../src/types/forecast'
 import { prioritise } from '../../src/types/priority'
 import { DEFAULT_SETTINGS } from '../../src/types/settings'
+import { lateTasks, offTrackProjects, quickWins, type ProjectTasks } from '../../src/types/lookups'
+import { createEmptyProject, type Project } from '../../src/types/project'
 import { createEmptyTask, type Task } from '../../src/types/task'
 import { deepLink, formatMinutes, isTimeZone, parseMinutes } from '../../src/types/telegram'
 import {
@@ -18,14 +20,22 @@ import {
   estimateText,
   goneNote,
   helpMessage,
+  lateMessage,
   linkedMessage,
   markTask,
   MAX_MESSAGE_LENGTH,
   nextMessage,
+  noProjectMessage,
   notTodayLine,
+  offTrackMessage,
   parseCommand,
+  projectGoneNote,
+  projectTasksMessage,
+  quickWinsMessage,
+  severalProjectsMessage,
   startCode,
   stoppedMessage,
+  tasksUsage,
   todayMessage,
   unlinkedMessage,
   visibleTasks,
@@ -206,6 +216,7 @@ describe('encodePress', () => {
     expect(encodePress({ action: 'done', taskId: 'abc' })).toBe('d:abc')
     expect(encodePress({ action: 'not_today', taskId: 'abc' })).toBe('nt:abc')
     expect(encodePress({ action: 'next', offset: 4 })).toBe('next:4')
+    expect(encodePress({ action: 'project', projectId: 'p1' })).toBe('tp:p1')
   })
 })
 
@@ -216,13 +227,14 @@ describe('decodePress', () => {
       { action: 'not_today', taskId: 'a:b c' },
       { action: 'next', offset: 0 },
       { action: 'next', offset: 12 },
+      { action: 'project', projectId: 'p:1' },
     ] as const) {
       expect(decodePress(encodePress(press))).toEqual(press)
     }
   })
 
   it('is null for data the bot did not make', () => {
-    for (const data of [undefined, '', 'd:', 'x:abc', 'next:', 'next:-1', 'next:01', 'next:1.5', 'next:abc', `d:${'a'.repeat(63)}`]) {
+    for (const data of [undefined, '', 'd:', 'x:abc', 'next:', 'next:-1', 'next:01', 'next:1.5', 'next:abc', `d:${'a'.repeat(63)}`, 'tp:', `tp:${'a'.repeat(62)}`]) {
       expect(decodePress(data), String(data)).toBeNull()
     }
   })
@@ -345,7 +357,7 @@ describe('markTask', () => {
 
 describe('help and notes', () => {
   it('list the commands, and say what changed', () => {
-    expect(helpMessage(ORIGIN).text.split('\n').slice(0, 8)).toEqual([
+    expect(helpMessage(ORIGIN).text.split('\n').slice(0, 12)).toEqual([
       "Pam's commands:",
       '/next: the next two tasks to do',
       "/today: today's plan",
@@ -353,6 +365,10 @@ describe('help and notes', () => {
       '/stop: turn the morning brief off',
       '/add <name>: add a task, then set its priority, due date and estimate with the buttons',
       '/desc <text>: describe the task you last added',
+      "/tasks <name>: a project's open tasks, from part of its name",
+      '/late: the tasks projected to finish after their deadline',
+      '/offtrack: the projects that are tight, behind or never finish',
+      '/quickwins: the tasks of an hour or less',
       '/help: this list',
     ])
     expect(stoppedMessage(ORIGIN).text).toBe("The morning brief is off. To turn it back on, use Pam's settings: https://pam.example/settings")
@@ -423,5 +439,156 @@ describe('addedMessage', () => {
 
   it('writes estimates in minutes under an hour, and hours from one', () => {
     expect([30, 59, 60, 240, 100].map(estimateText)).toEqual(['30 m', '59 m', '1 h', '4 h', '1.7 h'])
+  })
+})
+
+describe('the lookups', () => {
+  const today = '2026-11-16' // a Monday
+  const task = (id: string, fields: Partial<Task> = {}): Task => ({ ...createEmptyTask(), id, name: id, ...fields })
+  const project = (id: string, fields: Partial<Project> = {}): Project => ({ ...createEmptyProject(), id, name: id, ...fields })
+  const dashboard = [[{ text: 'Open Pam', url: 'https://pam.example/' }]]
+  const forecastOf = (tasks: Task[], projects: Project[] = []) => forecast(tasks, projects, DEFAULT_SETTINGS, today)
+  const NO_CAPACITY = { mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0, sun: 0 }
+
+  describe('/tasks', () => {
+    const thesis: ProjectTasks = {
+      projectId: 'p 1',
+      name: 'Thesis',
+      groups: [
+        { group: 'overdue', tasks: [{ taskId: 'a', name: 'Intro', hours: 2, unestimated: true }] },
+        { group: 'do_next', tasks: [{ taskId: 'b', name: 'Method', hours: 1.5, unestimated: false }] },
+        { group: 'not_started', tasks: [{ taskId: 'c', name: 'Results', hours: 4, unestimated: false }] },
+        { group: 'not_counted', tasks: [{ taskId: 'd', name: 'Meeting', hours: null, unestimated: true }] },
+      ],
+      openCount: 3,
+      totalHours: 7.5,
+    }
+
+    it("lists the project's open tasks by group, with the count and hours, linking to its page", () => {
+      expect(projectTasksMessage(ORIGIN, thesis)).toEqual({
+        text: [
+          'Thesis: 3 open tasks, 7.5 h.',
+          'Overdue',
+          '- Intro (2 h, no estimate)',
+          'Do next',
+          '- Method (1.5 h)',
+          'Not started yet',
+          '- Results (4 h)',
+          'Not counted (from Google Calendar, no estimate)',
+          '- Meeting',
+        ].join('\n'),
+        buttons: [[{ text: 'Open Pam', url: 'https://pam.example/projects/p%201' }]],
+      })
+      expect(projectTasksMessage(ORIGIN, { ...thesis, groups: [], openCount: 0, totalHours: 0 }).text).toBe('"Thesis" has no open tasks.')
+      expect(projectTasksMessage(ORIGIN, { ...thesis, openCount: 1 }).text.split('\n')[0]).toBe('Thesis: 1 open task, 7.5 h.')
+    })
+
+    it('cuts a long list to fit one message, saying how many are left out', () => {
+      const many = Array.from({ length: 300 }, (_, i) => ({ taskId: `t${i}`, name: `A task with a longish name ${i}`, hours: 1, unestimated: false }))
+      const { text } = projectTasksMessage(ORIGIN, { ...thesis, groups: [{ group: 'do_next', tasks: many }], openCount: 300, totalHours: 300 })
+      expect(text.length).toBeLessThanOrEqual(MAX_MESSAGE_LENGTH)
+      const lines = text.split('\n')
+      const shown = lines.filter((l) => l.startsWith('- ')).length
+      expect(shown).toBeGreaterThan(50)
+      expect(lines.at(-1)).toBe(`And ${300 - shown} more in Pam.`)
+    })
+
+    it('offers a button for each match, or a link when its id is too long for callback data', () => {
+      const message = severalProjectsMessage(ORIGIN, ' thesis ', [
+        { projectId: 'p1', name: 'Thesis' },
+        { projectId: 'x'.repeat(62), name: 'Thesis defence' },
+      ])
+      expect(message).toEqual({
+        text: '2 projects match "thesis". Which one?',
+        buttons: [
+          [{ text: 'Thesis', callback_data: 'tp:p1' }],
+          [{ text: 'Thesis defence', url: `https://pam.example/projects/${'x'.repeat(62)}` }],
+          ...dashboard,
+        ],
+      })
+    })
+
+    it('lists the projects when nothing matches, and says how to use it', () => {
+      expect(
+        noProjectMessage(ORIGIN, 'zzz', [
+          { projectId: 'a', name: 'Thesis' },
+          { projectId: 'b', name: 'Garden' },
+        ]),
+      ).toEqual({ text: 'No project matches "zzz". Your projects:\n- Thesis\n- Garden', buttons: dashboard })
+      expect(noProjectMessage(ORIGIN, 'zzz', []).text).toBe('No project matches "zzz". You have no open projects.')
+      expect(tasksUsage(ORIGIN)).toEqual({ text: "Send /tasks and part of a project's name, such as /tasks thesis.", buttons: dashboard })
+      expect(projectGoneNote.text).toBe('That project is no longer open in Pam.')
+    })
+  })
+
+  describe('/late', () => {
+    it("starts with the brief's own sentence, then each task's deadline and projected finish", () => {
+      const tasks = [task('Report', { dueDate: '2026-11-17', effortMinutes: 20 * 60 }), task('Essay', { dueDate: '2026-11-20', effortMinutes: 60 })]
+      const result = forecastOf(tasks)
+      const message = lateMessage(ORIGIN, result, lateTasks(result))
+      expect(message.text).toBe(
+        '1 task is projected to finish after its deadline.\n1. Report: deadline 2026-11-17 (Tuesday), projected 2026-11-18 (Wednesday).',
+      )
+      // One task links to its own page
+      expect(message.buttons).toEqual([[{ text: 'Open Pam', url: 'https://pam.example/tasks/Report' }]])
+    })
+
+    it("says when a task doesn't finish, links to the dashboard for several, and says when nothing is late", () => {
+      const tasks = [task('a', { dueDate: '2026-11-17' }), task('b', { dueDate: '2026-11-18' })]
+      const result = forecast(tasks, [], { ...DEFAULT_SETTINGS, capacityMinutes: NO_CAPACITY }, today)
+      const message = lateMessage(ORIGIN, result, lateTasks(result))
+      expect(message.text.split('\n')).toEqual([
+        '2 tasks are projected to finish after their deadline.',
+        "1. a: deadline 2026-11-17 (Tuesday), doesn't finish in the forecast.",
+        "2. b: deadline 2026-11-18 (Wednesday), doesn't finish in the forecast.",
+      ])
+      expect(message.buttons).toEqual(dashboard)
+      const fine = forecastOf([])
+      expect(lateMessage(ORIGIN, fine, lateTasks(fine))).toEqual({ text: 'No task is projected to finish after its deadline.', buttons: dashboard })
+    })
+  })
+
+  describe('/offtrack', () => {
+    it("gives each project's pace, projected finish and delivery date", () => {
+      const tasks = [task('a', { effortMinutes: 48 * 60 }), task('b', { effortMinutes: 60 })]
+      const projects = [project('Thesis', { deliveryDate: '2026-11-20', taskIds: ['a'] })]
+      expect(offTrackMessage(ORIGIN, offTrackProjects(forecastOf(tasks, projects)))).toEqual({
+        text: '1 project is off track:\n1. Thesis: Behind, projected 2026-11-23 (Monday), delivery 2026-11-20 (Friday).',
+        buttons: [[{ text: 'Open Pam', url: 'https://pam.example/projects/Thesis' }]],
+      })
+    })
+
+    it("says when a project doesn't finish, links to the dashboard for several, and says when all are on pace", () => {
+      const message = offTrackMessage(ORIGIN, [
+        { projectId: 'a', name: 'A', pace: 'tight', finish: '2026-11-19', deliveryDate: '2026-11-20' },
+        { projectId: 'b', name: 'B', pace: null, finish: null, deliveryDate: '2026-11-20' },
+      ])
+      expect(message.text.split('\n')).toEqual([
+        '2 projects are off track:',
+        '1. A: Tight, projected 2026-11-19 (Thursday), delivery 2026-11-20 (Friday).',
+        "2. B: doesn't finish in the forecast, delivery 2026-11-20 (Friday).",
+      ])
+      expect(message.buttons).toEqual(dashboard)
+      expect(offTrackMessage(ORIGIN, [])).toEqual({ text: 'Every project with a delivery date is on pace.', buttons: dashboard })
+    })
+  })
+
+  describe('/quickwins', () => {
+    it('lists the quick wins as the brief does, with their total hours', () => {
+      const tasks = [task('Email Sam', { effortMinutes: 30, dueDate: '2026-11-17' }), task('Call', { effortMinutes: 60 }), task('Long', { effortMinutes: 120 })]
+      const priorities = prioritise(tasks, [], DEFAULT_SETTINGS, today)
+      const reason = (id: string) => priorities.tasks.find((t) => t.taskId === id)!.reason.text
+      expect(quickWinsMessage(ORIGIN, quickWins(priorities))).toEqual({
+        text: `Quick wins: 2 tasks, 1.5 h in all.\n1. Email Sam (0.5 h). ${reason('Email Sam')}\n2. Call (1 h). ${reason('Call')}`,
+        buttons: dashboard,
+      })
+    })
+
+    it('says how to get some when there are none', () => {
+      expect(quickWinsMessage(ORIGIN, { tasks: [], totalHours: 0 })).toEqual({
+        text: 'No task you can start now takes 1 h or less. Tasks with no estimate count as 2 h, so give quick ones an estimate.',
+        buttons: dashboard,
+      })
+    })
   })
 })
