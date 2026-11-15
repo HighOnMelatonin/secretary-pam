@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import TaskForm from '../components/task.vue'
 import { createEmptyProject, type Project } from '../types/project'
 import { createEmptyTask, type Task } from '../types/task'
-import { button, listedIn, selectWithOption } from './helpers'
+import { button, listedIn, pickName, picker, selectWithOption, suggestedIn } from './helpers'
 
 const task: Task = { ...createEmptyTask(), id: 't1', name: 'Write report' }
 const otherTasks = [
@@ -61,28 +61,28 @@ describe('TaskForm project assignment', () => {
   it('shows the projects the task is already in', () => {
     const wrapper = mount(TaskForm, { props: { task, projects } })
     expect(listedIn(wrapper, 'Projects')).toEqual(['Thesis'])
-    expect(selectWithOption(wrapper, 'p2').exists()).toBe(true)
+    expect(suggestedIn(wrapper, 'Project to add the task to')).toEqual(['Website'])
   })
 
   it('emits the chosen project ids on save', async () => {
     const wrapper = mount(TaskForm, { props: { task, projects } })
 
     await wrapper.find('li button').trigger('click') // remove Thesis
-    await selectWithOption(wrapper, 'p2').setValue('p2')
+    await pickName(wrapper, 'Project to add the task to', 'Website')
     await button(wrapper, 'Assign').trigger('click')
     await wrapper.find('form').trigger('submit')
 
     expect(saved(wrapper)?.[1]).toEqual(['p2'])
   })
 
-  it('assigns a project left picked in the dropdown when the task is added, without Assign', async () => {
+  it('assigns a project left picked in the field when the task is added, without Assign', async () => {
     const wrapper = mount(TaskForm, { props: { projects } })
-    const picker = selectWithOption(wrapper, 'p2')
-    expect(picker.element.value).toBe('') // starts on "Add to project…", so untouched means unassigned
-    expect(picker.find('option[value=""]').text()).toBe('Add to project…')
+    const field = picker(wrapper, 'Project to add the task to')
+    expect(field.element.value).toBe('') // starts empty, so untouched means unassigned
+    expect(field.attributes('placeholder')).toBe('Add to project…')
 
     await wrapper.find('input[placeholder="Task"]').setValue('Write report')
-    await picker.setValue('p2')
+    await field.setValue('website') // typed in full, in any case
     await wrapper.find('form').trigger('submit')
 
     expect(saved(wrapper)?.[1]).toEqual(['p2'])
@@ -108,7 +108,7 @@ describe("TaskForm checks the due date against its projects' deadlines", () => {
 
   it('blocks assigning a project due before the task, but only once both dates are set', async () => {
     const wrapper = mount(TaskForm, { props: { projects: dated } })
-    await selectWithOption(wrapper, 'p2').setValue('p2')
+    await pickName(wrapper, 'Project to add the task to', 'Website')
     expect(wrapper.find('.date-error').exists()).toBe(false)
     expect(button(wrapper, 'Assign').attributes('disabled')).toBeUndefined()
 
@@ -126,7 +126,7 @@ describe("TaskForm checks the due date against its projects' deadlines", () => {
 
   it("extends the project's deadline when the task is saved", async () => {
     const wrapper = mount(TaskForm, { props: { task: { ...task, dueDate: '2026-12-05' }, projects: [{ ...project('p2', 'Website'), deliveryDate: '2026-11-30' }] } })
-    await selectWithOption(wrapper, 'p2').setValue('p2')
+    await pickName(wrapper, 'Project to add the task to', 'Website')
     await button(wrapper, 'Extend Website to 2026-12-05').trigger('click')
     expect(wrapper.find('.date-error').exists()).toBe(false)
 
@@ -162,25 +162,25 @@ describe("TaskForm checks the due date against its projects' deadlines", () => {
 describe('TaskForm relations', () => {
   it('links other tasks with a relation type, but never the task itself', async () => {
     const wrapper = mount(TaskForm, { props: { task, availableTasks: otherTasks } })
-    expect(selectWithOption(wrapper, 't2').find('option[value="t1"]').exists()).toBe(false)
+    expect(suggestedIn(wrapper, 'Task to relate')).toEqual(['Review slides', 'Book room'])
 
     await selectWithOption(wrapper, 'blocks').setValue('blocks')
-    await selectWithOption(wrapper, 't2').setValue('t2')
+    await pickName(wrapper, 'Task to relate', 'Review slides')
     await button(wrapper, 'Link').trigger('click')
 
     expect(listedIn(wrapper, 'Related tasks')).toEqual(['blocks: Review slides'])
     // A task can only be related once
-    expect(selectWithOption(wrapper, 't3').find('option[value="t2"]').exists()).toBe(false)
+    await picker(wrapper, 'Task to relate').setValue('')
+    expect(suggestedIn(wrapper, 'Task to relate')).toEqual(['Book room'])
 
     await wrapper.find('form').trigger('submit')
     expect(saved(wrapper)?.[0].relations).toEqual([{ taskId: 't2', type: 'blocks' }])
   })
 
-  it('leaves completed tasks out of the related task menu, but keeps relations already made to them', () => {
+  it('leaves completed tasks out of the related task suggestions, but keeps relations already made to them', () => {
     const tasks = [...otherTasks, { id: 't4', name: 'Print poster', completed: true }]
     const newTask = mount(TaskForm, { props: { availableTasks: tasks } })
-    expect(selectWithOption(newTask, 't2').findAll('option').map((o) => o.text())).toEqual([
-      'Select task',
+    expect(suggestedIn(newTask, 'Task to relate')).toEqual([
       'Write report',
       'Review slides',
       'Book room',
@@ -190,7 +190,7 @@ describe('TaskForm relations', () => {
       props: { task: { ...task, relations: [{ taskId: 't4', type: 'blocked_by' }] }, availableTasks: tasks },
     })
     expect(listedIn(linked, 'Related tasks')).toEqual(['blocked by: Print poster'])
-    expect(selectWithOption(linked, 't2').find('option[value="t4"]').exists()).toBe(false)
+    expect(suggestedIn(linked, 'Task to relate')).toEqual(['Review slides', 'Book room'])
   })
 
   it('names related tasks, falling back to the id for unknown ones', () => {
@@ -345,7 +345,7 @@ describe('TaskForm blocking loops', () => {
     const editing = { ...task, relations: [{ taskId: 't2', type: 'blocks' as const }] }
     const wrapper = mount(TaskForm, { props: { task: editing, availableTasks: others } })
     await selectWithOption(wrapper, 'blocked_by').setValue('blocked_by')
-    await selectWithOption(wrapper, 't3').setValue('t3')
+    await pickName(wrapper, 'Task to relate', 'Book room')
 
     // Picked but not linked yet still counts, since saving links it
     const message =

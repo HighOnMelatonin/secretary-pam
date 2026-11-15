@@ -6,7 +6,7 @@ import { createEmptyProject, type Project } from '../types/project'
 import { ARCHIVE_TAG_ID, type Tag } from '../types/tag'
 import { createEmptyTask, type Task } from '../types/task'
 import { fakeApi } from './fakeApi'
-import { button, listedIn, routerAt, selectWithOption } from './helpers'
+import { button, listedIn, pickName, routerAt, selectWithOption } from './helpers'
 
 const task = (id: string, fields: Partial<Task> = {}): Task => ({ ...createEmptyTask(), id, name: `Task ${id}`, ...fields })
 const project = (id: string, fields: Partial<Project> = {}): Project => ({
@@ -283,7 +283,7 @@ describe('Dashboard creating a task', () => {
 
     await flushPromises()
     await wrapper.find('input[placeholder="Task"]').setValue('Write report')
-    await selectWithOption(wrapper, 'p').setValue('p')
+    await pickName(wrapper, 'Project to add the task to', 'Thesis')
     await button(wrapper, 'Assign').trigger('click')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
@@ -302,7 +302,7 @@ describe('Dashboard creating a task', () => {
 
     await flushPromises()
     await wrapper.find('input[placeholder="Task"]').setValue('Write report')
-    await selectWithOption(wrapper, 'p').setValue('p')
+    await pickName(wrapper, 'Project to add the task to', 'Thesis')
     await button(wrapper, 'Assign').trigger('click')
     api.failWith = 'D1 is down'
     await wrapper.find('form').trigger('submit')
@@ -321,7 +321,7 @@ describe('Dashboard creating a task', () => {
     await flushPromises()
     await wrapper.find('input[placeholder="Task"]').setValue('Write report')
     await wrapper.find('input[type="date"]').setValue('2026-12-08')
-    await selectWithOption(wrapper, 'p').setValue('p')
+    await pickName(wrapper, 'Project to add the task to', 'Thesis')
     await button(wrapper, 'Assign').trigger('click')
     // Moved earlier elsewhere, say on another device, after this page loaded it
     api.data.projects[0]!.deliveryDate = '2026-12-01'
