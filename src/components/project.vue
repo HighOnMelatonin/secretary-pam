@@ -6,6 +6,7 @@ import { computed, ref, toRaw, watch } from 'vue'
 import { PRIORITIES, type Task } from '@/types/task'
 import { completionStatus, createEmptyProject, isPastDeadline, resolveTasks, type Project } from '@/types/project'
 import type { Tag } from '@/types/tag'
+import TagPicker from './tagPicker.vue'
 import {
   isSafeUrl,
   MAX_DESCRIPTION_LENGTH,
@@ -18,6 +19,7 @@ const props = defineProps<{
   project?: Project // project to edit; a new empty project is used when omitted
   tasks?: Task[] // all existing tasks, used to resolve and link the project's tasks
   tags?: Tag[] // all tags, to choose the project's tags from
+  createTag?: (name: string) => Promise<Tag> // saves a new tag from the [+] beside the tags
   taskDueDates?: Record<string, string> // task due dates to start out moved, by task id
 }>()
 
@@ -126,6 +128,11 @@ function cancel() {
 
 <template>
   <article class="project-container edit-form">
+    <header class="heading-row form-header">
+      <h2>{{ isNew ? 'New project' : 'Edit project' }}</h2>
+      <button type="button" class="secondary outline compact" @click="cancel">Cancel</button>
+    </header>
+
     <form @submit.prevent="save">
       <label>
         Project name
@@ -150,13 +157,7 @@ function cancel() {
         </label>
       </div>
 
-      <fieldset v-if="tags?.length" class="tags">
-        <legend>Tags</legend>
-        <label v-for="t in tags" :key="t.id">
-          <input v-model="draft.tagIds" type="checkbox" :value="t.id" />
-          {{ t.name }}
-        </label>
-      </fieldset>
+      <TagPicker v-model="draft.tagIds" :tags="tags ?? []" :create-tag="createTag" />
 
       <label>
         Description
@@ -241,21 +242,5 @@ function cancel() {
 
 <style scoped>
 /* The lists, the sticky Save and Cancel and the date fields' layout are shared with the task
-   form (.edit-form in main.css) */
-
-/* The tags sit side by side, wrapping onto more lines as needed */
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem 1.5rem;
-}
-
-.tags legend {
-  width: 100%;
-}
-
-.tags label {
-  margin: 0;
-}
-
+   form (.edit-form in main.css), and the tags with it too (tagPicker.vue) */
 </style>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import ProjectForm from '../components/project.vue'
 import { createEmptyProject, type Project } from '../types/project'
 import type { Tag } from '../types/tag'
@@ -74,7 +74,7 @@ describe('ProjectForm tags', () => {
 
   it('offers every tag, with the project’s own ticked', () => {
     const wrapper = mount(ProjectForm, { props: { project: { ...existing, tagIds: ['work'] }, tasks, tags } })
-    expect(wrapper.findAll('.tags label').map((l) => l.text())).toEqual(['Archive', 'School (SUTD)', 'Work'])
+    expect(wrapper.findAll('.tag-picker label').map((l) => l.text())).toEqual(['Archive', 'School (SUTD)', 'Work'])
     expect(tags.map((t) => checkbox(wrapper, t.id).element.checked)).toEqual([false, false, true])
   })
 
@@ -88,6 +88,43 @@ describe('ProjectForm tags', () => {
     await checkbox(wrapper, 'work').setValue(false)
     await wrapper.find('form').trigger('submit')
     expect(savedProject(wrapper)!.tagIds).toEqual([])
+  })
+})
+
+describe('ProjectForm new tags', () => {
+  const tags: Tag[] = [{ id: 'work', name: 'Work', color: '#343ca6' }]
+
+  it('has no [+] without createTag', () => {
+    const wrapper = mount(ProjectForm, { props: { tasks, tags } })
+    expect(wrapper.find('button[aria-label="New tag"]').exists()).toBe(false)
+  })
+
+  it('makes a tag from [+] and ticks it', async () => {
+    const createTag = async (name: string): Promise<Tag> => ({ id: 'new', name, color: '#343ca6' })
+    const wrapper = mount(ProjectForm, { props: { project: existing, tasks, tags, createTag } })
+    await wrapper.find('button[aria-label="New tag"]').trigger('click')
+    await wrapper.find('input[aria-label="New tag name"]').setValue(' Hobbies ')
+    await button(wrapper, 'Add tag').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('input[aria-label="New tag name"]').exists()).toBe(false)
+
+    await wrapper.setProps({ tags: [...tags, { id: 'new', name: 'Hobbies', color: '#343ca6' }] })
+    await wrapper.find('form').trigger('submit')
+    expect(savedProject(wrapper)!.tagIds).toEqual(['new'])
+  })
+})
+
+describe('ProjectForm cancel', () => {
+  it('has a Cancel at the top as well as the bottom, both discarding changes', async () => {
+    const wrapper = mount(ProjectForm, { props: { project: existing, tasks } })
+    const cancels = wrapper.findAll('button').filter((b) => b.text() === 'Cancel')
+    expect(cancels).toHaveLength(2)
+    expect(wrapper.find('header').text()).toContain('Edit project')
+
+    await wrapper.find('input[placeholder="Project"]').setValue('Changed')
+    await cancels[0]!.trigger('click')
+    expect(wrapper.emitted('cancel')).toHaveLength(1)
+    expect(wrapper.find<HTMLInputElement>('input[placeholder="Project"]').element.value).toBe(existing.name)
   })
 })
 

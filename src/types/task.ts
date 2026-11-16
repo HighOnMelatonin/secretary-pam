@@ -35,6 +35,7 @@ export interface Task {
   effortMinutes?: number // estimated work, a whole number of minutes above 0
   startDate?: string // ISO 8601 date work can start from; never after dueDate
   pinnedDate?: string // ISO 8601 date the task was pinned to with "Do today"
+  tagIds?: string[] // ids of existing Tag objects, shared with projects; left out when it has none
   // Email of the Google account whose calendar the task was imported from. Only the Worker's sync
   // sets it; it is left out of saves, and is absent on tasks made in Pam.
   googleAccount?: string

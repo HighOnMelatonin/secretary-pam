@@ -209,6 +209,27 @@ describe('tagList', () => {
     expect(projectList.projects.map((p) => p.tagIds)).toEqual([['other'], ['other']])
   })
 
+  it('clears a deleted tag from the loaded tasks, leaving tagIds out of those left with none', async () => {
+    fakeApi({ tags: [{ id: 'w', name: 'Work', color: '#343ca6' }] })
+    const store = useTagList()
+    await store.load()
+    const taskList = useTaskList()
+    taskList.tasks = [task('a', { tagIds: ['other', 'w'] }), task('b', { tagIds: ['w'] }), task('c')]
+
+    await store.deleteTag('w')
+
+    expect(taskList.tasks).toEqual([task('a', { tagIds: ['other'] }), task('b'), task('c')])
+  })
+
+  it('returns the saved tag as stored', async () => {
+    fakeApi({})
+    expect(await useTagList().saveTag({ id: 'h', name: 'Hobbies', color: '#17646a' })).toEqual({
+      id: 'h',
+      name: 'Hobbies',
+      color: '#17646a',
+    })
+  })
+
   it('keeps the tag when the API fails to delete it', async () => {
     const api = fakeApi({ tags: [{ id: 'w', name: 'Work', color: '#343ca6' }] })
     const store = useTagList()

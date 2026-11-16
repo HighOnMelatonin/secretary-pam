@@ -5,11 +5,13 @@
 import { computed } from 'vue'
 import type { Project } from '@/types/project'
 import { relatedTasks, relationLabel, type Task } from '@/types/task'
+import { tagStyle, type Tag } from '@/types/tag'
 
 const props = defineProps<{
   task: Task
   tasks: Task[] // all tasks, to look up related ones
   projects: Project[] // all projects; the ones holding this task are listed
+  tags?: Tag[] // all tags; the task's own are shown
 }>()
 
 const emit = defineEmits<{
@@ -24,6 +26,9 @@ const isOverdue = computed(
 
 const inProjects = computed(() => props.projects.filter((p) => p.taskIds.includes(props.task.id)))
 const related = computed(() => relatedTasks(props.task, props.tasks))
+const taskTags = computed(() =>
+  (props.task.tagIds ?? []).map((id) => props.tags?.find((t) => t.id === id)).filter((t) => t !== undefined),
+)
 
 function confirmDelete() {
   // An imported task comes back on the next sync while its event is still in Google Calendar
@@ -47,6 +52,7 @@ function confirmDelete() {
     </header>
 
     <div class="meta">
+      <span v-for="tag in taskTags" :key="tag.id" class="tag project-tag" :style="tagStyle(tag)">{{ tag.name }}</span>
       <span class="tag" :class="{ 'done-tag': task.completed }">{{ task.completed ? '✓ done' : 'to do' }}</span>
       <span class="tag" :class="`priority-${task.priority}`">{{ task.priority }}</span>
       <span v-if="task.googleAccount" class="tag project-tag" title="Imported from Google Calendar">{{ task.googleAccount }}</span>

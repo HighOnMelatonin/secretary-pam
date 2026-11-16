@@ -310,6 +310,57 @@ describe('tags', () => {
     expect(await listProjects()).toEqual([project('p', { tagIds: ['s'] })])
   })
 
+  it("stores a task's tags in order, and leaves them out when it has none", async () => {
+    await saveTag({ id: 'w', name: 'Work' })
+    await saveTag({ id: 's', name: 'School' })
+    await saveTask(task('t', { tagIds: ['s', 'w'] }))
+    expect(await listTasks()).toEqual([task('t', { tagIds: ['s', 'w'] })])
+
+    await saveTask(task('t', { tagIds: [] }))
+    expect(await listTasks()).toEqual([task('t')])
+    await saveTask(task('t', { tagIds: ['w'] }))
+    await saveTask(task('t')) // a save without tagIds has none
+    expect(await listTasks()).toEqual([task('t')])
+  })
+
+  it("patches a task's tags, with null clearing them", async () => {
+    await saveTag({ id: 'w', name: 'Work' })
+    await saveTask(task('t'))
+    expect((await call('PATCH', 'tasks/t', { task: { tagIds: ['w'] } })).status).toBe(200)
+    expect((await listTasks())[0]!.tagIds).toEqual(['w'])
+    expect((await call('PATCH', 'tasks/t', { task: { tagIds: null } })).status).toBe(200)
+    expect(await listTasks()).toEqual([task('t')])
+  })
+
+  it.each<[string, unknown]>([
+    ['a tag id that is not a string', [3]],
+    ['the same tag twice', ['w', 'w']],
+    ['a tag list that is not a list', 'w'],
+  ])('rejects a task with %s', async (_, tagIds) => {
+    await saveTag({ id: 'w', name: 'Work' })
+    expect((await call('PUT', 'tasks/t', { task: { ...task('t'), tagIds } })).status).toBe(400)
+    expect(await listTasks()).toEqual([])
+  })
+
+  it('rejects a task with a tag that does not exist, saving nothing', async () => {
+    expect(await saveTask(task('t', { tagIds: ['missing'] }))).toEqual({
+      status: 400,
+      body: { error: 'References a task or tag that does not exist' },
+    })
+    expect(await listTasks()).toEqual([])
+  })
+
+  it('removes a deleted tag from its tasks, keeping their other tags', async () => {
+    await saveTag({ id: 'w', name: 'Work' })
+    await saveTag({ id: 's', name: 'School' })
+    await saveTask(task('a', { tagIds: ['w', 's'] }))
+    await saveTask(task('b', { tagIds: ['w'] }))
+
+    expect((await call('DELETE', 'tags/w')).status).toBe(204)
+
+    expect(await listTasks()).toEqual([task('a', { tagIds: ['s'] }), task('b')])
+  })
+
   it('refuses to delete the built-in Archive tag, but renames it', async () => {
     await saveTag({ id: 'archive', name: 'Archive' })
     expect(await call('DELETE', 'tags/archive')).toEqual({

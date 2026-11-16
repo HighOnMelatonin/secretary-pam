@@ -308,6 +308,12 @@
   gap: 0.5rem;
 }
 
+/* The form's title with a second Cancel beside it, so a long form can be left without
+   scrolling to the bottom */
+.edit-form .form-header {
+  margin-bottom: 1rem;
+}
+
 /* Below Pico's 768px breakpoint, where .grid would put each field on its own line, the date and
    priority still share one */
 @media (max-width: 767px) {

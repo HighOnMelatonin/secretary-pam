@@ -21,7 +21,9 @@ import { MAX_DESCRIPTION_LENGTH, MAX_EFFORT_MINUTES, MAX_NAME_LENGTH } from '@/t
 import { describeLoop, findBlockCycle, startsAfterDue } from '@/types/rules'
 import { capacityBetween, DEFAULT_SETTINGS, type UserSettings } from '@/types/settings'
 import { localToday } from '@/types/calendar'
+import { ARCHIVE_TAG_ID, type Tag } from '@/types/tag'
 import NamePicker from './namePicker.vue'
+import TagPicker from './tagPicker.vue'
 
 const props = defineProps<{
   task?: Task // task to edit; a new empty task is used when omitted
@@ -32,6 +34,8 @@ const props = defineProps<{
   deadlines?: Record<string, string> // project deadlines to start out extended, by project id
   capacity?: UserSettings['capacityMinutes'] // minutes for tasks each weekday; the defaults when omitted
   today?: string // YYYY-MM-DD; this browser's today when omitted
+  tags?: Tag[] // all tags, to choose the task's tags from
+  createTag?: (name: string) => Promise<Tag> // saves a new tag from the [+] beside the tags
 }>()
 
 const emit = defineEmits<{
@@ -66,6 +70,13 @@ watch(
 )
 
 const isNew = computed(() => !props.task)
+
+// Tags: the same ones as projects, except Archive, which only means something for a project
+const taskTags = computed(() => (props.tags ?? []).filter((t) => t.id !== ARCHIVE_TAG_ID))
+const tagIds = computed({
+  get: () => draft.value.tagIds ?? [],
+  set: (ids: string[]) => (draft.value.tagIds = ids),
+})
 
 // Project assignment
 const newProjectId = ref('')
@@ -185,6 +196,7 @@ function save() {
   draft.value.name = draft.value.name.trim()
   if (estimateMinutes.value === undefined) delete draft.value.effortMinutes
   else draft.value.effortMinutes = estimateMinutes.value
+  if (draft.value.tagIds?.length === 0) delete draft.value.tagIds
   // Only the projects the task ends up in are extended
   const extended = Object.fromEntries(Object.entries(deadlines.value).filter(([id]) => projectIds.value.includes(id)))
   emit('save', structuredClone(toRaw(draft.value)), [...projectIds.value], extended)
@@ -213,6 +225,11 @@ function cancel() {
 
 <template>
   <article class="task-container edit-form">
+    <header class="heading-row form-header">
+      <h2>{{ isNew ? 'New task' : 'Edit task' }}</h2>
+      <button type="button" class="secondary outline compact" @click="cancel">Cancel</button>
+    </header>
+
     <form @submit.prevent="save">
       <p v-if="draft.googleAccount" class="source">
         <small>
@@ -293,6 +310,8 @@ function cancel() {
           :maxlength="MAX_DESCRIPTION_LENGTH"
         />
       </label>
+
+      <TagPicker v-model="tagIds" :tags="taskTags" :create-tag="createTag" />
 
       <fieldset>
         <legend>Projects</legend>
