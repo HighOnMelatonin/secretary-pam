@@ -34,5 +34,23 @@ export function selectWithOption(wrapper: VueWrapper, value: string): DOMWrapper
 export function listedIn(wrapper: VueWrapper, legend: string): string[] {
   const fieldset = wrapper.findAll('fieldset').find((f) => f.find('legend').text().startsWith(legend))
   if (!fieldset) throw new Error(`No fieldset "${legend}"`)
-  return fieldset.findAll('li').map((li) => li.text().replace(/\s*Remove$/, ''))
+  return fieldset.findAll('li:not([role="option"])').map((li) => li.text().replace(/\s*Remove$/, ''))
+}
+
+// The text field of the name picker read out as `label`
+export function picker(wrapper: VueWrapper, label: string): DOMWrapper<HTMLInputElement> {
+  const found = wrapper.find<HTMLInputElement>(`input[role="combobox"][aria-label="${label}"]`)
+  if (!found.exists()) throw new Error(`No name picker "${label}"`)
+  return found
+}
+
+// Picks `name` in the name picker read out as `label`, by typing it in full
+export async function pickName(wrapper: VueWrapper, label: string, name: string) {
+  await picker(wrapper, label).setValue(name)
+}
+
+// The names the picker read out as `label` suggests for what's typed in it
+export function suggestedIn(wrapper: VueWrapper, label: string): string[] {
+  const listId = picker(wrapper, label).attributes('aria-controls')
+  return wrapper.findAll(`[id="${listId}"] [role="option"]`).map((o) => o.text())
 }

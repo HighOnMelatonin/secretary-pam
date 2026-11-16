@@ -2,7 +2,17 @@
 // unit-tested (worker/__tests__/telegramMessages.spec.ts). Everything is plain text. Rankings,
 // reasons and the brief are the shared functions' own sentences (src/types/priority.ts and
 // forecast.ts), never worded here.
-import type { Forecast, PlanItem } from '../../src/types/forecast'
+import { PACE_LABELS, type Forecast, type PlanItem } from '../../src/types/forecast'
+import {
+  TASK_GROUP_LABELS,
+  visibleTasks,
+  type LateTask,
+  type LookupTask,
+  type OffTrackProject,
+  type ProjectName,
+  type ProjectTasks,
+  type QuickWins,
+} from '../../src/types/lookups'
 import { formatHours, type Priorities, type ScoredTask } from '../../src/types/priority'
 import { formatMinutes } from '../../src/types/telegram'
 import type { InlineButton, OutgoingMessage } from './botApi'
@@ -22,6 +32,8 @@ export type ButtonPress =
   | { action: 'priority'; taskId: string; value: PriorityChoice }
   | { action: 'due'; taskId: string; value: DueChoice }
   | { action: 'estimate'; taskId: string; value: EstimateChoice }
+  // A project's tasks, from the buttons under a /tasks reply that matched several projects
+  | { action: 'project'; projectId: string }
 
 export const PRIORITY_CHOICES = ['low', 'high', 'urgent'] as const
 export type PriorityChoice = (typeof PRIORITY_CHOICES)[number]
@@ -30,7 +42,7 @@ export type DueChoice = (typeof DUE_CHOICES)[number]
 export const ESTIMATE_CHOICES = [30, 60, 240] as const // minutes
 export type EstimateChoice = (typeof ESTIMATE_CHOICES)[number]
 
-const PREFIXES = { done: 'd:', not_today: 'nt:', next: 'next:', priority: 'p:', due: 'due:', estimate: 'e:' } as const
+const PREFIXES = { done: 'd:', not_today: 'nt:', next: 'next:', priority: 'p:', due: 'due:', estimate: 'e:', project: 'tp:' } as const
 
 // The choice comes before the task id, so an id with ":" in it still reads back
 export function encodePress(press: ButtonPress): string {
@@ -40,6 +52,8 @@ export function encodePress(press: ButtonPress): string {
     case 'done':
     case 'not_today':
       return `${PREFIXES[press.action]}${press.taskId}`
+    case 'project':
+      return `${PREFIXES.project}${press.projectId}`
     default:
       return `${PREFIXES[press.action]}${press.value}:${press.taskId}`
   }
@@ -49,11 +63,12 @@ const includes = <T>(list: readonly T[], value: unknown): value is T => list.inc
 
 // The press a button's callback data stands for, or null for data the bot didn't make
 export function decodePress(data: string | undefined): ButtonPress | null {
-  const match = /^(d|nt|next|p|due|e):(.+)$/s.exec(data ?? '')
+  const match = /^(d|nt|next|p|due|e|tp):(.+)$/s.exec(data ?? '')
   if (!match || !fits(data!)) return null
   const [, prefix, value] = match as unknown as [string, string, string]
   if (prefix === 'd') return { action: 'done', taskId: value }
   if (prefix === 'nt') return { action: 'not_today', taskId: value }
+  if (prefix === 'tp') return { action: 'project', projectId: value }
   if (prefix === 'next') return /^(0|[1-9]\d{0,5})$/.test(value) ? { action: 'next', offset: Number(value) } : null
 
   const field = /^([a-z0-9]+):(.+)$/s.exec(value)
@@ -123,6 +138,10 @@ export function helpMessage(origin: string): OutgoingMessage {
       '/stop: turn the morning brief off',
       '/add <name>: add a task, then set its priority, due date and estimate with the buttons',
       '/desc <text>: describe the task you last added',
+      "/tasks <name>: a project's open tasks, from part of its name",
+      '/late: the tasks projected to finish after their deadline',
+      '/offtrack: the projects that are tight, behind or never finish',
+      '/quickwins: the tasks of an hour or less',
       '/help: this list',
       'The buttons under a task mark it done, or move it to tomorrow (Not today). Next shows the two after.',
     ].join('\n'),
@@ -140,11 +159,8 @@ export const goneNote: OutgoingMessage = { text: 'That task is no longer in Pam.
 
 const openPam = (origin: string): InlineButton => ({ text: 'Open Pam', url: appUrl(origin, '/') })
 
-// The tasks the Suggested list shows, in its order: Overdue, Do nowww, then Do next
-export function visibleTasks(priorities: Priorities): ScoredTask[] {
-  const byId = new Map(priorities.tasks.map((t) => [t.taskId, t]))
-  return [...priorities.sections.overdue, ...priorities.sections.do_now, ...priorities.sections.do_next].map((id) => byId.get(id)!)
-}
+// The tasks the Suggested list shows, in its order (src/types/lookups.ts)
+export { visibleTasks }
 
 // The hours the forecast counts for the task (its estimate times the buffer), e.g. "3 h", or
 // "2 h, no estimate" for the default
@@ -253,7 +269,7 @@ export const taskUrl = (origin: string, taskId: string) => appUrl(origin, `/task
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 // e.g. "2026-11-20 (Friday)"
-const dateText = (date: string) => `${date} (${WEEKDAYS[new Date(`${date}T00:00:00Z`).getUTCDay()]})`
+export const dateText = (date: string) => `${date} (${WEEKDAYS[new Date(`${date}T00:00:00Z`).getUTCDay()]})`
 // e.g. "30 m", "1 h", "1.5 h"
 export const estimateText = (minutes: number) => (minutes < 60 ? `${minutes} m` : formatHours(minutes / 60))
 const capitalised = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
@@ -302,3 +318,119 @@ export const describedMessage = (name: string): OutgoingMessage => ({ text: `Sav
 
 // The one line for any other text, which never makes a task
 export const hintMessage: OutgoingMessage = { text: 'To add a task, send /add and its name. /help lists everything else.' }
+
+// Lookups: /tasks, /late, /offtrack and /quickwins. What they list comes from src/types/lookups.ts;
+// these only word it. Each ends with an Open Pam button to the page that shows the same thing.
+
+const openPamAt = (origin: string, route: string): InlineButton => ({ text: 'Open Pam', url: appUrl(origin, route) })
+const projectRoute = (projectId: string) => `/projects/${encodeURIComponent(projectId)}`
+const taskRoute = (taskId: string) => `/tasks/${encodeURIComponent(taskId)}`
+const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`
+
+// The head line(s), then as many of the lines as fit in one message. A list cut short ends with
+// "And N more in Pam." Only lines marked as items count towards N (not a group's heading).
+type Line = { text: string; item: boolean }
+function fitted(head: string[], lines: Line[]): string {
+  const total = lines.filter((l) => l.item).length
+  const kept: Line[] = []
+  let length = head.join('\n').length
+  let shown = 0
+  for (const [i, line] of lines.entries()) {
+    // Room for this line, and for the closing line while there are more after it
+    const reserve = i < lines.length - 1 ? `\nAnd ${total} more in Pam.`.length : 0
+    if (length + 1 + line.text.length + reserve > MAX_MESSAGE_LENGTH) {
+      // A heading with none of its items shown goes too
+      while (kept.length && !kept[kept.length - 1]!.item) kept.pop()
+      return [...head, ...kept.map((l) => l.text), `And ${total - shown} more in Pam.`].join('\n')
+    }
+    kept.push(line)
+    length += 1 + line.text.length
+    if (line.item) shown++
+  }
+  return [...head, ...kept.map((l) => l.text)].join('\n')
+}
+
+// e.g. "Write intro (1.5 h)", "Draft (2 h, no estimate)" or "Meeting" for a task not counted
+const lookupTaskLine = (task: LookupTask) =>
+  task.hours === null ? `- ${task.name}` : `- ${task.name} (${formatHours(task.hours)}${task.unestimated ? ', no estimate' : ''})`
+
+export const tasksUsage = (origin: string): OutgoingMessage => ({
+  text: "Send /tasks and part of a project's name, such as /tasks thesis.",
+  buttons: [[openPam(origin)]],
+})
+
+// /tasks with one match: the project's open tasks by group, with its count and hours
+export function projectTasksMessage(origin: string, project: ProjectTasks): OutgoingMessage {
+  const buttons = [[openPamAt(origin, projectRoute(project.projectId))]]
+  if (project.groups.length === 0) return { text: `"${project.name}" has no open tasks.`, buttons }
+  const head = `${project.name}: ${plural(project.openCount, 'open task')}, ${formatHours(project.totalHours)}.`
+  const lines = project.groups.flatMap(({ group, tasks }) => [
+    { text: TASK_GROUP_LABELS[group], item: false },
+    ...tasks.map((t) => ({ text: lookupTaskLine(t), item: true })),
+  ])
+  return { text: fitted([head], lines), buttons }
+}
+
+// /tasks with several matches: a button for each, which sends that project's tasks. A project
+// whose id is too long for callback data gets a link to its page instead.
+export function severalProjectsMessage(origin: string, query: string, projects: ProjectName[]): OutgoingMessage {
+  const rows = projects.map((p): InlineButton[] => {
+    const data = encodePress({ action: 'project', projectId: p.projectId })
+    return [fits(data) ? { text: p.name, callback_data: data } : { text: p.name, url: appUrl(origin, projectRoute(p.projectId)) }]
+  })
+  return { text: `${plural(projects.length, 'project')} match "${query.trim()}". Which one?`, buttons: [...rows, [openPam(origin)]] }
+}
+
+// /tasks with no match: the projects there are
+export function noProjectMessage(origin: string, query: string, projects: ProjectName[]): OutgoingMessage {
+  const buttons = [[openPam(origin)]]
+  if (projects.length === 0) return { text: `No project matches "${query.trim()}". You have no open projects.`, buttons }
+  const lines = projects.map((p) => ({ text: `- ${p.name}`, item: true }))
+  return { text: fitted([`No project matches "${query.trim()}". Your projects:`], lines), buttons }
+}
+
+// For a project button pressed after the project was deleted or archived
+export const projectGoneNote: OutgoingMessage = { text: 'That project is no longer open in Pam.' }
+
+// /late: the brief's own sentence about late tasks, then each with its deadline and projected
+// finish. One task links to its page; more, to the dashboard.
+export function lateMessage(origin: string, forecast: Forecast, late: LateTask[]): OutgoingMessage {
+  if (late.length === 0) return { text: 'No task is projected to finish after its deadline.', buttons: [[openPam(origin)]] }
+  const head = forecast.brief.parts.find((p) => p.code === 'late_tasks')!.text
+  const lines = late.map((t, i) => ({
+    text: `${i + 1}. ${t.name}: deadline ${dateText(t.deadline)}, ${t.finish ? `projected ${dateText(t.finish)}` : "doesn't finish in the forecast"}.`,
+    item: true,
+  }))
+  const route = late.length === 1 ? taskRoute(late[0]!.taskId) : '/'
+  return { text: fitted([head], lines), buttons: [[openPamAt(origin, route)]] }
+}
+
+// /offtrack: each project with its pace, projected finish and delivery date. One project links
+// to its page; more, to the dashboard.
+export function offTrackMessage(origin: string, projects: OffTrackProject[]): OutgoingMessage {
+  if (projects.length === 0) {
+    return { text: 'Every project with a delivery date is on pace.', buttons: [[openPam(origin)]] }
+  }
+  const lines = projects.map((p, i) => ({
+    text: `${i + 1}. ${p.name}: ${
+      p.pace === null ? "doesn't finish in the forecast" : `${PACE_LABELS[p.pace]}, projected ${dateText(p.finish!)}`
+    }, delivery ${dateText(p.deliveryDate)}.`,
+    item: true,
+  }))
+  const head = `${plural(projects.length, 'project is', 'projects are')} off track:`
+  const route = projects.length === 1 ? projectRoute(projects[0]!.projectId) : '/'
+  return { text: fitted([head], lines), buttons: [[openPamAt(origin, route)]] }
+}
+
+// /quickwins: the tasks of an hour or less, in Suggested order, with their hours in all
+export function quickWinsMessage(origin: string, wins: QuickWins): OutgoingMessage {
+  const buttons = [[openPam(origin)]]
+  if (wins.tasks.length === 0) {
+    return {
+      text: 'No task you can start now takes 1 h or less. Tasks with no estimate count as 2 h, so give quick ones an estimate.',
+      buttons,
+    }
+  }
+  const head = `Quick wins: ${plural(wins.tasks.length, 'task')}, ${formatHours(wins.totalHours)} in all.`
+  return { text: fitted([head], wins.tasks.map((t, i) => ({ text: taskLine(i + 1, t), item: true }))), buttons }
+}

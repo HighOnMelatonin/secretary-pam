@@ -21,6 +21,7 @@ import { MAX_DESCRIPTION_LENGTH, MAX_EFFORT_MINUTES, MAX_NAME_LENGTH } from '@/t
 import { describeLoop, findBlockCycle, startsAfterDue } from '@/types/rules'
 import { capacityBetween, DEFAULT_SETTINGS, type UserSettings } from '@/types/settings'
 import { localToday } from '@/types/calendar'
+import NamePicker from './namePicker.vue'
 
 const props = defineProps<{
   task?: Task // task to edit; a new empty task is used when omitted
@@ -307,10 +308,13 @@ function cancel() {
         <p v-else><small>Not in any project.</small></p>
 
         <div v-if="assignableProjects.length" role="group">
-          <select v-model="newProjectId">
-            <option value="">Add to project…</option>
-            <option v-for="p in assignableProjects" :key="p.id" :value="p.id">{{ p.name }}</option>
-          </select>
+          <NamePicker
+            v-model="newProjectId"
+            :options="assignableProjects"
+            placeholder="Add to project…"
+            label="Project to add the task to"
+            @confirm="assignProject"
+          />
           <button type="button" :disabled="!newProjectId || selectionIsLate" @click="assignProject">Assign</button>
         </div>
 
@@ -344,10 +348,13 @@ function cancel() {
           <select v-model="newRelationType">
             <option v-for="t in RELATION_TYPES" :key="t" :value="t">{{ relationLabel(t) }}</option>
           </select>
-          <select v-model="newRelationTaskId">
-            <option value="" disabled>Select task</option>
-            <option v-for="t in relatableTasks" :key="t.id" :value="t.id">{{ t.name }}</option>
-          </select>
+          <NamePicker
+            v-model="newRelationTaskId"
+            :options="relatableTasks"
+            placeholder="Find a task…"
+            label="Task to relate"
+            @confirm="addRelation"
+          />
           <button type="button" :disabled="!newRelationTaskId" @click="addRelation">Link</button>
         </div>
 
