@@ -1,11 +1,13 @@
 <script setup lang="ts">
-// Page for one task: its status, priority, due date and description, the projects it belongs to
+// Page for one task: its status, priority, due date, a timeline of today, its start and its due
+// date, and its description, the projects it belongs to
 // and the tasks it is related to, each linking to its own page. Edit opens the task's form;
 // Delete removes the task, done or not, once confirmed.
 import { computed } from 'vue'
 import type { Project } from '@/types/project'
 import { relatedTasks, relationLabel, type Task } from '@/types/task'
 import { tagStyle, type Tag } from '@/types/tag'
+import TaskTimeline from './taskTimeline.vue'
 
 const props = defineProps<{
   task: Task
@@ -59,6 +61,8 @@ function confirmDelete() {
       <span v-if="isOverdue" class="tag overdue">overdue</span>
       <small>{{ task.dueDate ? `Due ${task.dueDate}` : 'No due date' }}</small>
     </div>
+
+    <TaskTimeline :task="task" />
 
     <p v-if="task.googleAccount" class="source">
       <small>From Google Calendar. Syncing sets its name, due date and description from the event again.</small>
