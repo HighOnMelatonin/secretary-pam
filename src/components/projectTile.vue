@@ -72,9 +72,26 @@ function onTileClick(event: MouseEvent) {
           class="secondary outline small"
           :aria-label="`View more of ${project.name}`"
         >
-          View more
+          Details
         </RouterLink>
-        <button type="button" class="secondary outline small" @click="$emit('edit', project)">Edit</button>
+        <button
+          type="button"
+          class="secondary outline small icon-button"
+          :aria-label="`Edit project ${project.name}`"
+          title="Edit"
+          @click="$emit('edit', project)"
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+            <path
+              d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
       </div>
     </div>
 
@@ -189,6 +206,17 @@ function onTileClick(event: MouseEvent) {
 .tile-actions > * {
   width: auto;
   margin: 0;
+}
+
+/* The pencil sits centred in a button as tall as Details beside it */
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-button svg {
+  display: block;
 }
 
 .tile-toggle {

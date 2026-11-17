@@ -146,7 +146,7 @@ describe('ProjectTile', () => {
 
   it('emits edit without expanding when Edit is clicked', async () => {
     const wrapper = mountTile()
-    const edit = wrapper.findAll('button').find((b) => b.text() === 'Edit')!
+    const edit = wrapper.find('button[aria-label="Edit project ' + project.name + '"]')
     await edit.trigger('click')
 
     expect(wrapper.emitted('edit')?.[0]).toEqual([project])
