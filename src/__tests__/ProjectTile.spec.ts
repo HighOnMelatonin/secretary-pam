@@ -110,10 +110,10 @@ describe('ProjectTile', () => {
     expect(wrapper.find('.preview').exists()).toBe(true)
   })
 
-  it('links to the project page from View more, without expanding', async () => {
+  it('links to the project page from Details, without expanding', async () => {
     const wrapper = mountTile()
     const viewMore = wrapper.find('a[aria-label="View more of Thesis"]')
-    expect(viewMore.text()).toBe('View more')
+    expect(viewMore.text()).toBe('Details')
     expect(viewMore.attributes('href')).toBe('/projects/p1')
 
     await viewMore.trigger('click')

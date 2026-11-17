@@ -37,7 +37,7 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 
 ## Features
 
-- **Accounts**: sign in at `/login`, or create an account at `/signup` with an email and a password of at least 8 characters. Each account has its own projects, tasks and tags, and starts with the example tags. The header shows who is signed in, with a **Sign out** button. Opening any page while signed out goes to the sign-in page first, then on to that page. **Forgot your password?** on the sign-in page emails a link for choosing a new one (see [Password reset](#password-reset)).
+- **Accounts**: sign in at `/login`, or create an account at `/signup` with an email and a password of at least 8 characters. Each account has its own projects, tasks and tags, and starts with the example tags. The menu button (☰) in the header's top-right corner shows who is signed in, with links to **Settings**, a **Theme** switch between dark and light (remembered in this browser), and **Sign out**. Opening any page while signed out goes to the sign-in page first, then on to that page. **Forgot your password?** on the sign-in page emails a link for choosing a new one (see [Password reset](#password-reset)).
 - **Dashboard** of live projects, with **archived projects** in a collapsible section below. When a project's last task is done, it gets the built-in **Archive** tag and moves to that section. Remove the tag in the project's form to bring it back; it stays live until its tasks go from not all done to all done again. Below the projects, **Unassigned** lists every task that isn't in any project (unfinished first, soonest due), each with its check mark, priority, due date and **Edit** button, and its name linking to its page. **Hide done** next to its heading hides the completed ones (and **Show N done** brings them back); this browser remembers the choice.
 - **Sort** the projects by delivery date, urgency (most or least urgent first) or % complete, and **filter** them by tag and urgency. The choices are remembered in the browser.
 - **Project tiles** show the project's tags, priority, due date, an overdue tag and task progress. Click a tile to expand a preview of its timeline, tasks and reference links, with an **Edit** button on each task. Click a task's check mark to mark it done or not done. Each task's name links to its page, and **View more** opens the project's page. **Expand all** above the list opens every tile at once (and **Collapse all** closes them), and open tiles stay open after a visit to a project's page.
@@ -99,7 +99,9 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
 
 ## Design
 
-A dark theme: [Pico CSS](https://picocss.com/) recoloured in `src/assets/css/main.css`, with a serif typeface (Iowan Old Style, falling back to Palatino and Georgia). Every colour is a CSS variable there, so use the variable rather than the hex code.
+A dark theme, with a light one beside it: [Pico CSS](https://picocss.com/) recoloured in `src/assets/css/main.css`, with a serif typeface (Iowan Old Style, falling back to Palatino and Georgia). Every colour is a CSS variable there, so use the variable rather than the hex code.
+
+The light theme (**Theme** in the header menu, kept by `src/stores/theme.ts` as `data-theme` on `<html>`) swaps the palette's roles: `--pam-green` holds beige (`#f3e6d0`) and stays the background, `--pam-cream` holds forest green and stays the text, so the components need no changes. Coral is darkened to terracotta (`#b4532a`) so it shows on the beige, and text on indigo uses `--pam-on-indigo`, cream in both themes. The tables below describe the dark theme.
 
 ### Palette
 

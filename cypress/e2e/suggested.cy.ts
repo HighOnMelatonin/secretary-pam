@@ -87,6 +87,7 @@ for (const [screen, width, height] of [
 
     it('previews a preset, then applies it', () => {
       cy.visit('/')
+      cy.get('.menu-button').click()
       cy.contains('.account a', 'Settings').click()
       cy.location('pathname').should('eq', '/settings')
       cy.contains('label', 'Blockers-first').find('input').check()

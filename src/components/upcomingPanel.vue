@@ -272,6 +272,6 @@ function scrollToPanel() {
 }
 
 .overdue-counter:hover {
-  background: #eeb293;
+  background: var(--pam-coral-hover);
 }
 </style>

@@ -22,7 +22,8 @@ const projects = [project('p1', 'Thesis', ['t1']), project('p2', 'Website')]
 
 const saved = (wrapper: ReturnType<typeof mount>) =>
   wrapper.emitted<[Task, string[], Record<string, string>]>('save')?.slice(-1)[0]
-const dateInput = (wrapper: ReturnType<typeof mount>) => wrapper.find<HTMLInputElement>('input[type="date"]')
+// The form's date fields are the start date, then the due date
+const dateInput = (wrapper: ReturnType<typeof mount>) => wrapper.findAll<HTMLInputElement>('input[type="date"]')[1]!
 
 describe('TaskForm for a new task', () => {
   it('only allows adding once the task has a name', async () => {
@@ -35,7 +36,7 @@ describe('TaskForm for a new task', () => {
   it('emits the filled-in task with a trimmed name, then clears the form', async () => {
     const wrapper = mount(TaskForm)
     await wrapper.find('input[placeholder="Task"]').setValue('  Write report ')
-    await wrapper.find('input[type="date"]').setValue('2026-11-02')
+    await dateInput(wrapper).setValue('2026-11-02')
     await wrapper.find('select').setValue('high')
     await wrapper.find('textarea').setValue('Chapter 3')
     await wrapper.find('input[type="checkbox"]').setValue(true)
@@ -244,7 +245,7 @@ describe('TaskForm scheduling', () => {
   // 2026-11-16 is a Monday; the default capacity is 8 hours Monday to Friday
   const today = '2026-11-16'
   const estimateInput = (wrapper: ReturnType<typeof mount>) => wrapper.find<HTMLInputElement>('input[inputmode="decimal"]')
-  const startInput = (wrapper: ReturnType<typeof mount>) => wrapper.findAll<HTMLInputElement>('input[type="date"]')[1]!
+  const startInput = (wrapper: ReturnType<typeof mount>) => wrapper.findAll<HTMLInputElement>('input[type="date"]')[0]!
   const alerts = (wrapper: ReturnType<typeof mount>) => wrapper.findAll('[role="alert"]').map((a) => a.text())
   const warning = (wrapper: ReturnType<typeof mount>) => wrapper.find('.capacity-warning')
 

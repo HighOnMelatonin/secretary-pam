@@ -107,7 +107,7 @@ describe('Projects', () => {
     })
     cy.visit('/')
 
-    tile('Thesis').contains('a', 'View more').click()
+    tile('Thesis').contains('a', 'Details').click()
     cy.location('pathname').should('eq', '/projects/p')
     cy.contains('.page-header h2', 'Thesis')
     cy.contains('Final year project')

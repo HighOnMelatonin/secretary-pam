@@ -245,11 +245,12 @@ function cancel() {
 
       <div class="grid">
         <label>
-          Due date
+          Start date
           <input
             type="date"
-            :value="draft.dueDate ?? ''"
-            @input="draft.dueDate = ($event.target as HTMLInputElement).value || null"
+            :value="draft.startDate ?? ''"
+            :aria-invalid="startIsLate || undefined"
+            @input="setStartDate(($event.target as HTMLInputElement).value)"
           />
         </label>
 
@@ -263,12 +264,11 @@ function cancel() {
 
       <div class="grid">
         <label>
-          Start date
+          Due date
           <input
             type="date"
-            :value="draft.startDate ?? ''"
-            :aria-invalid="startIsLate || undefined"
-            @input="setStartDate(($event.target as HTMLInputElement).value)"
+            :value="draft.dueDate ?? ''"
+            @input="draft.dueDate = ($event.target as HTMLInputElement).value || null"
           />
         </label>
 
@@ -326,7 +326,7 @@ function cancel() {
         </ul>
         <p v-else><small>Not in any project.</small></p>
 
-        <div v-if="assignableProjects.length" role="group">
+        <div v-if="assignableProjects.length" role="group" class="picker-row">
           <NamePicker
             v-model="newProjectId"
             :options="assignableProjects"
@@ -363,7 +363,7 @@ function cancel() {
         </ul>
         <p v-else><small>No related tasks.</small></p>
 
-        <div v-if="relatableTasks.length" role="group">
+        <div v-if="relatableTasks.length" role="group" class="picker-row">
           <select v-model="newRelationType">
             <option v-for="t in RELATION_TYPES" :key="t" :value="t">{{ relationLabel(t) }}</option>
           </select>
@@ -400,6 +400,22 @@ function cancel() {
 .capacity-warning {
   padding-left: 0.75rem;
   border-left: 3px solid var(--pam-coral);
+}
+
+/* Assigning a project and relating a task: the relation type and the button take only the width
+   they need, leaving the rest for the name being searched. Phones keep main.css's wrapped rows,
+   where the name already has a line of its own. */
+@media (min-width: 576px) {
+  .picker-row > select,
+  .picker-row > button {
+    flex: none;
+    width: auto;
+  }
+
+  .picker-row > .name-picker {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
 }
 
 .completed-toggle {
