@@ -192,6 +192,7 @@ export const PATCH_FIELDS = [
   'effortMinutes',
   'startDate',
   'pinnedDate',
+  'tagIds',
 ] as const
 
 export type TaskPatch = Partial<
@@ -199,6 +200,7 @@ export type TaskPatch = Partial<
     effortMinutes: number | null
     startDate: string | null
     pinnedDate: string | null
+    tagIds: string[] | null
   }
 >
 
@@ -208,7 +210,7 @@ export interface TaskPatchSave {
   deliveryDates?: Record<string, string | null>
 }
 
-const OPTIONAL_FIELDS = ['effortMinutes', 'startDate', 'pinnedDate'] as const
+const OPTIONAL_FIELDS = ['effortMinutes', 'startDate', 'pinnedDate', 'tagIds'] as const
 
 // The task with the patch's fields in place of its own
 export function applyTaskPatch(task: Task, patch: TaskPatch): Task {

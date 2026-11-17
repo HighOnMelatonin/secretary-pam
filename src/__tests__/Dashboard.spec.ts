@@ -214,7 +214,7 @@ describe('Dashboard editing a project', () => {
     const api = fakeApi({ projects: [project('p', { name: 'Thesis' })] })
     const wrapper = await mountDashboard()
 
-    await button(wrapper, 'Edit').trigger('click')
+    await wrapper.find('button[aria-label="Edit project Thesis"]').trigger('click')
 
     await flushPromises()
     expect((wrapper.find('input[placeholder="Project"]').element as HTMLInputElement).value).toBe('Thesis')
@@ -246,7 +246,7 @@ describe('Dashboard tags', () => {
     const api = fakeApi({ tags, projects: [project('p', { name: 'Thesis' })] })
     const wrapper = await mountDashboard()
 
-    await button(wrapper, 'Edit').trigger('click')
+    await wrapper.find('button[aria-label="Edit project Thesis"]').trigger('click')
 
     await flushPromises()
     await wrapper.find('input[type="checkbox"][value="work"]').setValue(true)

@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import TaskForm from '../components/task.vue'
 import { createEmptyProject, type Project } from '../types/project'
+import type { Tag } from '../types/tag'
 import { createEmptyTask, type Task } from '../types/task'
 import { button, listedIn, pickName, picker, selectWithOption, suggestedIn } from './helpers'
 
@@ -371,5 +372,104 @@ describe('TaskForm blocking loops', () => {
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
     await wrapper.find('form').trigger('submit')
     expect(saved(wrapper)).toBeDefined()
+  })
+})
+
+describe('TaskForm tags', () => {
+  const tags: Tag[] = [
+    { id: 'archive', name: 'Archive', color: '#343ca6' },
+    { id: 'school', name: 'School', color: '#343ca6' },
+    { id: 'work', name: 'Work', color: '#343ca6' },
+  ]
+  const checkbox = (wrapper: ReturnType<typeof mount>, id: string) =>
+    wrapper.find<HTMLInputElement>(`.tag-picker input[type="checkbox"][value="${id}"]`)
+
+  it('offers the tags but Archive, with the task’s own ticked', () => {
+    const wrapper = mount(TaskForm, { props: { task: { ...task, tagIds: ['work'] }, tags } })
+    expect(wrapper.findAll('.tag-picker label').map((l) => l.text())).toEqual(['School', 'Work'])
+    expect(checkbox(wrapper, 'work').element.checked).toBe(true)
+    expect(checkbox(wrapper, 'school').element.checked).toBe(false)
+  })
+
+  it('saves the ticked tags, leaving tagIds out when none are ticked', async () => {
+    const wrapper = mount(TaskForm, { props: { task, tags } })
+    await checkbox(wrapper, 'school').setValue(true)
+    await wrapper.find('form').trigger('submit')
+    expect(saved(wrapper)![0].tagIds).toEqual(['school'])
+
+    await checkbox(wrapper, 'school').setValue(false)
+    await wrapper.find('form').trigger('submit')
+    expect(saved(wrapper)![0]).not.toHaveProperty('tagIds')
+  })
+
+  it('has no tags fieldset with no tags and no createTag', () => {
+    const wrapper = mount(TaskForm, { props: { task } })
+    expect(wrapper.find('.tag-picker').exists()).toBe(false)
+  })
+
+  it('makes a tag from [+] with Enter, ticks it, and doesn’t submit the form', async () => {
+    const created: string[] = []
+    const createTag = async (name: string): Promise<Tag> => {
+      created.push(name)
+      return { id: 'hobbies', name, color: '#343ca6' }
+    }
+    const wrapper = mount(TaskForm, { props: { task, createTag } })
+    await wrapper.find('button[aria-label="New tag"]').trigger('click')
+    await wrapper.find('input[aria-label="New tag name"]').setValue('Hobbies')
+    await wrapper.find('input[aria-label="New tag name"]').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(created).toEqual(['Hobbies'])
+    expect(wrapper.emitted('save')).toBeUndefined()
+
+    await wrapper.find('form').trigger('submit')
+    expect(saved(wrapper)![0].tagIds).toEqual(['hobbies'])
+  })
+
+  it('ticks an existing tag instead of making one with the same name', async () => {
+    const created: string[] = []
+    const createTag = async (name: string): Promise<Tag> => {
+      created.push(name)
+      return { id: 'x', name, color: '#343ca6' }
+    }
+    const wrapper = mount(TaskForm, { props: { task, tags, createTag } })
+    await wrapper.find('button[aria-label="New tag"]').trigger('click')
+    await wrapper.find('input[aria-label="New tag name"]').setValue('work')
+    await button(wrapper, 'Add tag').trigger('click')
+    await flushPromises()
+    expect(created).toEqual([])
+    expect(checkbox(wrapper, 'work').element.checked).toBe(true)
+  })
+
+  it('shows why a new tag could not be made, keeping the name', async () => {
+    const createTag = async (): Promise<Tag> => {
+      throw new Error('There is already a tag with that name')
+    }
+    const wrapper = mount(TaskForm, { props: { task, createTag } })
+    await wrapper.find('button[aria-label="New tag"]').trigger('click')
+    await wrapper.find('input[aria-label="New tag name"]').setValue('Hobbies')
+    await button(wrapper, 'Add tag').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.tag-picker [role="alert"]').text()).toBe(
+      'Couldn\'t add "Hobbies": There is already a tag with that name',
+    )
+    expect(wrapper.find<HTMLInputElement>('input[aria-label="New tag name"]').element.value).toBe('Hobbies')
+  })
+})
+
+describe('TaskForm cancel', () => {
+  it('has a Cancel at the top as well as the bottom, both discarding changes', async () => {
+    const wrapper = mount(TaskForm, { props: { task } })
+    const cancels = wrapper.findAll('button').filter((b) => b.text() === 'Cancel')
+    expect(cancels).toHaveLength(2)
+    expect(wrapper.find('header').text()).toContain('Edit task')
+
+    await wrapper.find('input[placeholder="Task"]').setValue('Changed')
+    await cancels[0]!.trigger('click')
+    expect(wrapper.emitted('cancel')).toHaveLength(1)
+    expect(wrapper.find<HTMLInputElement>('input[placeholder="Task"]').element.value).toBe('Write report')
+  })
+
+  it('titles a new task as New task', () => {
+    expect(mount(TaskForm).find('header').text()).toContain('New task')
   })
 })

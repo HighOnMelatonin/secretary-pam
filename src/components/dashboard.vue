@@ -29,6 +29,7 @@ import { useTaskList } from '@/stores/taskList'
 import { localToday } from '@/types/calendar'
 import { forecast } from '@/types/forecast'
 import { unassignedTasks, type Project } from '@/types/project'
+import { createEmptyTag } from '@/types/tag'
 import type { TaskAction } from '@/types/operations'
 import type { Task } from '@/types/task'
 
@@ -83,6 +84,9 @@ const googleSync = useGoogleSync()
 // The project's tags, in the order it lists them
 const tagsOf = (project: Project) =>
   project.tagIds.map((id) => tags.value.find((t) => t.id === id)).filter((t) => t !== undefined)
+
+// The [+] beside the tags in the project and task forms saves a new tag straight away
+const createTag = (name: string) => tagList.saveTag({ ...createEmptyTag(), name })
 
 // Ids of the expanded tiles, kept here so Expand all can reach every tile and so tiles stay
 // open after a visit to a project's page
@@ -301,6 +305,7 @@ async function onToggleTask(task: Task) {
       :project="editor.project"
       :tasks="tasks"
       :tags="tags"
+      :create-tag="createTag"
       :task-due-dates="editor.taskDueDates"
       @save="onSaveProject"
       @cancel="close"
@@ -313,6 +318,8 @@ async function onToggleTask(task: Task) {
       :project-ids="editor.projectIds"
       :deadlines="editor.deadlines"
       :capacity="settingsStore.settings.capacityMinutes"
+      :tags="tags"
+      :create-tag="createTag"
       @save="onSaveTask"
       @cancel="close"
     />
@@ -333,6 +340,7 @@ async function onToggleTask(task: Task) {
       :task="page.task"
       :tasks="tasks"
       :projects="projects"
+      :tags="tags"
       @edit="open({ name: 'edit-task', params: { id: $event.id } })"
       @delete="onDeleteTask"
     />

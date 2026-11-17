@@ -72,9 +72,26 @@ function onTileClick(event: MouseEvent) {
           class="secondary outline small"
           :aria-label="`View more of ${project.name}`"
         >
-          View more
+          Details
         </RouterLink>
-        <button type="button" class="secondary outline small" @click="$emit('edit', project)">Edit</button>
+        <button
+          type="button"
+          class="secondary outline small icon-button"
+          :aria-label="`Edit project ${project.name}`"
+          title="Edit"
+          @click="$emit('edit', project)"
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+            <path
+              d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
       </div>
     </div>
 
@@ -96,9 +113,9 @@ function onTileClick(event: MouseEvent) {
         <ProjectTimeline :tasks="projectTasks" :delivery-date="project.deliveryDate" />
       </section>
 
-      <section>
+      <section class="tasks-section">
         <h4 class="section-heading">Tasks</h4>
-        <ul v-if="projectTasks.length" class="plain-list">
+        <ul v-if="projectTasks.length" class="plain-list task-list">
           <TaskRow
             v-for="task in projectTasks"
             :key="task.id"
@@ -191,6 +208,17 @@ function onTileClick(event: MouseEvent) {
   margin: 0;
 }
 
+/* The pencil sits centred in a button as tall as Details beside it */
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-button svg {
+  display: block;
+}
+
 .tile-toggle {
   display: inline-flex;
   align-items: baseline;
@@ -250,6 +278,29 @@ function onTileClick(event: MouseEvent) {
 .timeline-section {
   grid-column: 1 / -1;
   min-width: 0; /* so a long timeline scrolls inside the tile instead of widening it */
+}
+
+/* On a wide, landscape window the tasks take two columns: the task section widens to two thirds
+   of the tile (all of it when there are no links) and lays its rows out side by side */
+@media (min-aspect-ratio: 4/3) and (min-width: 64rem) {
+  .preview {
+    grid-template-columns: 2fr 1fr;
+  }
+
+  .tasks-section {
+    min-width: 0;
+  }
+
+  .tasks-section:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .task-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 2rem;
+    align-items: start;
+  }
 }
 
 .project-tile footer {

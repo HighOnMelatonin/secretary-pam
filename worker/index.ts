@@ -160,6 +160,11 @@ interface ProjectTaskRow {
   task_id: string
 }
 
+interface TaskTagRow {
+  task_id: string
+  tag_id: string
+}
+
 interface ProjectTagRow {
   project_id: string
   tag_id: string
@@ -234,8 +239,13 @@ function checkCommon(
 // due date instead (planTasksImport), since the import dialog doesn't show start dates
 function parseTask(body: unknown, id: string, { startAfterDue = 'refuse' } = {}): Task {
   checkCommon(body, id)
-  const { dueDate, completed, relations, effortMinutes, startDate, pinnedDate } = body
+  const { dueDate, completed, relations, effortMinutes, startDate, pinnedDate, tagIds } = body
   check(isDateOrNull(dueDate), 'dueDate must be null or a YYYY-MM-DD date')
+  check(
+    isUnset(tagIds) || (isList(tagIds) && tagIds.every(isId)),
+    `tagIds must be left out, null or a list of at most ${MAX_LIST_LENGTH} tag ids`,
+  )
+  check(isUnset(tagIds) || allDifferent(tagIds), 'tagIds must not list a tag twice')
   check(typeof completed === 'boolean', 'completed must be true or false')
   check(
     isUnset(effortMinutes) ||
@@ -269,6 +279,8 @@ function parseTask(body: unknown, id: string, { startAfterDue = 'refuse' } = {})
     ...(isUnset(effortMinutes) ? {} : { effortMinutes }),
     ...(isUnset(startDate) ? {} : { startDate }),
     ...(isUnset(pinnedDate) ? {} : { pinnedDate }),
+    // An empty list is left out, as a task with no tags has none
+    ...(isUnset(tagIds) || tagIds.length === 0 ? {} : { tagIds }),
   }
 }
 
@@ -404,7 +416,7 @@ function parseTag(body: unknown, id: string): TagBody {
 // Tasks
 
 async function listTasks(db: D1Database, userId: string): Promise<Task[]> {
-  const [tasks, relations] = (await db.batch([
+  const [tasks, relations, taskTags] = (await db.batch([
     db
       .prepare(
         `SELECT tasks.*, google_events.account_email FROM tasks
@@ -413,8 +425,10 @@ async function listTasks(db: D1Database, userId: string): Promise<Task[]> {
       )
       .bind(userId),
     db.prepare('SELECT * FROM task_relations WHERE user_id = ?1 ORDER BY task_id, position').bind(userId),
-  ])) as [D1Result<TaskRow>, D1Result<RelationRow>]
+    db.prepare('SELECT * FROM task_tags WHERE user_id = ?1 ORDER BY task_id, position').bind(userId),
+  ])) as [D1Result<TaskRow>, D1Result<RelationRow>, D1Result<TaskTagRow>]
   const relationsByTask = groupBy(relations.results, (r) => r.task_id)
+  const tagsByTask = groupBy(taskTags.results, (t) => t.task_id)
 
   return tasks.results.map((row) => ({
     id: row.id,
@@ -427,12 +441,13 @@ async function listTasks(db: D1Database, userId: string): Promise<Task[]> {
     ...(row.effort_minutes !== null ? { effortMinutes: row.effort_minutes } : {}),
     ...(row.start_date !== null ? { startDate: row.start_date } : {}),
     ...(row.pinned_date !== null ? { pinnedDate: row.pinned_date } : {}),
+    ...(tagsByTask.has(row.id) ? { tagIds: tagsByTask.get(row.id)!.map((t) => t.tag_id) } : {}),
     ...(row.account_email ? { googleAccount: row.account_email } : {}),
   }))
 }
 
 // The task row is upserted (not replaced, which would cascade and drop it from its projects)
-// and its relations are rewritten
+// and its relations and tags are rewritten
 function taskStatements(db: D1Database, userId: string, task: Task): D1PreparedStatement[] {
   return [
     db
@@ -464,6 +479,12 @@ function taskStatements(db: D1Database, userId: string, task: Task): D1PreparedS
           'INSERT INTO task_relations (user_id, task_id, related_task_id, type, position) VALUES (?1, ?2, ?3, ?4, ?5)',
         )
         .bind(userId, task.id, relation.taskId, relation.type, position),
+    ),
+    db.prepare('DELETE FROM task_tags WHERE user_id = ?1 AND task_id = ?2').bind(userId, task.id),
+    ...(task.tagIds ?? []).map((tagId, position) =>
+      db
+        .prepare('INSERT INTO task_tags (user_id, task_id, tag_id, position) VALUES (?1, ?2, ?3, ?4)')
+        .bind(userId, task.id, tagId, position),
     ),
   ]
 }
@@ -716,7 +737,7 @@ const RESOURCES: Record<string, Resource> = {
     },
     remove: (db, userId, id) => deleteLogged(db, userId, 'projects', id, planProjectDelete),
   },
-  // Deleting a tag removes it from its projects
+  // Deleting a tag removes it from its projects and tasks
   tags: {
     list: listTags,
     save: (db, userId, id, body) => saveTag(db, userId, parseTag(body, id)),

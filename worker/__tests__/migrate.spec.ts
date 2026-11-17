@@ -16,6 +16,7 @@ const TABLES = [
   'project_links',
   'project_tasks',
   'project_tags',
+  'task_tags',
   'task_relations',
   'projects',
   'tasks',
@@ -72,6 +73,7 @@ describe('migrate', () => {
       '0009_task_scheduling.sql',
       '0010_telegram.sql',
       '0011_telegram_unrecognised.sql',
+      '0012_task_tags.sql',
     ])
     expect((await call('GET', 'projects', undefined, await signUp())).body).toEqual([])
   })

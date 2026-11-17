@@ -21,7 +21,7 @@ const error = ref<string | null>(null)
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 // Runs a save or delete, showing an error if it fails; returns whether it succeeded
-async function attempt(action: () => Promise<void>, failure: string) {
+async function attempt(action: () => Promise<unknown>, failure: string) {
   error.value = null
   try {
     await action()
