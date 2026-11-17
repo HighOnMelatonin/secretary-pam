@@ -320,7 +320,7 @@ describe('Dashboard creating a task', () => {
     await button(wrapper, 'Add task').trigger('click')
     await flushPromises()
     await wrapper.find('input[placeholder="Task"]').setValue('Write report')
-    await wrapper.find('input[type="date"]').setValue('2026-12-08')
+    await wrapper.findAll('input[type="date"]')[1]!.setValue('2026-12-08') // the due date, after the start date
     await pickName(wrapper, 'Project to add the task to', 'Thesis')
     await button(wrapper, 'Assign').trigger('click')
     // Moved earlier elsewhere, say on another device, after this page loaded it
@@ -565,7 +565,7 @@ describe('Dashboard editing a task', () => {
     })
     const wrapper = await mountDashboard('/tasks/t/edit')
 
-    await wrapper.find('input[type="date"]').setValue('2026-12-05')
+    await wrapper.findAll('input[type="date"]')[1]!.setValue('2026-12-05') // the due date, after the start date
     await button(wrapper, 'Extend Thesis to 2026-12-05').trigger('click')
     await wrapper.find('form').trigger('submit')
     await flushPromises()

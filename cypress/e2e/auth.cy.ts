@@ -18,6 +18,7 @@ describe('Signing in', () => {
 
     cy.location('pathname').should('eq', '/tags')
     cy.contains('h2', 'Tags')
+    cy.get('.menu-button').click()
     cy.contains('.account', 'e2e@example.com')
   })
 
@@ -47,6 +48,7 @@ describe('Signing in', () => {
     field('Confirm password').type('new account password{enter}')
 
     cy.location('pathname').should('eq', '/')
+    cy.get('.menu-button').click()
     cy.contains('.account', email)
     cy.contains('No projects yet')
     cy.contains('Thesis').should('not.exist')

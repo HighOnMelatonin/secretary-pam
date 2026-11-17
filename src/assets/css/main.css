@@ -1,19 +1,54 @@
-/* Pam theme: Pico's dark theme recoloured to the forest green / cream palette, with indigo
-   and coral accents. The README's "Design" section says where each colour is used.
-   :root[data-theme=dark] outranks Pico's own [data-theme=dark] block. */
+/* Pam theme: Pico recoloured to the forest green / cream palette, with indigo and coral accents.
+   The README's "Design" section says where each colour is used. There are two schemes, set as
+   data-theme on <html> by src/stores/theme.ts: dark (cream on forest green, the default) and
+   light (forest green on beige). The light one swaps the roles of the palette: --pam-green is
+   always the background and --pam-cream always the text, whatever colour they hold.
+   :root[data-theme=…] outranks Pico's own [data-theme=…] blocks. */
 :root[data-theme='dark'] {
   --pam-green: #204030;
   --pam-green-raised: #2a5040;
   --pam-green-line: #3d6652;
+  --pam-green-line-hover: #4a7560; /* secondary buttons, hovered */
   --pam-cream: #faefe0;
+  --pam-cream-strong: #ffffff; /* primary buttons, hovered */
   --pam-cream-muted: rgba(250, 239, 224, 0.68);
   --pam-cream-faint: rgba(250, 239, 224, 0.14);
+  --pam-cream-placeholder: rgba(250, 239, 224, 0.45);
 
   /* Accents, used sparingly. Indigo is too dark to read on the greens, so it is only ever a
      fill behind cream text. Coral is light, so text on a coral fill is green, never cream. */
   --pam-indigo: #343ca6; /* categories: project tags */
   --pam-coral: #e69e7a; /* needs attention: urgent and overdue */
+  --pam-coral-hover: #eeb293;
 
+  --pam-card-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.18);
+}
+
+/* Forest green on beige. Coral is darkened to terracotta so it shows on the beige, and so the
+   beige text that a coral fill now gets (var(--pam-green)) reads on it */
+:root[data-theme='light'] {
+  --pam-green: #f3e6d0;
+  --pam-green-raised: #faf2e6;
+  --pam-green-line: #d3c4a8;
+  --pam-green-line-hover: #c2b294;
+  --pam-cream: #204030;
+  --pam-cream-strong: #10261b;
+  --pam-cream-muted: rgba(32, 64, 48, 0.74);
+  --pam-cream-faint: rgba(32, 64, 48, 0.16);
+  --pam-cream-placeholder: rgba(32, 64, 48, 0.5);
+
+  --pam-indigo: #343ca6;
+  --pam-coral: #b4532a;
+  --pam-coral-hover: #9c4522;
+
+  --pam-card-shadow: 0 0.5rem 1.5rem rgba(32, 64, 48, 0.12);
+}
+
+/* What each scheme's colours are used for, the same in both */
+:root[data-theme='dark'],
+:root[data-theme='light'] {
+  /* Text on an indigo fill is always the light cream, in either scheme */
+  --pam-on-indigo: #faefe0;
 
   --pico-font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
   --pico-border-radius: 0.5rem;
@@ -31,9 +66,9 @@
   --pico-primary-background: var(--pam-cream);
   --pico-primary-border: var(--pam-cream);
   --pico-primary-underline: var(--pam-cream-muted);
-  --pico-primary-hover: #ffffff;
-  --pico-primary-hover-background: #ffffff;
-  --pico-primary-hover-border: #ffffff;
+  --pico-primary-hover: var(--pam-cream-strong);
+  --pico-primary-hover-background: var(--pam-cream-strong);
+  --pico-primary-hover-border: var(--pam-cream-strong);
   --pico-primary-hover-underline: var(--pam-cream);
   --pico-primary-focus: var(--pam-cream-faint);
   --pico-primary-inverse: var(--pam-green);
@@ -42,21 +77,21 @@
   --pico-secondary-background: var(--pam-green-line);
   --pico-secondary-border: var(--pam-green-line);
   --pico-secondary-hover: var(--pam-cream);
-  --pico-secondary-hover-background: #4a7560;
-  --pico-secondary-hover-border: #4a7560;
+  --pico-secondary-hover-background: var(--pam-green-line-hover);
+  --pico-secondary-hover-border: var(--pam-green-line-hover);
   --pico-secondary-focus: var(--pam-cream-faint);
   --pico-secondary-inverse: var(--pam-cream);
 
   --pico-card-background-color: var(--pam-green-raised);
   --pico-card-sectioning-background-color: var(--pam-green-raised);
   --pico-card-border-color: var(--pam-green-line);
-  --pico-card-box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.18);
+  --pico-card-box-shadow: var(--pam-card-shadow);
 
   --pico-form-element-background-color: var(--pam-green);
   --pico-form-element-selected-background-color: var(--pam-green-line);
   --pico-form-element-border-color: var(--pam-green-line);
   --pico-form-element-color: var(--pam-cream);
-  --pico-form-element-placeholder-color: rgba(250, 239, 224, 0.45);
+  --pico-form-element-placeholder-color: var(--pam-cream-placeholder);
   --pico-form-element-active-background-color: var(--pam-green);
   --pico-form-element-active-border-color: var(--pam-cream);
   --pico-form-element-focus-color: var(--pam-cream-faint);
@@ -209,7 +244,7 @@
 .tag-chip[aria-pressed='true'] {
   border-color: var(--pam-cream);
   background: var(--pam-tag-fill, var(--pam-indigo));
-  color: var(--pam-tag-text, var(--pam-cream));
+  color: var(--pam-tag-text, var(--pam-on-indigo));
 }
 
 /* A heading with its buttons at the other end, e.g. Live projects and Expand all. The buttons
@@ -384,7 +419,7 @@
 .tag.project-tag {
   background: var(--pam-tag-fill, var(--pam-indigo));
   border-color: var(--pam-tag-fill, var(--pam-indigo));
-  color: var(--pam-tag-text, var(--pam-cream));
+  color: var(--pam-tag-text, var(--pam-on-indigo));
   text-transform: none;
   letter-spacing: normal;
 }
