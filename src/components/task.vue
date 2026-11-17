@@ -245,11 +245,12 @@ function cancel() {
 
       <div class="grid">
         <label>
-          Due date
+          Start date
           <input
             type="date"
-            :value="draft.dueDate ?? ''"
-            @input="draft.dueDate = ($event.target as HTMLInputElement).value || null"
+            :value="draft.startDate ?? ''"
+            :aria-invalid="startIsLate || undefined"
+            @input="setStartDate(($event.target as HTMLInputElement).value)"
           />
         </label>
 
@@ -263,12 +264,11 @@ function cancel() {
 
       <div class="grid">
         <label>
-          Start date
+          Due date
           <input
             type="date"
-            :value="draft.startDate ?? ''"
-            :aria-invalid="startIsLate || undefined"
-            @input="setStartDate(($event.target as HTMLInputElement).value)"
+            :value="draft.dueDate ?? ''"
+            @input="draft.dueDate = ($event.target as HTMLInputElement).value || null"
           />
         </label>
 
