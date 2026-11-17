@@ -113,9 +113,9 @@ function onTileClick(event: MouseEvent) {
         <ProjectTimeline :tasks="projectTasks" :delivery-date="project.deliveryDate" />
       </section>
 
-      <section>
+      <section class="tasks-section">
         <h4 class="section-heading">Tasks</h4>
-        <ul v-if="projectTasks.length" class="plain-list">
+        <ul v-if="projectTasks.length" class="plain-list task-list">
           <TaskRow
             v-for="task in projectTasks"
             :key="task.id"
@@ -278,6 +278,29 @@ function onTileClick(event: MouseEvent) {
 .timeline-section {
   grid-column: 1 / -1;
   min-width: 0; /* so a long timeline scrolls inside the tile instead of widening it */
+}
+
+/* On a wide, landscape window the tasks take two columns: the task section widens to two thirds
+   of the tile (all of it when there are no links) and lays its rows out side by side */
+@media (min-aspect-ratio: 4/3) and (min-width: 64rem) {
+  .preview {
+    grid-template-columns: 2fr 1fr;
+  }
+
+  .tasks-section {
+    min-width: 0;
+  }
+
+  .tasks-section:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .task-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 2rem;
+    align-items: start;
+  }
 }
 
 .project-tile footer {
