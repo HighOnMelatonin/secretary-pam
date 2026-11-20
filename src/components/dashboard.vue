@@ -258,6 +258,19 @@ async function onDeleteTask(task: Task) {
   else await router.replace({ name: 'dashboard' })
 }
 
+// From the task form. Closes it as Cancel would; if that leads back to the deleted task's page,
+// the route watcher sends it on to the list. Keeps the form open if deleting fails.
+async function onDeleteTaskFromForm(task: Task) {
+  error.value = null
+  try {
+    await taskList.deleteTask(task.id)
+  } catch (e) {
+    error.value = `Couldn't delete "${task.name}": ${messageOf(e)}`
+    return
+  }
+  await close()
+}
+
 // From a quick action in Suggested, sent as its own small request rather than a whole task save;
 // the list keeps the old state if it fails
 async function onTaskAction(task: Task, action: TaskAction) {
@@ -322,6 +335,7 @@ async function onToggleTask(task: Task) {
       :create-tag="createTag"
       @save="onSaveTask"
       @cancel="close"
+      @delete="onDeleteTaskFromForm"
     />
     <TagManager v-else-if="editor?.kind === 'tags'" @close="close" />
     <SettingsForm v-else-if="editor?.kind === 'settings'" @close="close" />

@@ -42,6 +42,7 @@ const emit = defineEmits<{
   // deadlines: new delivery dates for the projects whose deadlines were extended, by project id
   save: [task: Task, projectIds: string[], deadlines: Record<string, string>]
   cancel: []
+  delete: [task: Task] // only offered for an existing task, after confirming
 }>()
 
 const copyOf = (task?: Task): Task => (task ? structuredClone(toRaw(task)) : createEmptyTask())
@@ -221,6 +222,17 @@ function cancel() {
   estimate.value = estimateOf(draft.value)
   emit('cancel')
 }
+
+// Deletes the saved task, not the draft, so unsaved edits don't matter
+function confirmDelete() {
+  const task = props.task
+  if (!task) return
+  // An imported task comes back on the next sync while its event is still in Google Calendar
+  const comesBack = task.googleAccount
+    ? ' It will be imported again on the next sync unless its event is deleted in Google Calendar.'
+    : ''
+  if (confirm(`Delete "${task.name}"?${comesBack}`)) emit('delete', task)
+}
 </script>
 
 <template>
@@ -390,6 +402,9 @@ function cancel() {
       <div class="actions">
         <button type="submit" :disabled="!canSave">{{ isNew ? 'Add' : 'Save' }}</button>
         <button type="button" class="secondary" @click="cancel">Cancel</button>
+        <button v-if="!isNew" type="button" class="secondary outline delete-task" @click="confirmDelete">
+          Delete
+        </button>
       </div>
     </form>
   </article>
@@ -416,6 +431,13 @@ function cancel() {
     flex: 1 1 auto;
     min-width: 0;
   }
+}
+
+/* Away from Save and Cancel, so it isn't pressed by mistake */
+.actions .delete-task {
+  margin-left: auto;
+  border-color: var(--pam-coral);
+  color: var(--pam-coral);
 }
 
 .completed-toggle {

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import TaskForm from '../components/task.vue'
 import { createEmptyProject, type Project } from '../types/project'
@@ -472,5 +472,38 @@ describe('TaskForm cancel', () => {
 
   it('titles a new task as New task', () => {
     expect(mount(TaskForm).find('header').text()).toContain('New task')
+  })
+})
+
+describe('TaskForm delete', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('deletes the saved task, not the edited draft, once confirmed', async () => {
+    const confirm = vi.fn((_message: string) => true)
+    vi.stubGlobal('confirm', confirm)
+    const wrapper = mount(TaskForm, { props: { task } })
+    await wrapper.find('input[placeholder="Task"]').setValue('Changed')
+    await button(wrapper, 'Delete').trigger('click')
+    expect(confirm).toHaveBeenCalledWith('Delete "Write report"?')
+    expect(wrapper.emitted('delete')).toEqual([[task]])
+  })
+
+  it('does nothing when the confirmation is declined', async () => {
+    vi.stubGlobal('confirm', () => false)
+    const wrapper = mount(TaskForm, { props: { task } })
+    await button(wrapper, 'Delete').trigger('click')
+    expect(wrapper.emitted('delete')).toBeUndefined()
+  })
+
+  it('warns that an imported task comes back on the next sync', async () => {
+    const confirm = vi.fn((_message: string) => false)
+    vi.stubGlobal('confirm', confirm)
+    const wrapper = mount(TaskForm, { props: { task: { ...task, googleAccount: 'me@example.com' } } })
+    await button(wrapper, 'Delete').trigger('click')
+    expect(confirm.mock.calls[0]![0]).toContain('imported again on the next sync')
+  })
+
+  it('has no Delete for a new task', () => {
+    expect(mount(TaskForm).findAll('button').some((b) => b.text() === 'Delete')).toBe(false)
   })
 })
