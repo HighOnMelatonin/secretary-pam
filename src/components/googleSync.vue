@@ -44,7 +44,7 @@ onMounted(() => {
   const { google, message, ...query } = route.query
   if (!google) return
   router.replace({ query })
-  if (google === 'connected') sync()
+  if (google === 'connected') googleSync.syncAfterConnecting()
   else error.value = typeof message === 'string' ? message : "Google Calendar wasn't connected."
 })
 </script>

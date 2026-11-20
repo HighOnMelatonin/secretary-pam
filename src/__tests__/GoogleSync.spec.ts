@@ -92,6 +92,8 @@ describe('Sync Google Calendar', () => {
     const { wrapper, router } = await mountDashboard('/?google=connected')
 
     expect(api.requests).toContain('POST /api/google/sync')
+    // Pam syncs by itself here, so it isn't counted as the user's action
+    expect(api.actions).toEqual(['POST /api/google/sync auto'])
     expect(router.currentRoute.value.fullPath).toBe('/')
     expect(wrapper.find('.results').text()).toBe(`${EMAIL}: up to date`)
   })

@@ -3,6 +3,7 @@
 // include completed tasks, see a preview, then copy it or download it as a file. Exporting only
 // reads the project and tasks it is given; the text comes from the functions in types/export.ts.
 import { computed, nextTick, onUnmounted, ref } from 'vue'
+import { reportUsage } from '@/api'
 import { CSV_BOM, exportFilename, exportRows, FORMATS, type ExportFormat } from '@/types/export'
 import type { Project } from '@/types/project'
 import type { Task } from '@/types/task'
@@ -38,11 +39,16 @@ function showStatus(kind: 'done' | 'error', message: string) {
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
+// A copy or download happens only in the browser, so it's reported to be counted (README, "Usage").
+// Only a statistic, so a report that fails is ignored.
+const countExport = () => void reportUsage('export').catch(() => {})
+
 async function copy() {
   try {
     if (!navigator.clipboard?.writeText) throw new Error("this browser doesn't allow it")
     await navigator.clipboard.writeText(shownText.value)
     showStatus('done', 'Copied')
+    countExport()
   } catch (e) {
     showStatus('error', `Couldn't copy to the clipboard (${messageOf(e)}). Use Download instead.`)
   }
@@ -60,6 +66,7 @@ function download() {
     link.remove()
     // Some browsers start reading the file after the click returns, so it's freed a little later
     setTimeout(() => URL.revokeObjectURL(url), 1000)
+    countExport()
   } catch (e) {
     showStatus('error', `Couldn't download the file: ${messageOf(e)}`)
   }

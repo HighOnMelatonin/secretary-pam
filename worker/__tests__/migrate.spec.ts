@@ -9,6 +9,8 @@ import { call, signUp } from './helpers'
 
 // Children first, so nothing references a dropped table
 const TABLES = [
+  'history',
+  'usage_counts',
   'task_events',
   'google_events',
   'google_auth_states',
@@ -74,6 +76,7 @@ describe('migrate', () => {
       '0010_telegram.sql',
       '0011_telegram_unrecognised.sql',
       '0012_task_tags.sql',
+      '0013_history.sql',
     ])
     expect((await call('GET', 'projects', undefined, await signUp())).body).toEqual([])
   })
@@ -249,6 +252,66 @@ describe('migrate', () => {
     await expect(insert('fax')).rejects.toThrow(/CHECK constraint failed/)
     const indexes = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'task_events' ORDER BY name").all<{ name: string }>()
     expect(indexes.results.map((r) => r.name)).toEqual(['task_events_project', 'task_events_task'])
+  })
+
+  it('starts history with a baseline of every row as it is, and logs changes from then on (0013)', async () => {
+    await databaseBefore(12)
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO tasks (user_id, id, name, due_date, completed, created_at) VALUES
+           ('original', 'a', 'A', '2026-12-01', 1, '2026-10-01T00:00:00.000Z'),
+           ('original', 'g', 'Imported', '2026-12-05', 0, '2026-10-02T00:00:00.000Z')`,
+      ),
+      env.DB.prepare(
+        "INSERT INTO google_events VALUES ('original', 'g', 'me@gmail.com', 'primary', 'e1', '2026-12-05T00:00:00Z', '2026-12-06T00:00:00Z')",
+      ),
+      env.DB.prepare(
+        "INSERT INTO projects (user_id, id, name, delivery_date, created_at) VALUES ('original', 'p', 'P', '2027-01-01', '2026-09-01T00:00:00.000Z')",
+      ),
+      env.DB.prepare("INSERT INTO project_tasks (user_id, project_id, task_id, position) VALUES ('original', 'p', 'a', 0), ('original', 'p', 'g', 1)"),
+      env.DB.prepare("INSERT INTO project_tags (user_id, project_id, tag_id, position) VALUES ('original', 'p', 'work', 0)"),
+      env.DB.prepare("INSERT INTO task_tags (user_id, task_id, tag_id, position) VALUES ('original', 'a', 'school', 0)"),
+      env.DB.prepare("INSERT INTO task_relations (user_id, task_id, related_task_id, type, position) VALUES ('original', 'a', 'g', 'blocks', 0)"),
+    ])
+
+    await migrate(env.DB)
+
+    const rows = (
+      await env.DB.prepare('SELECT at, table_name, row_key, op, source, data, old_data FROM history ORDER BY id').all<Record<string, string>>()
+    ).results
+    expect(rows.every((r) => r.op === 'baseline' && r.source === 'baseline' && r.old_data === null)).toBe(true)
+    expect(rows.map((r) => [r.table_name, r.row_key])).toEqual([
+      ['tasks', 'a'],
+      ['tasks', 'g'],
+      ['projects', 'p'],
+      // In the order they were made: 0002's tags, then 0003's Archive
+      ['tags', 'personal'],
+      ['tags', 'school'],
+      ['tags', 'work'],
+      ['tags', 'archive'],
+      ['project_tasks', 'p:a'],
+      ['project_tasks', 'p:g'],
+      ['project_tags', 'p:work'],
+      ['task_tags', 'a:school'],
+      ['task_relations', 'a:g'],
+    ])
+    // Stamped with when each row was made, or the migration for the lists, which have no created_at
+    expect(rows[0]!.at).toBe('2026-10-01T00:00:00.000Z')
+    expect(rows[2]!.at).toBe('2026-09-01T00:00:00.000Z')
+    expect(Date.now() - Date.parse(rows[7]!.at!)).toBeLessThan(60_000)
+    expect(JSON.parse(rows[0]!.data!)).toMatchObject({ id: 'a', name: 'A', due_date: '2026-12-01', completed: 1, google_account: null })
+    expect(JSON.parse(rows[1]!.data!)).toMatchObject({ id: 'g', google_account: 'me@gmail.com' })
+    expect(JSON.parse(rows[2]!.data!)).toMatchObject({ id: 'p', delivery_date: '2027-01-01' })
+    expect(JSON.parse(rows[11]!.data!)).toEqual({ task_id: 'a', related_task_id: 'g', type: 'blocks', position: 0 })
+
+    // Rows that were there take the source 'unknown' until they are next saved
+    const sources = await env.DB.prepare(
+      "SELECT (SELECT group_concat(DISTINCT changed_by) FROM tasks) || (SELECT group_concat(DISTINCT changed_by) FROM projects) AS s",
+    ).first<string>('s')
+    expect(sources).toBe('unknownunknown')
+    await env.DB.prepare("UPDATE tasks SET name = 'A2' WHERE id = 'a'").run()
+    const last = await env.DB.prepare('SELECT op, source FROM history ORDER BY id DESC LIMIT 1').first()
+    expect(last).toEqual({ op: 'update', source: 'unknown' })
   })
 
   it('skips migrations that wrangler already applied', async () => {

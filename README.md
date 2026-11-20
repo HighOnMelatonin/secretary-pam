@@ -20,6 +20,9 @@ It is a Vue app that runs on Cloudflare: a single Worker serves the app and a sm
     - [API](#api)
     - [Schema](#schema)
     - [Change tracking](#change-tracking)
+    - [History](#history)
+    - [Usage](#usage)
+    - [Saved queries](#saved-queries)
     - [Changing the schema](#changing-the-schema)
   - [Deploying to Cloudflare](#deploying-to-cloudflare)
     - [First-time setup](#first-time-setup)
@@ -201,8 +204,9 @@ src/
                       ranks open tasks into Overdue, Do nowww and Do next (priority.ts), and the workload
                       forecast built on it (forecast.ts), what a settings change would change (settingsPreview.ts),
                       and the sentence type every reason, brief and refusal uses (sentence.ts), what the
-                      Telegram routes answer and their limits (telegram.ts), and the bot's lookups over the
-                      prioritisation and forecast (lookups.ts)
+                      Telegram routes answer and their limits (telegram.ts), the bot's lookups over the
+                      prioritisation and forecast (lookups.ts), and the clients and action names that history
+                      and usage counts use (usage.ts)
   api.ts              client for the Worker API, including signing in
   __tests__/          unit tests
 worker/
@@ -211,6 +215,9 @@ worker/
   email.ts            sending email through Cloudflare Email Service
   google.ts           the /api/google routes: connecting Google accounts and syncing their events into tasks
   events.ts           writing change tracking events, and the GET /api/events route
+  history.ts          what writes do for history's triggers: the client a request came from, deletes
+                      that log who made them, and deleting an account with its history
+  usage.ts            counting the actions each account takes, and the POST /api/usage route
   settings.ts         the /api/settings routes: reading and saving settings, preset changes and the preview
   jsonChunks.ts       passing many rows to D1 in a few statements, as JSON
   googleCalendar.ts   Google's OAuth and Calendar API: tokens, the calendar list, batched event lists,
@@ -227,6 +234,7 @@ cypress/
   e2e/                end-to-end tests
   support/            commands and builders for test data
 migrations/           SQL that creates the database tables
+analytics/            saved SQL queries over history and usage counts, run by hand (queries.sql)
 docs/                 designs for features being built, such as task prioritisation (priority-algorithm.md)
                       and the Telegram companion bot (telegram-bot.md)
 wrangler.jsonc        Worker and database configuration
@@ -337,6 +345,7 @@ The reply lists every task and project the save changed, and `applyChanges` (`sr
 | `PUT /api/telegram` | Save `{ timeZone, briefMinutes, enabled }` for the linked chat, where `briefMinutes` is on the quarter hour (0, 15, … 1,425); returns the status (`400` if malformed, `409` with no chat linked) |
 | `DELETE /api/telegram` | Unlink the chat, telling it so; `204` |
 | `POST /api/telegram/webhook` | Where Telegram sends the bot's updates. No session: it needs the `X-Telegram-Bot-Api-Secret-Token` header to be `TELEGRAM_WEBHOOK_SECRET` (`401` otherwise), and answers `200` to everything else, even when an update can't be handled |
+| `POST /api/usage` | Count `{ action }`, an action that happens only in the browser (for now only `export`), as the signed-in account's; `204` (`400` for any other action). See [Usage](#usage) |
 | `GET /api/events?projectId=&since=` | The account's change tracking events (`LoggedEvent` in `src/types/events.ts`), oldest first. `projectId` keeps one project's events; `since` (a `YYYY-MM-DD` date or a UTC timestamp) keeps those at or after it. Both are optional (`400` if malformed) |
 
 Tasks imported from Google Calendar have `googleAccount`, the account's email. Only the sync sets it: a task save keeps the stored one, whatever the body says.
@@ -374,13 +383,13 @@ Defined in the files in `migrations/`. Each field has its own column, and each a
 | `users` | Accounts | `id`, `email` (unique, ignoring case), `password_hash`, `created_at` |
 | `sessions` | Signed-in browsers | `id` (SHA-256 of the cookie's token), `user_id` → `users`, `expires_at`, `created_at` |
 | `login_failures` | Failed sign-ins | `email`, `at` |
-| `projects` | `Project` | `user_id` → `users`, `id`, `name`, `description`, `delivery_date`, `priority`, `created_at`, `updated_at` |
-| `tasks` | `Task` | `user_id` → `users`, `id`, `name`, `description`, `due_date`, `priority`, `completed`, `effort_minutes`, `start_date`, `pinned_date`, `created_at`, `updated_at` |
+| `projects` | `Project` | `user_id` → `users`, `id`, `name`, `description`, `delivery_date`, `priority`, `created_at`, `updated_at`, `changed_by` |
+| `tasks` | `Task` | `user_id` → `users`, `id`, `name`, `description`, `due_date`, `priority`, `completed`, `effort_minutes`, `start_date`, `pinned_date`, `created_at`, `updated_at`, `changed_by` |
 | `project_tasks` | `Project.taskIds` | `user_id`, `project_id` → `projects`, `task_id` → `tasks`, `position` |
 | `project_links` | `Project.links` | `user_id`, `project_id` → `projects`, `position`, `label`, `url` |
 | `project_tags` | `Project.tagIds` | `user_id`, `project_id` → `projects`, `tag_id` → `tags`, `position` |
 | `task_relations` | `Task.relations` | `user_id`, `task_id` → `tasks`, `related_task_id` → `tasks`, `type`, `position` |
-| `tags` | `Tag` | `user_id` → `users`, `id`, `name`, `color`, `created_at`, `updated_at` |
+| `tags` | `Tag` | `user_id` → `users`, `id`, `name`, `color`, `created_at`, `updated_at`, `changed_by` |
 | `google_accounts` | Connected Google accounts | `user_id` → `users`, `email`, `refresh_token`, `synced_at`, `created_at` |
 | `google_auth_states` | Connections to Google not back yet | `id` (the OAuth state), `user_id` → `users`, `code_verifier` (PKCE), `expires_at` |
 | `google_events` | `Task.googleAccount`, and the event each imported task came from | `user_id`, `task_id` → `tasks`, `account_email`, `calendar_id`, `event_id`, `starts_at`, `ends_at` |
@@ -389,17 +398,19 @@ Defined in the files in `migrations/`. Each field has its own column, and each a
 | `telegram_link_codes` | Codes for linking a chat, not used yet | `id` (SHA-256 of the code), `user_id` → `users`, `time_zone`, `expires_at` |
 | `telegram_unrecognised` | Text from a linked chat that the bot answered with its hint, kept until the account is deleted | `id` (increasing), `user_id` → `users`, `chat_id`, `text`, `at` |
 | `task_events` | The change tracking log (see below), append-only | `user_id` → `users`, `id` (increasing), `at`, `kind`, `task_id`, `project_id`, `old_value`, `new_value`, `delivery_date_at_time`, `source`, `task_source` |
+| `history` | Every change to tasks, projects, tags and their lists, written by triggers (see [History](#history)), append-only | `id` (increasing), `user_id`, `at`, `table_name`, `row_key`, `op`, `source`, `data`, `old_data` |
+| `usage_counts` | How many actions each account took in each UTC hour, from each client (see [Usage](#usage)) | `user_id` → `users`, `day_utc`, `hour_utc`, `client`, `action`, `count` |
 
 - `project_tasks` links projects to tasks. A task can be in several projects.
-- All foreign keys cascade on delete. `task_events` has none to `tasks` or `projects`, so events outlive what they're about, but deleting a user deletes their events. Deleting a task removes it from its projects and from other tasks' relations, deleting a project removes its links and tags, deleting a tag removes it from its projects, and deleting a user removes their sessions and all of their data.
+- All foreign keys cascade on delete. `task_events` has none to `tasks` or `projects`, so events outlive what they're about, but deleting a user deletes their events. `history` has no foreign keys at all, not even to `users` (its triggers write to it while an account's data cascades away, which a foreign key would refuse), so an account's history is deleted after the account, by `deleteAccountStatements` in `worker/history.ts`. There is no route that deletes an account yet; one must use that. Deleting a task removes it from its projects and from other tasks' relations, deleting a project removes its links and tags, deleting a tag removes it from its projects, and deleting a user removes their sessions and all of their data.
 - Tag names are unique within an account, ignoring case. A new account starts with the tags School, Work and Personal, plus the built-in Archive tag (id `archive`).
-- `CHECK` constraints limit `priority` to `low`, `medium`, `high` or `urgent`; relation `type` to `blocks`, `blocked_by`, `subtask_of`, `parent_of` or `related_to`; and `completed` to `0` or `1`. `effort_minutes` must be above 0, and `start_date` can't be after `due_date`. In `user_settings`, each capacity is 0 to 1,440, `buffer` above 0, `w_u` and `k` at least 0, `horizon_days` above 0, and `preset` one of `balanced`, `deadline`, `importance` or `blockers`. In `telegram_links`, `brief_minutes` is 0 to 1,439 and `enabled` `0` or `1`. `task_events.source` is `app`, `google`, `telegram` or `backfill`.
+- `CHECK` constraints limit `priority` to `low`, `medium`, `high` or `urgent`; relation `type` to `blocks`, `blocked_by`, `subtask_of`, `parent_of` or `related_to`; and `completed` to `0` or `1`. `effort_minutes` must be above 0, and `start_date` can't be after `due_date`. In `user_settings`, each capacity is 0 to 1,440, `buffer` above 0, `w_u` and `k` at least 0, `horizon_days` above 0, and `preset` one of `balanced`, `deadline`, `importance` or `blockers`. In `telegram_links`, `brief_minutes` is 0 to 1,439 and `enabled` `0` or `1`. `task_events.source` is `app`, `google`, `telegram` or `backfill`. `changed_by` is `web-desktop`, `web-mobile`, `telegram`, `google` or `unknown`; `history.source` is one of those or `baseline`, and `history.op` is `insert`, `update`, `delete` or `baseline`. `usage_counts.client` is `web-desktop`, `web-mobile`, `telegram` or `unknown`, and `hour_utc` 0 to 23.
 - Scores and forecasts worked out from estimates, dates and settings are never stored.
 - Dates are ISO 8601 strings such as `2026-10-25`. Timestamps are UTC, such as `2026-10-25T15:08:26.123Z`.
 
 ### Change tracking
 
-Pam logs changes to `task_events` so that scope creep, and how well projects were scoped, can be worked out later. Nothing in the app reads the log yet; `GET /api/events` returns it.
+Pam logs changes to `task_events` so that scope creep, and how well projects were scoped, can be worked out later. Nothing in the app reads the log yet; `GET /api/events` returns it. Since migration `0013`, [history](#history) records every change in full as well; `task_events` carries on beside it, since it holds the changes from before history began.
 
 **What's logged.** Each event has a `kind`:
 
@@ -425,9 +436,68 @@ Pam logs changes to `task_events` so that scope creep, and how well projects wer
 
 **Planned or added later.** `isPlanned` in `src/types/events.ts` counts a task as planned for a project if it first joined within `PLANNING_WINDOW_HOURS` (24) of the project's `project_created` event, and as added later otherwise. It returns `undefined` for projects whose creation wasn't logged. The window is a tunable guess, not a recorded fact, and nothing stores the result, so changing it reclassifies all of the history.
 
+### History
+
+`history` is an append-only log of every change to tasks, projects and tags, and to the tables holding their lists, for auditing and for the [saved queries](#saved-queries). It's written by SQLite triggers (`migrations/0013_history.sql`), so every write path is logged without each one having to do it: the app, the Telegram bot, the Google sync and cascading deletes.
+
+**What's logged.** One row for every row inserted into, updated in or deleted from `tasks`, `projects`, `tags`, `project_tasks`, `project_tags`, `task_tags` and `task_relations`:
+
+- `op` is `insert`, `update` or `delete`. `data` is the whole row as JSON after the change (before it, for a delete), and `old_data` the row before an update (`NULL` otherwise). The JSON has every column but `user_id` (a column of its own) and `changed_by` (the `source`).
+- `row_key` is the row's `id`, or for a list table its two ids, such as `project_id:task_id`.
+- `id` orders the rows, including those of one save, which share their `at` to the millisecond. `at` is UTC.
+- A task deleted from a project, or by a sync, logs its own delete and the delete of each of its list rows (its projects, relations and tags), as the cascade removes them.
+
+**What isn't logged:** `project_links`; a change to a list's order (`position`) alone; a save that changes nothing, or only `updated_at` or `changed_by`; `users`, `sessions`, `login_failures`, settings and the Telegram tables. Lists are written as changes to the rows stored (rows that left the list are deleted, new ones inserted, the rest renumbered), never rewritten whole, so a save logs only the rows that really came or went.
+
+**Who made the change.** `tasks`, `projects` and `tags` have a `changed_by` column, which every write sets and the API never returns; the triggers log it as the `source`:
+
+| `source` | When |
+|---|---|
+| `web-desktop`, `web-mobile` | The web app, from its `X-Pam-Client` header, decided once per page load by whether the screen is at most 767px wide (the app's phone breakpoint) |
+| `telegram` | The Telegram bot |
+| `google` | The Google sync, whether started by the button or by coming back from connecting an account |
+| `unknown` | A request without a known `X-Pam-Client`, such as from an old tab. Also every row that existed before `0013`, until it's next saved |
+| `baseline` | The rows `0013` wrote for the data that already existed (see below) |
+
+The header is only a label: nothing is allowed or refused by it. A list table has no `changed_by`: its rows take the source of the row that owns the list (the project, for `project_tasks` and `project_tags`; the task, for `task_tags` and `task_relations`), or of the row at its other end when that one is gone. A cascade deletes list rows after the row they hang from, so before a delete, the Worker marks the row being deleted, and the rows at the other end of its lists, with who is deleting (`deleteStatements` in `worker/history.ts`). Marking changes only `changed_by`, so it isn't logged itself.
+
+**Baseline rows are today's data, stamped with the past.** Migration `0013` wrote one `op = 'baseline'` row for every row that existed, at its `created_at` (or the migration's time, for the list tables, which have none). Each holds the row as it was at the migration, not as it was made, so the saved queries never count a baseline as something that happened. Its id does come before every logged change, though, so it does show what the data was just before the first one, which the queries use to look up a task's projects or a project's delivery date at a moment. A task's baseline also has `google_account`, the account it was imported from, since an imported task from before `0013` has no logged insert to show it.
+
+**Deleting.** History rows can't be changed: a trigger refuses any `UPDATE`. They can be deleted, which only deleting an account does.
+
+> **Changing a logged table.** The triggers list every column by name. A migration that adds a column to one of these tables must drop and recreate that table's triggers with the new column, or it won't be recorded; one that rebuilds a table must recreate them too, since dropping the table drops them. See [Changing the schema](#changing-the-schema).
+
+### Usage
+
+`usage_counts` counts the actions each account takes: which client they come from and at what time of day. It holds one count per account, UTC day and hour, client and action, not a row per action, and is kept apart from `history`. Testers' actions are counted on their own accounts, like everything else.
+
+**What's counted:** every successful (`2xx`) request that isn't a `GET` and is signed in, once its response is known. The count is written after the response is sent (`ctx.waitUntil`), so it never holds up or fails the request; a count that can't be written is dropped. And the Telegram bot's commands and buttons that do something: Done, Not today, the priority, due date and estimate buttons under `/add`, `/add`, `/desc`, `/stop`, `/brief` and `/quickwins`. Copying or downloading an export happens only in the browser, so the app reports it with `POST /api/usage`.
+
+**What isn't:** reading (`GET`), moving around the app, and refused or failed requests; the sign-in routes (`/api/auth`, including signing out and password reset); `POST /api/settings/preview`, which only shows what a change would do; anything the app or Worker does on its own, which the app marks with `X-Pam-Action: auto` (for now, the sync after coming back from connecting a Google account); the scheduled morning brief; and the bot's lookups (`/next`, `/today`, `/tasks`, `/late`, `/offtrack`, `/help`, Next, a project's button), and a press that changes nothing because the task was done or deleted.
+
+**Client:** `web-desktop` or `web-mobile` from the app's `X-Pam-Client` header (as in [History](#history)), `telegram` for the bot, and `unknown` for a request without a known one.
+
+**Action:** the app's `X-Pam-Action` header, a name from `USAGE_ACTIONS` in `src/types/usage.ts`, such as `task_create`, `task_complete`, `quick_action_pin`, `google_sync` or `export`. The stores name each request in the API client (`src/api.ts`), since they know whether a save makes a task, edits it or ticks it off. A request without a known name is counted as its method and route, such as `PUT tasks` or `POST tasks/action`, so nothing goes uncounted. The bot's presses use the same names as the app's (Done is `task_complete`), plus `bot_stop`, `bot_brief` and `bot_quickwins`.
+
+### Saved queries
+
+`analytics/queries.sql` has one query for each of: tasks planned or added to a project later (scope creep), tasks completed and reopened per week, projects created, projects completed or archived by hand, deadline extensions, deadlines met, the full history of one task or project, actions by client, and actions by local hour. They only read. Run them against the live database from bash or Git Bash with
+
+```sh
+pnpm exec wrangler d1 execute pam-data --remote --json --command "$(cat analytics/queries.sql)"
+```
+
+or from PowerShell with `pnpm exec wrangler d1 execute pam-data --remote --json --command (Get-Content -Raw analytics/queries.sql)`. To run one, pass only that query. Don't use `--file`: with `--remote` it imports the file instead, which shows no results and makes the database unavailable while it runs.
+
+D1 can't bind parameters from the command line, so each query starts with the same settings line: the account's `email`, `local_offset` (`'+8 hours'`, Singapore), `planned_within_hours` (24), `archive_window_seconds` (10), `include_google_tasks` (0) and `audit_id`. Change it with find and replace so every query keeps the same values; a test checks they match. Every query leaves out baseline rows and, unless `include_google_tasks` is 1, tasks imported from Google Calendar. Times are moved to local time before they're compared with a date or put in a day, week (from Monday) or hour, since due and delivery dates are local dates and `at` is UTC.
+
+A project counts as completed when an Archive tag was added within `archive_window_seconds` of ticking off one of its tasks, since the app archives a project in the same save that completes its last task; any other Archive tag counts as put on hold or archived by hand. History doesn't record why a tag was added, so this is a heuristic.
+
 ### Changing the schema
 
-Add a new numbered file to `migrations/`, such as `0002_add_tags.sql`, instead of editing an applied one. End each statement with a semicolon at the end of a line.
+Add a new numbered file to `migrations/`, such as `0002_add_tags.sql`, instead of editing an applied one. End each statement with a semicolon at the end of a line. A trigger's body has statements of its own, so end a trigger with `END;` on a line of its own, which is how `worker/migrate.ts` tells where it ends.
+
+**A migration that adds a column to `tasks`, `projects`, `tags`, `project_tasks`, `project_tags`, `task_tags` or `task_relations` must drop and recreate that table's history triggers** (from `0013_history.sql`) with the new column in their `json_object(...)` and, for an update trigger, in its `WHEN`, or the new column won't be recorded in [history](#history). A migration that rebuilds one of these tables must recreate its triggers, since dropping the table drops them.
 
 You don't need to apply it by hand. When a Worker instance handles its first request, `worker/migrate.ts` applies any files in `migrations/` that the database doesn't have yet. It records them in the `d1_migrations` table, the same one `wrangler d1 migrations apply` uses. The `pnpm db:migrate:*` scripts still work if you want to apply a migration before deploying.
 
@@ -548,7 +618,7 @@ There are three layers of tests:
 | Layer | Command | Where | What it covers |
 |---|---|---|---|
 | Unit | `pnpm test:unit` | `src/__tests__/` | Components, stores, models and the API client in a simulated browser (jsdom). `fetch` is replaced by an in-memory fake API (`fakeApi.ts`), so no server or database is needed. |
-| Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers signing up and in, sessions, keeping accounts' data apart, routing, saving and reading every field, tags, settings, estimates and start dates, blocking loops, migrations, validation, transactions, cascading deletes, the schema's constraints and change tracking. The Google Calendar import runs against a fake Google that stands in for `fetch` (`google.spec.ts`), and the Telegram bot against a fake Bot API (`telegram.spec.ts`); what the bot says is unit-tested in `telegramMessages.spec.ts`, and its lookups in `src/__tests__/lookups.spec.ts`. The database is emptied before every test. |
+| Integration | `pnpm test:integration` | `worker/__tests__/` | The Worker API inside the real Workers runtime, against a real D1 database built from `migrations/`. Covers signing up and in, sessions, keeping accounts' data apart, routing, saving and reading every field, tags, settings, estimates and start dates, blocking loops, migrations, validation, transactions, cascading deletes, the schema's constraints, change tracking, history and its sources, usage counts, and the saved queries in `analytics/queries.sql` on a seeded timeline. The Google Calendar import runs against a fake Google that stands in for `fetch` (`google.spec.ts`), and the Telegram bot against a fake Bot API (`telegram.spec.ts`); what the bot says is unit-tested in `telegramMessages.spec.ts`, and its lookups in `src/__tests__/lookups.spec.ts`. The database is emptied before every test. |
 | End-to-end | `pnpm test:e2e` | `cypress/e2e/` | The production build in a real browser (Cypress), with the Worker and a local D1 database. Covers creating and editing projects and tasks, managing tags, the tile preview, sorting, the calendar, Suggested with its quick actions, the workload and the settings page (on a wide screen and a phone), and how errors are shown. |
 
 `pnpm test` runs the unit and integration tests together.

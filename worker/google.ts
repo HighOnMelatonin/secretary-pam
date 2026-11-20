@@ -17,7 +17,9 @@
 //
 // Each sync logs what it changed to task_events (src/types/events.ts) in the same batch, as
 // source 'google': tasks it created, due dates it moved, and tasks it deleted, with the projects
-// they leave. Changes to names and descriptions aren't logged.
+// they leave. Changes to names and descriptions aren't logged. History (migrations/0013_history.sql)
+// logs every change it makes, names and descriptions too, with the source 'google', whether the
+// sync was started by the user's button or by coming back from connecting an account.
 //
 // A user can only reach their own accounts and tasks: every query has the user_id of the session.
 // Refresh tokens never leave the Worker.
@@ -27,6 +29,7 @@ import { MAX_EMAIL_LENGTH } from '../src/types/limits'
 import { isPastDeadline } from '../src/types/project'
 import { HttpError, type User } from './auth'
 import { eventStatements } from './events'
+import { deleteStatements } from './history'
 import { jsonChunks } from './jsonChunks'
 import {
   accessToken,
@@ -299,8 +302,8 @@ async function syncAccount(
       ...jsonChunks(added).map((json) =>
         db
           .prepare(
-            `INSERT INTO tasks (user_id, id, name, description, due_date)
-             SELECT ?1, value ->> '$.id', value ->> '$.name', value ->> '$.description', value ->> '$.dueDate'
+            `INSERT INTO tasks (user_id, id, name, description, due_date, changed_by)
+             SELECT ?1, value ->> '$.id', value ->> '$.name', value ->> '$.description', value ->> '$.dueDate', 'google'
              FROM json_each(?2)`,
           )
           .bind(userId, json),
@@ -314,7 +317,7 @@ async function syncAccount(
                due_date = item.value ->> '$.dueDate',
                start_date = CASE WHEN start_date > item.value ->> '$.dueDate' THEN item.value ->> '$.dueDate'
                  ELSE start_date END,
-               updated_at = ${NOW}
+               changed_by = 'google', updated_at = ${NOW}
              FROM json_each(?2) AS item
              WHERE tasks.user_id = ?1 AND tasks.id = item.value ->> '$.id'`,
           )
@@ -331,11 +334,7 @@ async function syncAccount(
           )
           .bind(userId, account.email, json),
       ),
-      ...jsonChunks(removed).map((json) =>
-        db
-          .prepare('DELETE FROM tasks WHERE user_id = ?1 AND id IN (SELECT value FROM json_each(?2))')
-          .bind(userId, json),
-      ),
+      ...deleteStatements(db, userId, 'tasks', removed, 'google'),
       ...eventStatements(db, userId, new Date().toISOString(), logged),
       db
         .prepare(`UPDATE google_accounts SET synced_at = ${NOW} WHERE user_id = ?1 AND email = ?2`)

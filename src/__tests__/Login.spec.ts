@@ -35,7 +35,7 @@ describe('Login', () => {
 
     expect(fetch).toHaveBeenCalledWith('/api/auth/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Pam-Client': 'web-desktop' },
       body: JSON.stringify({ email: 'me@example.com', password: 'secret password' }),
     })
     expect(router.currentRoute.value.fullPath).toBe('/tasks/new')

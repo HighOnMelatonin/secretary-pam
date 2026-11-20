@@ -15,6 +15,12 @@
 // the app's own planners (src/types/operations.ts) and its save (PamData.save), logged with the
 // source 'telegram'.
 //
+// Each command or button press that does something is counted in usage_counts as from the client
+// 'telegram' (worker/usage.ts): Done, Not today, the priority, due date and estimate buttons, /add,
+// /desc, /stop, /brief and /quickwins. A press that changes nothing because the task was done or
+// deleted, or that is refused, isn't counted; nor is a lookup that only shows something, nor the
+// scheduled brief.
+//
 // Without TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_BOT_USERNAME and APP_ORIGIN the bot
 // is off and every one of these answers 404.
 //
@@ -29,9 +35,11 @@ import { prioritise } from '../../src/types/priority'
 import type { Project } from '../../src/types/project'
 import { clampStartDate } from '../../src/types/rules'
 import type { UserSettings } from '../../src/types/settings'
+import type { UsageAction } from '../../src/types/usage'
 import { createEmptyTask, type Task } from '../../src/types/task'
 import { BRIEF_STEP_MINUTES, MINUTES_PER_DAY, deepLink, isTimeZone, type TelegramPreferences } from '../../src/types/telegram'
 import { HttpError, type User } from '../auth'
+import { countLater } from '../usage'
 import {
   answerCallbackQuery,
   editMessageText,
@@ -195,7 +203,13 @@ async function secretMatches(header: string | null, secret: string) {
   return crypto.subtle.timingSafeEqual(a, b)
 }
 
-export async function handleWebhook(env: Env, config: BotConfig, data: PamData, request: Request): Promise<Response> {
+export async function handleWebhook(
+  env: Env,
+  ctx: ExecutionContext,
+  config: BotConfig,
+  data: PamData,
+  request: Request,
+): Promise<Response> {
   if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed')
   if (!(await secretMatches(request.headers.get('X-Telegram-Bot-Api-Secret-Token'), config.webhookSecret))) {
     throw new HttpError(401, 'Unauthorized')
@@ -203,18 +217,21 @@ export async function handleWebhook(env: Env, config: BotConfig, data: PamData, 
   try {
     const text = await request.text()
     const update: unknown = text.length <= MAX_UPDATE_BYTES ? JSON.parse(text) : null
-    if (isObject(update) && Number.isInteger(update.update_id)) await handleUpdate({ db: env.DB, config, data }, update as unknown as TelegramUpdate, new Date())
+    const count = (userId: string, action: UsageAction) => countLater(ctx, env.DB, userId, 'telegram', action)
+    const bot = { db: env.DB, config, data, count }
+    if (isObject(update) && Number.isInteger(update.update_id)) await handleUpdate(bot, update as unknown as TelegramUpdate, new Date())
   } catch (e) {
     console.error('Handling a Telegram update failed:', String(e))
   }
   return new Response(null, { status: 200 })
 }
 
-// What handling an update needs
+// What handling an update needs. count counts an action the user took, after the response.
 interface Bot {
   db: D1Database
   config: BotConfig
   data: PamData
+  count(userId: string, action: UsageAction): void
 }
 
 // Only private chats are answered. A linked chat's update is handled once, in order: one no newer
@@ -287,11 +304,13 @@ async function handleCommand(bot: Bot, link: Link, text: string | undefined, now
       // Sent whenever it's asked for, so it doesn't count as the day's brief
       const { priorities, forecast } = await planning(bot, link, now)
       await send(briefMessage(config.origin, priorities, forecast()))
+      bot.count(link.userId, 'bot_brief')
       return
     }
     case 'stop':
       await stopBrief(bot.db, link.chatId)
       await send(stoppedMessage(config.origin))
+      bot.count(link.userId, 'bot_stop')
       return
     case 'add':
       await send(await addTask(bot, link, command!.args))
@@ -312,6 +331,7 @@ async function handleCommand(bot: Bot, link: Link, text: string | undefined, now
       return
     case 'quickwins':
       await send(quickWinsMessage(config.origin, quickWins((await planning(bot, link, now)).priorities)))
+      bot.count(link.userId, 'bot_quickwins')
       return
     case 'help':
     case 'start':
@@ -332,7 +352,7 @@ async function handleCommand(bot: Bot, link: Link, text: string | undefined, now
 
 // /add <name>: a task with the defaults (medium priority, no dates, no estimate, no project),
 // remembered as the chat's last added for /desc
-async function addTask({ db, config, data }: Bot, link: Link, args: string): Promise<OutgoingMessage> {
+async function addTask({ db, config, data, count }: Bot, link: Link, args: string): Promise<OutgoingMessage> {
   const name = args.trim()
   if (!name) return addUsage
   if (name.length > MAX_NAME_LENGTH) return nameTooLong(MAX_NAME_LENGTH)
@@ -343,6 +363,7 @@ async function addTask({ db, config, data }: Bot, link: Link, args: string): Pro
     if (e instanceof HttpError && e.status < 500) return { text: e.message }
     throw e
   }
+  count(link.userId, 'task_create')
   await setLastAdded(db, link.chatId, task.id)
   return addedMessage(config.origin, task)
 }
@@ -360,7 +381,9 @@ async function describeTask(bot: Bot, link: Link, args: string): Promise<Outgoin
     (state, task) => (task.description === description ? null : planTaskSave(state, { task: { ...task, description } }, 'telegram')),
     { openOnly: false }, // a description can go on a task that's been ticked off since
   )
-  return outcome.kind === 'changed' || outcome.kind === 'same' ? describedMessage(outcome.task.name) : outcome.reply
+  if (!tookEffect(outcome)) return outcome.reply
+  bot.count(link.userId, 'task_edit')
+  return describedMessage(outcome.task.name)
 }
 
 // Nothing was changed: the task was done or deleted since its message was sent (with what to say),
@@ -378,6 +401,19 @@ type Outcome =
   | { kind: 'same'; task: Task } // it already had the value
   | { kind: 'unchanged'; reply: OutgoingMessage } // the task was done or deleted already
   | { kind: 'refused'; reply: OutgoingMessage } // the planner or the save refused it
+
+// Whether the change was made, or already had been, which is when a press is counted as an action
+const tookEffect = (outcome: Outcome): outcome is Extract<Outcome, { task: Task }> =>
+  outcome.kind === 'changed' || outcome.kind === 'same'
+
+// What each button that changes a task is counted as
+const PRESS_ACTIONS = {
+  done: 'task_complete',
+  not_today: 'quick_action_not_today',
+  priority: 'quick_action_priority',
+  due: 'quick_action_due',
+  estimate: 'quick_action_estimate',
+} as const satisfies Record<string, UsageAction>
 
 // One change to one task, planned by `change` against the stored data (null when the task already
 // has the value). Unless openOnly is false, a task that's done is left alone, so no button ever
@@ -472,12 +508,14 @@ async function handleButton(bot: Bot, updateId: number, query: TelegramCallbackQ
     }
     if (press.action === 'priority' || press.action === 'due' || press.action === 'estimate') {
       const outcome = await changeTask(bot, link, press.taskId, fieldChange(press, today))
+      if (tookEffect(outcome)) bot.count(link.userId, PRESS_ACTIONS[press.action])
       await answer()
       if (outcome.kind === 'changed') await editMessage(bot, link, message, addedMessage(config.origin, outcome.task))
       else if (outcome.kind !== 'same') await send(outcome.reply)
       return
     }
     const outcome = await changeTask(bot, link, press.taskId, press.action === 'done' ? doneChange : notTodayChange(today))
+    if (tookEffect(outcome)) bot.count(link.userId, PRESS_ACTIONS[press.action])
     await answer()
     if (outcome.kind === 'unchanged') {
       await send(outcome.reply)

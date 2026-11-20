@@ -88,6 +88,61 @@ describe('taskList', () => {
   })
 })
 
+describe('naming actions', () => {
+  it('names each task save by what it does: making, editing, ticking off or reopening', async () => {
+    const api = fakeApi({ tasks: [task('a'), task('b', { completed: true })] })
+    const tasks = useTaskList()
+    await tasks.load()
+
+    await tasks.saveTask({ task: task('new') })
+    await tasks.saveTask({ task: task('a', { name: 'A' }) })
+    await tasks.saveTask({ task: task('a', { name: 'A', completed: true }) })
+    await tasks.patchTask('b', { task: { completed: false } })
+    await tasks.patchTask('b', { task: { completed: true } })
+    await tasks.patchTask('b', { task: { name: 'B' } })
+    await tasks.act('a', { action: 'do_today', today: '2026-11-20' })
+    await tasks.act('a', { action: 'unpin' })
+    await tasks.act('a', { action: 'importance', direction: 'up' })
+    await tasks.act('a', { action: 'estimate', effortMinutes: 30 })
+    await tasks.deleteTask('new')
+
+    expect(api.actions).toEqual([
+      'PUT /api/tasks/new task_create',
+      'PUT /api/tasks/a task_edit',
+      'PUT /api/tasks/a task_complete',
+      'PATCH /api/tasks/b task_reopen',
+      'PATCH /api/tasks/b task_complete',
+      'PATCH /api/tasks/b task_edit',
+      'POST /api/tasks/a/action quick_action_pin',
+      'POST /api/tasks/a/action quick_action_unpin',
+      'POST /api/tasks/a/action quick_action_priority',
+      'POST /api/tasks/a/action quick_action_estimate',
+      'DELETE /api/tasks/new task_delete',
+    ])
+  })
+
+  it('names project and tag saves as making or editing, and tag deletes', async () => {
+    const api = fakeApi({ projects: [project('p')], tags: [{ id: 'work', name: 'Work', color: '#343ca6' }] })
+    const projects = useProjectList()
+    const tags = useTagList()
+    await Promise.all([projects.load(), tags.load()])
+
+    await projects.saveProject({ project: project('p', { name: 'P' }) })
+    await projects.saveProject({ project: project('q') })
+    await tags.saveTag({ id: 'work', name: 'Job', color: '#343ca6' })
+    await tags.saveTag({ id: 'home', name: 'Home', color: '#343ca6' })
+    await tags.deleteTag('home')
+
+    expect(api.actions).toEqual([
+      'PUT /api/projects/p project_edit',
+      'PUT /api/projects/q project_create',
+      'PUT /api/tags/work tag_edit',
+      'PUT /api/tags/home tag_create',
+      'DELETE /api/tags/home tag_delete',
+    ])
+  })
+})
+
 describe('taskList deleting', () => {
   it('deletes an unfinished task and clears it from projects and relations', async () => {
     const api = fakeApi({

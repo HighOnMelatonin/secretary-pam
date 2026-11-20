@@ -4,12 +4,12 @@ import { SELF } from 'cloudflare:test'
 
 export const PASSWORD = 'correct horse battery'
 
-// Sends a request as the browser holding `cookie`, or as one that isn't signed in. A string body
-// is sent as it is, anything else as JSON.
-export async function call(method: string, path: string, body?: unknown, cookie?: string) {
+// Sends a request as the browser holding `cookie`, or as one that isn't signed in, with any other
+// headers given (such as X-Pam-Client). A string body is sent as it is, anything else as JSON.
+export async function call(method: string, path: string, body?: unknown, cookie?: string, headers: Record<string, string> = {}) {
   const response = await SELF.fetch(`http://localhost/api/${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) },
+    headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}), ...headers },
     body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
   })
   const text = await response.text()

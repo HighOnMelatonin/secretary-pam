@@ -28,8 +28,8 @@ describe('App', () => {
     expect(wrapper.text()).toContain('Hi, its Pam')
 
     await flushPromises()
-    expect(fetch).toHaveBeenCalledWith('/api/projects', undefined)
-    expect(fetch).toHaveBeenCalledWith('/api/tasks', undefined)
+    expect(fetch).toHaveBeenCalledWith('/api/projects', { headers: { 'X-Pam-Client': 'web-desktop' } })
+    expect(fetch).toHaveBeenCalledWith('/api/tasks', { headers: { 'X-Pam-Client': 'web-desktop' } })
     expect(wrapper.text()).toContain('Create a project')
   })
 
@@ -46,7 +46,7 @@ describe('App', () => {
     expect(wrapper.find('.account').text()).toContain('me@example.com')
     await button(wrapper, 'Sign out').trigger('click')
     await flushPromises()
-    expect(fetch).toHaveBeenCalledWith('/api/auth/logout', { method: 'POST' })
+    expect(fetch).toHaveBeenCalledWith('/api/auth/logout', { method: 'POST', headers: { 'X-Pam-Client': 'web-desktop' } })
     expect(load).toHaveBeenCalledWith('/login')
     load.mockRestore()
   })

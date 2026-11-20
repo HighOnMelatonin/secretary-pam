@@ -35,12 +35,20 @@
 // Saves and deletes of tasks and projects also log what they changed to task_events
 // (src/types/events.ts), in the same batch, so a refused or failed save logs nothing.
 //
+// Every change to tasks, projects, tags and their lists is also logged to history by triggers
+// (migrations/0013_history.sql), which take who made it from each row's changed_by: every write sets
+// it to the client the request came from (worker/history.ts). Lists are written as changes to the
+// rows stored, never rewritten whole, so history only shows rows that really came or went. Each
+// action a person takes is counted in usage_counts once it has succeeded (worker/usage.ts):
+//
+//   POST   /api/usage          -> { action }, an action that happens only in the browser; 204
+//
 // Every route but /api/auth needs a signed-in user, and only reads and writes that user's rows:
 // every query has a user_id, which comes from the session, never from the request.
 //
 // Every value from a request is passed to D1 as a bound parameter (?1, ?2, ...), never written
 // into the SQL itself, so it can't change what a query does. The only SQL built from variables
-// uses constants: NOW, and the table names passed to deleteLogged.
+// uses constants: NOW, the list tables in listStatements, and the table names in history.ts.
 import {
   isSafeUrl,
   LINK_PROTOCOLS,
@@ -88,6 +96,9 @@ import { describeLoop, startsAfterDue, type Clash } from '../src/types/rules'
 import { currentUser, handleAuth, HttpError } from './auth'
 import { eventStatements, listEvents, type EventQuery } from './events'
 import { handleGoogle } from './google'
+import { clientOf, deleteStatements } from './history'
+import { countRequest, parseUsageReport } from './usage'
+import type { ChangeSource, ClientOnlyAction } from '../src/types/usage'
 import { migrateOnce } from './migrate'
 import { forecast } from '../src/types/forecast'
 import { prioritise } from '../src/types/priority'
@@ -446,19 +457,99 @@ async function listTasks(db: D1Database, userId: string): Promise<Task[]> {
   }))
 }
 
-// The task row is upserted (not replaced, which would cascade and drop it from its projects)
-// and its relations and tags are rewritten
-function taskStatements(db: D1Database, userId: string, task: Task): D1PreparedStatement[] {
+// A table holding a list: the rows of `owner`'s list are its `item`s, in `position` order, with a
+// `value` column for relations' type
+interface ListTable {
+  table: 'project_tasks' | 'project_tags' | 'task_tags' | 'task_relations'
+  owner: 'project_id' | 'task_id'
+  item: 'task_id' | 'tag_id' | 'related_task_id'
+  value?: 'type'
+}
+
+const PROJECT_TASKS: ListTable = { table: 'project_tasks', owner: 'project_id', item: 'task_id' }
+const PROJECT_TAGS: ListTable = { table: 'project_tags', owner: 'project_id', item: 'tag_id' }
+const TASK_TAGS: ListTable = { table: 'task_tags', owner: 'task_id', item: 'tag_id' }
+const TASK_RELATIONS: ListTable = { table: 'task_relations', owner: 'task_id', item: 'related_task_id', value: 'type' }
+
+interface ListRow {
+  id: string
+  value?: string
+}
+
+const ids = (list: string[]): ListRow[] => list.map((id) => ({ id }))
+const relationRows = (relations: TaskRelation[]): ListRow[] => relations.map((r) => ({ id: r.taskId, value: r.type }))
+
+// Writes a list as changes to the rows stored: deletes the items that left it, inserts the new ones
+// (and, for relations, updates those whose type changed), then renumbers the positions. Rewriting
+// the whole list would log a delete and an insert to history for every item that stayed; position
+// changes aren't logged. `before` is the list as stored, in order. Its positions can have gaps, left
+// by rows a cascade deleted, so they are set from the new order with one statement rather than
+// worked out from `before`, whenever the list changed. An insert that finds its row already there
+// (another device added it since this save read the data) updates it instead. Table and column
+// names come from the constants above, never from a request.
+function listStatements(
+  db: D1Database,
+  { table, owner, item, value }: ListTable,
+  userId: string,
+  ownerId: string,
+  before: ListRow[],
+  after: ListRow[],
+): D1PreparedStatement[] {
+  const stored = new Map(before.map((row) => [row.id, row]))
+  const kept = new Set(after.map((row) => row.id))
+  const removed = before.filter((row) => !kept.has(row.id)).map((row) => row.id)
+  const written = after
+    .map((row, position) => ({ ...row, position }))
+    .filter((row) => !stored.has(row.id) || stored.get(row.id)!.value !== row.value)
+  const reordered = before.length !== after.length || before.some((row, i) => row.id !== after[i]!.id)
+  const upsert = value
+    ? `INSERT INTO ${table} (user_id, ${owner}, ${item}, position, ${value}) VALUES (?1, ?2, ?3, ?4, ?5)
+       ON CONFLICT (user_id, ${owner}, ${item}) DO UPDATE SET position = excluded.position, ${value} = excluded.${value}`
+    : `INSERT INTO ${table} (user_id, ${owner}, ${item}, position) VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT (user_id, ${owner}, ${item}) DO UPDATE SET position = excluded.position`
+  return [
+    ...(removed.length
+      ? [
+          db
+            .prepare(`DELETE FROM ${table} WHERE user_id = ?1 AND ${owner} = ?2 AND ${item} IN (SELECT value FROM json_each(?3))`)
+            .bind(userId, ownerId, JSON.stringify(removed)),
+        ]
+      : []),
+    ...written.map((row) => db.prepare(upsert).bind(userId, ownerId, row.id, row.position, ...(value ? [row.value] : []))),
+    ...(reordered && after.length
+      ? [
+          db
+            .prepare(
+              `UPDATE ${table} SET position = listed.key FROM json_each(?3) AS listed
+               WHERE ${table}.user_id = ?1 AND ${table}.${owner} = ?2 AND ${table}.${item} = listed.value
+                 AND ${table}.position IS NOT listed.key`,
+            )
+            .bind(userId, ownerId, JSON.stringify(after.map((row) => row.id))),
+        ]
+      : []),
+  ]
+}
+
+// The task row is upserted (not replaced, which would cascade and drop it from its projects), and
+// its relations and tags are written as changes to `stored`, the task as it was read before the save
+// (undefined for a new one)
+function taskStatements(
+  db: D1Database,
+  userId: string,
+  task: Task,
+  stored: Task | undefined,
+  source: ChangeSource,
+): D1PreparedStatement[] {
   return [
     db
       .prepare(
         `INSERT INTO tasks (id, name, description, due_date, priority, completed, effort_minutes, start_date,
-           pinned_date, user_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+           pinned_date, user_id, changed_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
          ON CONFLICT (user_id, id) DO UPDATE SET name = excluded.name, description = excluded.description,
            due_date = excluded.due_date, priority = excluded.priority, completed = excluded.completed,
            effort_minutes = excluded.effort_minutes, start_date = excluded.start_date,
-           pinned_date = excluded.pinned_date, updated_at = ${NOW}`,
+           pinned_date = excluded.pinned_date, changed_by = excluded.changed_by, updated_at = ${NOW}`,
       )
       .bind(
         task.id,
@@ -471,21 +562,10 @@ function taskStatements(db: D1Database, userId: string, task: Task): D1PreparedS
         task.startDate ?? null,
         task.pinnedDate ?? null,
         userId,
+        source,
       ),
-    db.prepare('DELETE FROM task_relations WHERE user_id = ?1 AND task_id = ?2').bind(userId, task.id),
-    ...task.relations.map((relation, position) =>
-      db
-        .prepare(
-          'INSERT INTO task_relations (user_id, task_id, related_task_id, type, position) VALUES (?1, ?2, ?3, ?4, ?5)',
-        )
-        .bind(userId, task.id, relation.taskId, relation.type, position),
-    ),
-    db.prepare('DELETE FROM task_tags WHERE user_id = ?1 AND task_id = ?2').bind(userId, task.id),
-    ...(task.tagIds ?? []).map((tagId, position) =>
-      db
-        .prepare('INSERT INTO task_tags (user_id, task_id, tag_id, position) VALUES (?1, ?2, ?3, ?4)')
-        .bind(userId, task.id, tagId, position),
-    ),
+    ...listStatements(db, TASK_RELATIONS, userId, task.id, relationRows(stored?.relations ?? []), relationRows(task.relations)),
+    ...listStatements(db, TASK_TAGS, userId, task.id, ids(stored?.tagIds ?? []), ids(task.tagIds ?? [])),
   ]
 }
 
@@ -514,51 +594,60 @@ async function listProjects(db: D1Database, userId: string): Promise<Project[]> 
   }))
 }
 
-// The project row is upserted and its tasks, links and tags are rewritten
-function projectStatements(db: D1Database, userId: string, project: Project): D1PreparedStatement[] {
+// The project row is upserted, its tasks and tags are written as changes to `stored` (as in
+// taskStatements), and its links, which history doesn't log, are rewritten
+function projectStatements(
+  db: D1Database,
+  userId: string,
+  project: Project,
+  stored: Project | undefined,
+  source: ChangeSource,
+): D1PreparedStatement[] {
   return [
     db
       .prepare(
-        `INSERT INTO projects (id, name, description, delivery_date, priority, user_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        `INSERT INTO projects (id, name, description, delivery_date, priority, user_id, changed_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT (user_id, id) DO UPDATE SET name = excluded.name, description = excluded.description,
-           delivery_date = excluded.delivery_date, priority = excluded.priority, updated_at = ${NOW}`,
+           delivery_date = excluded.delivery_date, priority = excluded.priority, changed_by = excluded.changed_by,
+           updated_at = ${NOW}`,
       )
-      .bind(project.id, project.name, project.description, project.deliveryDate, project.priority, userId),
-    db.prepare('DELETE FROM project_tasks WHERE user_id = ?1 AND project_id = ?2').bind(userId, project.id),
-    ...project.taskIds.map((taskId, position) =>
-      db
-        .prepare('INSERT INTO project_tasks (user_id, project_id, task_id, position) VALUES (?1, ?2, ?3, ?4)')
-        .bind(userId, project.id, taskId, position),
-    ),
+      .bind(project.id, project.name, project.description, project.deliveryDate, project.priority, userId, source),
+    ...listStatements(db, PROJECT_TASKS, userId, project.id, ids(stored?.taskIds ?? []), ids(project.taskIds)),
     db.prepare('DELETE FROM project_links WHERE user_id = ?1 AND project_id = ?2').bind(userId, project.id),
     ...project.links.map((link, position) =>
       db
         .prepare('INSERT INTO project_links (user_id, project_id, position, label, url) VALUES (?1, ?2, ?3, ?4, ?5)')
         .bind(userId, project.id, position, link.label, link.url),
     ),
-    db.prepare('DELETE FROM project_tags WHERE user_id = ?1 AND project_id = ?2').bind(userId, project.id),
-    ...project.tagIds.map((tagId, position) =>
-      db
-        .prepare('INSERT INTO project_tags (user_id, project_id, tag_id, position) VALUES (?1, ?2, ?3, ?4)')
-        .bind(userId, project.id, tagId, position),
-    ),
+    ...listStatements(db, PROJECT_TAGS, userId, project.id, ids(stored?.tagIds ?? []), ids(project.tagIds)),
   ]
 }
 
 // Saves several tasks and projects, and logs the events, as one transaction, since D1 has no
 // BEGIN/COMMIT and a batch is its only atomic unit. Tasks go first because project_tasks rows
-// reference them.
-async function writeChanges(db: D1Database, userId: string, { tasks, projects }: Changes, events: TaskEvent[]) {
+// reference them. `stored` is the data the save was planned against, which the lists are written
+// as changes to, and `source` who made the change, for history.
+async function writeChanges(
+  db: D1Database,
+  userId: string,
+  { tasks, projects }: Changes,
+  events: TaskEvent[],
+  stored: State,
+  source: ChangeSource,
+) {
+  const storedTasks = new Map(stored.tasks.map((t) => [t.id, t]))
+  const storedProjects = new Map(stored.projects.map((p) => [p.id, p]))
   await db.batch([
-    ...tasks.flatMap((task) => taskStatements(db, userId, task)),
-    ...projects.flatMap((project) => projectStatements(db, userId, project)),
+    ...tasks.flatMap((task) => taskStatements(db, userId, task, storedTasks.get(task.id), source)),
+    ...projects.flatMap((project) => projectStatements(db, userId, project, storedProjects.get(project.id), source)),
     ...eventStatements(db, userId, new Date().toISOString(), events),
   ])
 }
 
 // Plans a save against the user's stored tasks and projects, then writes everything it changes as
-// one batch. `saving` holds the task or project being saved, so a clash calls it by its new name.
+// one batch. `saving` holds the task or project being saved, so a clash calls it by its new name,
+// and `source` is who is saving it, for history.
 //
 // The read and the batch are not one transaction (D1 has no interactive transactions), so when
 // two devices save at once, one can plan against data the other is changing, and lose that
@@ -568,6 +657,7 @@ async function saveWithRules(
   userId: string,
   plan: (state: State) => Plan,
   saving: State,
+  source: ChangeSource,
 ): Promise<Changes> {
   const [tasks, projects] = await Promise.all([listTasks(db, userId), listProjects(db, userId)])
   let result: Plan
@@ -581,7 +671,7 @@ async function saveWithRules(
     const message = clashMessage(result.clashes[0]!, [...tasks, ...saving.tasks], [...projects, ...saving.projects])
     throw new Conflict(message, result.clashes)
   }
-  await writeChanges(db, userId, result.changes, result.events)
+  await writeChanges(db, userId, result.changes, result.events, { tasks, projects }, source)
   return result.changes
 }
 
@@ -604,7 +694,7 @@ function loopMessage(loop: string[], tasks: Task[]) {
 
 // Saves imported tasks into a project as one batch, so a clash or a failure saves none of them.
 // As with a task save, a task keeps the Google account it was synced from.
-function importTasks(db: D1Database, userId: string, projectId: string, body: unknown): Promise<Changes> {
+function importTasks(db: D1Database, userId: string, projectId: string, body: unknown, source: ChangeSource): Promise<Changes> {
   const { tasks } = parseTasksImport(body)
   return saveWithRules(
     db,
@@ -621,22 +711,25 @@ function importTasks(db: D1Database, userId: string, projectId: string, body: un
       return planTasksImport(state, projectId, { tasks: withSource })
     },
     { tasks, projects: [] },
+    source,
   )
 }
 
 // Deletes a task or project, logging what the delete does in the same batch. The events are
-// worked out from the stored data, read first, with the same race as saveWithRules.
+// worked out from the stored data, read first, with the same race as saveWithRules. History logs
+// the delete as `source`'s (see deleteStatements).
 async function deleteLogged(
   db: D1Database,
   userId: string,
-  table: string,
+  table: 'tasks' | 'projects',
   id: string,
   plan: (state: State, id: string) => TaskEvent[],
+  source: ChangeSource,
 ): Promise<void> {
   const [tasks, projects] = await Promise.all([listTasks(db, userId), listProjects(db, userId)])
   await db.batch([
     ...eventStatements(db, userId, new Date().toISOString(), plan({ tasks, projects }, id)),
-    db.prepare(`DELETE FROM ${table} WHERE user_id = ?1 AND id = ?2`).bind(userId, id),
+    ...deleteStatements(db, userId, table, [id], source),
   ])
 }
 
@@ -664,7 +757,7 @@ const pamData: PamData = {
     const [tasks, projects, settings] = await Promise.all([listTasks(db, userId), listProjects(db, userId), getSettings(db, userId)])
     return { tasks, projects, settings }
   },
-  save: (db, userId, plan) => saveWithRules(db, userId, plan, { tasks: [], projects: [] }),
+  save: (db, userId, plan) => saveWithRules(db, userId, plan, { tasks: [], projects: [] }, 'telegram'),
 }
 
 // Events
@@ -692,31 +785,32 @@ async function listTags(db: D1Database, userId: string): Promise<Tag[]> {
 }
 
 // Returns the tag as stored, so the reply has its colour even when the body left it out
-async function saveTag(db: D1Database, userId: string, tag: TagBody): Promise<Tag> {
+async function saveTag(db: D1Database, userId: string, tag: TagBody, source: ChangeSource): Promise<Tag> {
   return (await db
     .prepare(
-      `INSERT INTO tags (user_id, id, name, color) VALUES (?1, ?2, ?3, coalesce(?4, ?5))
+      `INSERT INTO tags (user_id, id, name, color, changed_by) VALUES (?1, ?2, ?3, coalesce(?4, ?5), ?6)
        ON CONFLICT (user_id, id) DO UPDATE SET name = excluded.name, color = coalesce(?4, color),
-         updated_at = ${NOW}
+         changed_by = excluded.changed_by, updated_at = ${NOW}
        RETURNING id, name, color`,
     )
-    .bind(userId, tag.id, tag.name, tag.color ?? null, DEFAULT_TAG_COLOR)
+    .bind(userId, tag.id, tag.name, tag.color ?? null, DEFAULT_TAG_COLOR, source)
     .first<Tag>())!
 }
 
 // Routing
 
+// `source` is who is saving or deleting, for history
 interface Resource {
   list(db: D1Database, userId: string): Promise<unknown[]>
-  save(db: D1Database, userId: string, id: string, body: unknown): Promise<unknown>
+  save(db: D1Database, userId: string, id: string, body: unknown, source: ChangeSource): Promise<unknown>
   // Deleting the row cascades to the tables holding its arrays
-  remove(db: D1Database, userId: string, id: string): Promise<void>
+  remove(db: D1Database, userId: string, id: string, source: ChangeSource): Promise<void>
 }
 
 const RESOURCES: Record<string, Resource> = {
   tasks: {
     list: listTasks,
-    save(db, userId, id, body) {
+    save(db, userId, id, body, source) {
       const save = parseTaskSave(body, id)
       const saving = { tasks: [save.task], projects: [] }
       // Only the sync sets googleAccount, so the saved task keeps the stored one
@@ -724,25 +818,25 @@ const RESOURCES: Record<string, Resource> = {
         const googleAccount = state.tasks.find((t) => t.id === id)?.googleAccount
         return googleAccount ? { ...save, task: { ...save.task, googleAccount } } : save
       }
-      return saveWithRules(db, userId, (state) => planTaskSave(state, withSource(state)), saving)
+      return saveWithRules(db, userId, (state) => planTaskSave(state, withSource(state)), saving, source)
     },
-    remove: (db, userId, id) => deleteLogged(db, userId, 'tasks', id, planTaskDelete),
+    remove: (db, userId, id, source) => deleteLogged(db, userId, 'tasks', id, planTaskDelete, source),
   },
   projects: {
     list: listProjects,
-    save(db, userId, id, body) {
+    save(db, userId, id, body, source) {
       const save = parseProjectSave(body, id)
       const saving = { tasks: [], projects: [save.project] }
-      return saveWithRules(db, userId, (state) => planProjectSave(state, save), saving)
+      return saveWithRules(db, userId, (state) => planProjectSave(state, save), saving, source)
     },
-    remove: (db, userId, id) => deleteLogged(db, userId, 'projects', id, planProjectDelete),
+    remove: (db, userId, id, source) => deleteLogged(db, userId, 'projects', id, planProjectDelete, source),
   },
   // Deleting a tag removes it from its projects and tasks
   tags: {
     list: listTags,
-    save: (db, userId, id, body) => saveTag(db, userId, parseTag(body, id)),
-    async remove(db, userId, id) {
-      await db.prepare('DELETE FROM tags WHERE user_id = ?1 AND id = ?2').bind(userId, id).run()
+    save: (db, userId, id, body, source) => saveTag(db, userId, parseTag(body, id), source),
+    async remove(db, userId, id, source) {
+      await db.batch(deleteStatements(db, userId, 'tags', [id], source))
     },
   },
 }
@@ -780,107 +874,141 @@ function decodeId(rawId: string) {
   return id
 }
 
+// What handling a request found out that counting it needs: the signed-in user, and the action a
+// POST /api/usage reported
+interface Handled {
+  userId?: string
+  reported?: ClientOnlyAction
+}
+
+// The route without ids, for the name of a request with no known X-Pam-Action, e.g. "tasks",
+// "tasks/action", "google/accounts" or "settings/preset"
+function routeOf(name: string | undefined, rawId: string | undefined, rest: string[]) {
+  if (name === 'tasks' || name === 'projects') return [name, ...rest].join('/')
+  if (name === 'tags' || !rawId) return name ?? ''
+  return `${name}/${rawId}` // google/..., settings/..., telegram/...
+}
+
+// Every /api request, apart from counting it
+async function handle(request: Request, env: Env, ctx: ExecutionContext, handled: Handled): Promise<Response> {
+  // e.g. "/api/tasks/abc" -> ["", "api", "tasks", "abc"]
+  const url = new URL(request.url)
+  const [, api, name, rawId, ...rest] = url.pathname.split('/')
+  const resource = name !== undefined && Object.hasOwn(RESOURCES, name) ? RESOURCES[name] : undefined
+  const isGoogle = name === 'google' // the only routes with more than one part after the name
+  const isEvents = name === 'events' && !rawId // read only, so there is no /api/events/:id
+  // One per user, so there is no /api/settings/:id, only /api/settings/preset and /preview
+  const isSettings = name === 'settings' && rest.length === 0
+  const isPlanning = (name === 'priorities' || name === 'forecast') && !rawId
+  const isPatch = name === 'tasks' && rawId !== undefined && rest.length === 0 && request.method === 'PATCH'
+  const isImport = name === 'projects' && rest.length === 1 && rest[0] === 'import'
+  const isAction = name === 'tasks' && rest.length === 1 && rest[0] === 'action'
+  // /api/telegram, /api/telegram/link-code and /api/telegram/webhook
+  const isTelegram = name === 'telegram' && rest.length === 0
+  const isUsage = name === 'usage' && !rawId
+  if (
+    api !== 'api' ||
+    !(resource || name === 'auth' || isGoogle || isEvents || isSettings || isPlanning || isTelegram || isUsage) ||
+    (rest.length > 0 && !isGoogle && !isImport && !isAction)
+  ) {
+    return error(404, 'Not found')
+  }
+
+  try {
+    await migrateOnce(env.DB)
+    if (name === 'auth') return await handleAuth(env, ctx, request, rawId, () => readJson(request))
+    // The bot is off until its secrets are set. Telegram has no session, so the webhook comes first.
+    const bot = isTelegram ? botConfig(env) : null
+    if (isTelegram && !bot) return error(404, 'Not found')
+    if (bot && rawId === 'webhook') return await handleWebhook(env, ctx, bot, pamData, request)
+
+    const user = await currentUser(env.DB, request)
+    if (!user) return error(401, 'Sign in to continue')
+    handled.userId = user.id
+    const source = clientOf(request)
+    if (bot) return await handleTelegram(env, ctx, bot, request, user, rawId, () => readJson(request))
+    if (isUsage) {
+      if (request.method !== 'POST') return error(405, 'Method not allowed')
+      handled.reported = parseUsageReport(await readJson(request))
+      return new Response(null, { status: 204 })
+    }
+    if (isEvents) {
+      if (request.method !== 'GET') return error(405, 'Method not allowed')
+      return json(await listEvents(env.DB, user.id, parseEventQuery(url.searchParams)))
+    }
+    if (isSettings) {
+      const loadState = async () => {
+        const [tasks, projects] = await Promise.all([listTasks(env.DB, user.id), listProjects(env.DB, user.id)])
+        return { tasks, projects }
+      }
+      return json(await handleSettings(env.DB, request, user.id, rawId, () => readJson(request), loadState))
+    }
+    if (isPlanning) {
+      if (request.method !== 'GET') return error(405, 'Method not allowed')
+      return json(await planning(env.DB, user.id, name as 'priorities' | 'forecast', parseToday(url.searchParams)))
+    }
+    if (!resource) return await handleGoogle(env, request, user, [rawId, ...rest], () => readJson(request))
+    const id = rawId ? decodeId(rawId) : undefined
+    if (isImport) {
+      if (!id || request.method !== 'POST') return error(405, 'Method not allowed')
+      return json(await importTasks(env.DB, user.id, id, await readJson(request, MAX_IMPORT_BODY_BYTES), source))
+    }
+    if (isPatch) {
+      const { patch, projectIds, deliveryDates } = parseTaskPatch(await readJson(request), id!)
+      const plan = (state: State) => {
+        const stored = state.tasks.find((t) => t.id === id)
+        if (!stored) throw new UnknownReference('task', id!)
+        // Checked whole, as a PUT is; only the sync sets the Google account, so it's kept
+        const task = parseTask(applyTaskPatch(stored, patch), id!)
+        const saved = stored.googleAccount ? { ...task, googleAccount: stored.googleAccount } : task
+        return planTaskSave(state, { task: saved, projectIds, deliveryDates })
+      }
+      return json(await saveWithRules(env.DB, user.id, plan, { tasks: [], projects: [] }, source))
+    }
+    if (isAction) {
+      if (!id || request.method !== 'POST') return error(405, 'Method not allowed')
+      const action = parseTaskAction(await readJson(request))
+      const plan = (state: State) => planTaskAction(state, id, action)
+      return json(await saveWithRules(env.DB, user.id, plan, { tasks: [], projects: [] }, source))
+    }
+    if (!id && request.method === 'GET') return json(await resource.list(env.DB, user.id))
+    if (id && request.method === 'PUT') {
+      return json(await resource.save(env.DB, user.id, id, await readJson(request), source))
+    }
+    if (id && request.method === 'DELETE') {
+      check(!(name === 'tags' && id === ARCHIVE_TAG_ID), 'The Archive tag is built in and cannot be deleted')
+      await resource.remove(env.DB, user.id, id, source)
+      return new Response(null, { status: 204 })
+    }
+    return error(405, 'Method not allowed')
+  } catch (e) {
+    if (e instanceof Conflict) return json({ error: e.message, clashes: e.clashes }, e.status)
+    if (e instanceof LoopRefused) return json({ error: e.message, loop: e.loop }, e.status)
+    if (e instanceof HttpError) return error(e.status, e.message)
+    if (e instanceof UnknownReference) return error(e.kind === 'task' && (isAction || isPatch) ? 404 : 400, e.message)
+    if (e instanceof ActionRefused) return json({ error: e.message, ...e.sentence }, 400)
+    if (String(e).includes('FOREIGN KEY constraint failed')) {
+      return error(400, 'References a task or tag that does not exist')
+    }
+    if (String(e).includes('UNIQUE constraint failed: tags.user_id, tags.name')) {
+      return error(400, 'There is already a tag with that name')
+    }
+    if (String(e).includes('UNIQUE constraint failed: users.email')) {
+      return error(400, 'There is already an account with that email')
+    }
+    console.error(e)
+    return error(500, 'Internal error')
+  }
+}
+
 export default {
+  // Answers the request, then counts it if it was an action a person took (worker/usage.ts)
   async fetch(request, env, ctx) {
-    // e.g. "/api/tasks/abc" -> ["", "api", "tasks", "abc"]
-    const url = new URL(request.url)
-    const [, api, name, rawId, ...rest] = url.pathname.split('/')
-    const resource = name !== undefined && Object.hasOwn(RESOURCES, name) ? RESOURCES[name] : undefined
-    const isGoogle = name === 'google' // the only routes with more than one part after the name
-    const isEvents = name === 'events' && !rawId // read only, so there is no /api/events/:id
-    // One per user, so there is no /api/settings/:id, only /api/settings/preset and /preview
-    const isSettings = name === 'settings' && rest.length === 0
-    const isPlanning = (name === 'priorities' || name === 'forecast') && !rawId
-    const isPatch = name === 'tasks' && rawId !== undefined && rest.length === 0 && request.method === 'PATCH'
-    const isImport = name === 'projects' && rest.length === 1 && rest[0] === 'import'
-    const isAction = name === 'tasks' && rest.length === 1 && rest[0] === 'action'
-    // /api/telegram, /api/telegram/link-code and /api/telegram/webhook
-    const isTelegram = name === 'telegram' && rest.length === 0
-    if (
-      api !== 'api' ||
-      !(resource || name === 'auth' || isGoogle || isEvents || isSettings || isPlanning || isTelegram) ||
-      (rest.length > 0 && !isGoogle && !isImport && !isAction)
-    ) {
-      return error(404, 'Not found')
-    }
-
-    try {
-      await migrateOnce(env.DB)
-      if (name === 'auth') return await handleAuth(env, ctx, request, rawId, () => readJson(request))
-      // The bot is off until its secrets are set. Telegram has no session, so the webhook comes first.
-      const bot = isTelegram ? botConfig(env) : null
-      if (isTelegram && !bot) return error(404, 'Not found')
-      if (bot && rawId === 'webhook') return await handleWebhook(env, bot, pamData, request)
-
-      const user = await currentUser(env.DB, request)
-      if (!user) return error(401, 'Sign in to continue')
-      if (bot) return await handleTelegram(env, ctx, bot, request, user, rawId, () => readJson(request))
-      if (isEvents) {
-        if (request.method !== 'GET') return error(405, 'Method not allowed')
-        return json(await listEvents(env.DB, user.id, parseEventQuery(url.searchParams)))
-      }
-      if (isSettings) {
-        const loadState = async () => {
-          const [tasks, projects] = await Promise.all([listTasks(env.DB, user.id), listProjects(env.DB, user.id)])
-          return { tasks, projects }
-        }
-        return json(await handleSettings(env.DB, request, user.id, rawId, () => readJson(request), loadState))
-      }
-      if (isPlanning) {
-        if (request.method !== 'GET') return error(405, 'Method not allowed')
-        return json(await planning(env.DB, user.id, name as 'priorities' | 'forecast', parseToday(url.searchParams)))
-      }
-      if (!resource) return await handleGoogle(env, request, user, [rawId, ...rest], () => readJson(request))
-      const id = rawId ? decodeId(rawId) : undefined
-      if (isImport) {
-        if (!id || request.method !== 'POST') return error(405, 'Method not allowed')
-        return json(await importTasks(env.DB, user.id, id, await readJson(request, MAX_IMPORT_BODY_BYTES)))
-      }
-      if (isPatch) {
-        const { patch, projectIds, deliveryDates } = parseTaskPatch(await readJson(request), id!)
-        const plan = (state: State) => {
-          const stored = state.tasks.find((t) => t.id === id)
-          if (!stored) throw new UnknownReference('task', id!)
-          // Checked whole, as a PUT is; only the sync sets the Google account, so it's kept
-          const task = parseTask(applyTaskPatch(stored, patch), id!)
-          const saved = stored.googleAccount ? { ...task, googleAccount: stored.googleAccount } : task
-          return planTaskSave(state, { task: saved, projectIds, deliveryDates })
-        }
-        return json(await saveWithRules(env.DB, user.id, plan, { tasks: [], projects: [] }))
-      }
-      if (isAction) {
-        if (!id || request.method !== 'POST') return error(405, 'Method not allowed')
-        const action = parseTaskAction(await readJson(request))
-        return json(await saveWithRules(env.DB, user.id, (state) => planTaskAction(state, id, action), { tasks: [], projects: [] }))
-      }
-      if (!id && request.method === 'GET') return json(await resource.list(env.DB, user.id))
-      if (id && request.method === 'PUT') {
-        return json(await resource.save(env.DB, user.id, id, await readJson(request)))
-      }
-      if (id && request.method === 'DELETE') {
-        check(!(name === 'tags' && id === ARCHIVE_TAG_ID), 'The Archive tag is built in and cannot be deleted')
-        await resource.remove(env.DB, user.id, id)
-        return new Response(null, { status: 204 })
-      }
-      return error(405, 'Method not allowed')
-    } catch (e) {
-      if (e instanceof Conflict) return json({ error: e.message, clashes: e.clashes }, e.status)
-      if (e instanceof LoopRefused) return json({ error: e.message, loop: e.loop }, e.status)
-      if (e instanceof HttpError) return error(e.status, e.message)
-      if (e instanceof UnknownReference) return error(e.kind === 'task' && (isAction || isPatch) ? 404 : 400, e.message)
-      if (e instanceof ActionRefused) return json({ error: e.message, ...e.sentence }, 400)
-      if (String(e).includes('FOREIGN KEY constraint failed')) {
-        return error(400, 'References a task or tag that does not exist')
-      }
-      if (String(e).includes('UNIQUE constraint failed: tags.user_id, tags.name')) {
-        return error(400, 'There is already a tag with that name')
-      }
-      if (String(e).includes('UNIQUE constraint failed: users.email')) {
-        return error(400, 'There is already an account with that email')
-      }
-      console.error(e)
-      return error(500, 'Internal error')
-    }
+    const handled: Handled = {}
+    const response = await handle(request, env, ctx, handled)
+    const [, , name, rawId, ...rest] = new URL(request.url).pathname.split('/')
+    countRequest(ctx, env.DB, request, response, handled.userId, routeOf(name, rawId, rest), handled.reported)
+    return response
   },
 
   // The Cron Trigger in wrangler.jsonc, every 15 minutes: sends the Telegram morning briefs that are

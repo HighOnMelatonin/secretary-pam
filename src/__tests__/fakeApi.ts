@@ -23,6 +23,7 @@ import { DEFAULT_SETTINGS, type UserSettings } from '@/types/settings'
 import type { Tag } from '@/types/tag'
 import type { Task } from '@/types/task'
 import type { TelegramStatus } from '@/types/telegram'
+import { ACTION_HEADER } from '@/types/usage'
 
 export function fakeApi(
   initial: { projects?: Project[]; tasks?: Task[]; tags?: Tag[]; settings?: UserSettings } = {},
@@ -41,6 +42,8 @@ export function fakeApi(
     failOn: null as string | null,
     // Each request as "METHOD /path", in order
     requests: [] as string[],
+    // The X-Pam-Action of each request that had one, in order, as "METHOD /path action"
+    actions: [] as string[],
     // Google Calendar: the connected accounts, what a sync answers when there are any, and the
     // tasks it imports
     google: { accounts: [] as GoogleAccount[], results: [] as SyncResult[], imports: [] as Task[] },
@@ -55,10 +58,13 @@ export function fakeApi(
     fetch: vi.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? 'GET'
       api.requests.push(`${method} ${url}`)
+      const usage = (init?.headers as Record<string, string> | undefined)?.[ACTION_HEADER]
+      if (usage) api.actions.push(`${method} ${url} ${usage}`)
       if (api.failWith && (!api.failOn || url.startsWith(`/api/${api.failOn}`))) {
         return Response.json({ error: api.failWith }, { status: 500 })
       }
 
+      if (url === '/api/usage') return new Response(null, { status: 204 })
       if (url.startsWith('/api/google/')) return googleRoute(method, url.split('/').slice(3))
       if (url === '/api/telegram' || url === '/api/telegram/link-code') return telegramRoute(method, url, init)
       if (url.startsWith('/api/events')) {

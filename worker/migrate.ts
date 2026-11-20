@@ -7,9 +7,32 @@
 // Bundled in by Vite, keyed by path, e.g. "../migrations/0001_create_projects_and_tasks.sql"
 const FILES = import.meta.glob<string>('../migrations/*.sql', { query: '?raw', import: 'default', eager: true })
 
-// Splits a file into statements, which must each end with a semicolon at the end of a line
-const statements = (sql: string) =>
-  sql.split(/;\s*$/m).filter((statement) => statement.replace(/--.*$/gm, '').trim() !== '')
+const withoutComments = (sql: string) => sql.replace(/--.*$/gm, '')
+const isTriggerStart = (piece: string) => /^\s*CREATE\s+TRIGGER\b/i.test(withoutComments(piece))
+// A trigger ends with END on a line of its own, which tells it from a CASE ... END inside its body
+const isTriggerEnd = (piece: string) => /(^|\n)\s*END\s*$/i.test(withoutComments(piece))
+
+// Splits a file into statements, which must each end with a semicolon at the end of a line. A
+// trigger's body holds statements of their own, each ending with a semicolon, so the pieces of a
+// CREATE TRIGGER are joined back up to its END.
+export function statements(sql: string): string[] {
+  const result: string[] = []
+  let trigger: string | null = null
+  for (const piece of sql.split(/;\s*$/m)) {
+    if (trigger !== null) trigger += `;${piece}` // the piece still starts with the line break
+    else if (isTriggerStart(piece)) trigger = piece
+    else {
+      result.push(piece)
+      continue
+    }
+    if (isTriggerEnd(trigger)) {
+      result.push(trigger)
+      trigger = null
+    }
+  }
+  if (trigger !== null) result.push(trigger) // unfinished, so D1 says what's wrong with it
+  return result.filter((statement) => withoutComments(statement).trim() !== '')
+}
 
 // Applies the files the database doesn't have yet, in filename order
 export async function migrate(db: D1Database) {

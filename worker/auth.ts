@@ -25,6 +25,7 @@
 import { ARCHIVE_TAG_ID } from '../src/types/tag'
 import { MAX_EMAIL_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from '../src/types/limits'
 import { canSendEmail, mailer } from './email'
+import { clientOf } from './history'
 
 // Thrown for requests that can't be handled; becomes a response with this status
 export class HttpError extends Error {
@@ -197,8 +198,11 @@ async function signUp(db: D1Database, request: Request, body: unknown) {
     id = crypto.randomUUID()
     await db.batch([
       db.prepare('INSERT INTO users (id, email, password_hash) VALUES (?1, ?2, ?3)').bind(id, email, hash),
+      // Logged to history as made from the client the account was signed up on
       ...STARTING_TAGS.map((tag) =>
-        db.prepare('INSERT INTO tags (user_id, id, name) VALUES (?1, ?2, ?3)').bind(id, tag.id, tag.name),
+        db
+          .prepare('INSERT INTO tags (user_id, id, name, changed_by) VALUES (?1, ?2, ?3, ?4)')
+          .bind(id, tag.id, tag.name, clientOf(request)),
       ),
     ])
   }
