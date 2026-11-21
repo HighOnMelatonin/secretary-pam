@@ -19,6 +19,7 @@ const TABLES = [
   'project_tasks',
   'project_tags',
   'task_tags',
+  'task_checklist_items',
   'task_relations',
   'projects',
   'tasks',
@@ -77,6 +78,7 @@ describe('migrate', () => {
       '0011_telegram_unrecognised.sql',
       '0012_task_tags.sql',
       '0013_history.sql',
+      '0014_errands.sql',
     ])
     expect((await call('GET', 'projects', undefined, await signUp())).body).toEqual([])
   })
@@ -312,6 +314,38 @@ describe('migrate', () => {
     await env.DB.prepare("UPDATE tasks SET name = 'A2' WHERE id = 'a'").run()
     const last = await env.DB.prepare('SELECT op, source FROM history ORDER BY id DESC LIMIT 1').first()
     expect(last).toEqual({ op: 'update', source: 'unknown' })
+  })
+
+  it('keeps every task a project task, and logs kind and recurrence from then on (0014)', async () => {
+    await databaseBefore(13)
+    await env.DB.prepare("INSERT INTO tasks (user_id, id, name) VALUES ('original', 'a', 'A')").run()
+
+    await migrate(env.DB)
+
+    expect(await env.DB.prepare("SELECT kind, recurrence, next_occurrence_id FROM tasks WHERE id = 'a'").first()).toEqual({
+      kind: 'task',
+      recurrence: null,
+      next_occurrence_id: null,
+    })
+    // Only an errand can repeat
+    await expect(env.DB.prepare("UPDATE tasks SET recurrence = 'daily' WHERE id = 'a'").run()).rejects.toThrow(/CHECK constraint failed/)
+    await expect(env.DB.prepare("UPDATE tasks SET kind = 'chore' WHERE id = 'a'").run()).rejects.toThrow(/CHECK constraint failed/)
+
+    await env.DB.prepare("UPDATE tasks SET kind = 'errand', recurrence = 'weekly:MON' WHERE id = 'a'").run()
+    const last = await env.DB.prepare('SELECT op, data, old_data FROM history ORDER BY id DESC LIMIT 1').first<Record<string, string>>()
+    expect(last!.op).toBe('update')
+    expect(JSON.parse(last!.data!)).toMatchObject({ kind: 'errand', recurrence: 'weekly:MON', next_occurrence_id: null })
+    expect(JSON.parse(last!.old_data!)).toMatchObject({ kind: 'task', recurrence: null })
+
+    // A checklist goes with its task, and isn't logged
+    const before = await env.DB.prepare('SELECT count(*) AS n FROM history').first<number>('n')
+    await env.DB.prepare("INSERT INTO task_checklist_items (user_id, task_id, position, text) VALUES ('original', 'a', 0, 'Milk')").run()
+    await expect(
+      env.DB.prepare("INSERT INTO task_checklist_items (user_id, task_id, position, text, done) VALUES ('original', 'a', 1, 'Eggs', 2)").run(),
+    ).rejects.toThrow(/CHECK constraint failed/)
+    expect(await env.DB.prepare('SELECT count(*) AS n FROM history').first<number>('n')).toBe(before)
+    await env.DB.prepare("DELETE FROM tasks WHERE id = 'a'").run()
+    expect(await env.DB.prepare('SELECT count(*) AS n FROM task_checklist_items').first<number>('n')).toBe(0)
   })
 
   it('skips migrations that wrangler already applied', async () => {

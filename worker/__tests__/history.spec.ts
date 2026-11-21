@@ -55,6 +55,9 @@ describe('the triggers', () => {
       effort_minutes: null,
       start_date: null,
       pinned_date: null,
+      kind: 'task',
+      recurrence: null,
+      next_occurrence_id: null,
       created_at: '2026-11-01T00:00:00.000Z',
       updated_at: '2026-11-01T00:00:00.000Z',
     }
