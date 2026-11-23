@@ -2,10 +2,13 @@
 // this browser's localStorage, so they survive a reload.
 import { computed, ref, watch } from 'vue'
 import { acceptHMRUpdate, defineStore } from 'pinia'
+import { localToday } from '@/types/calendar'
+import { forecast, PACES, type ProjectForecast } from '@/types/forecast'
 import { completionStatus, type Project } from '@/types/project'
 import { NO_TAG } from '@/types/tag'
 import { PRIORITIES, type Priority } from '@/types/task'
 import { useProjectList } from './projectList'
+import { useSettings } from './settings'
 import { useTagList } from './tagList'
 import { useTaskList } from './taskList'
 
@@ -14,6 +17,7 @@ export const SORTS = {
   'urgency-desc': 'Urgency (most urgent first)',
   'urgency-asc': 'Urgency (least urgent first)',
   'percent-complete': '% complete (most complete first)',
+  pace: 'Pace (behind first)',
 } as const
 export type SortKey = keyof typeof SORTS
 
@@ -46,6 +50,7 @@ export const useProjectView = defineStore('projectView', () => {
   const projectList = useProjectList()
   const taskList = useTaskList()
   const tagList = useTagList()
+  const settingsStore = useSettings()
 
   const saved = load()
   const sort = ref<SortKey>(saved.sort)
@@ -79,6 +84,20 @@ export const useProjectView = defineStore('projectView', () => {
   }
   const urgency = (project: Project) => PRIORITIES.indexOf(project.priority)
 
+  // The workload forecast, for the pace sort, the forecast strip and the pace badges on the
+  // dashboard's tiles. Worked out in the browser from what's loaded, never stored.
+  const workload = computed(() =>
+    forecast(taskList.tasks, projectList.projects, settingsStore.settings, localToday()),
+  )
+  const paceOf = (project: Project): ProjectForecast | null =>
+    workload.value.projects.find((p) => p.projectId === project.id) ?? null
+  // Behind first, then tight, then on pace; projects without a pace (no delivery date or no
+  // open work) go last
+  const paceRank = (project: Project) => {
+    const pace = paceOf(project)?.pace
+    return pace ? PACES.length - 1 - PACES.indexOf(pace) : PACES.length
+  }
+
   // Sorting is stable and starts from liveProjects' delivery date order, so projects that tie
   // stay soonest first
   const compare: Record<SortKey, (a: Project, b: Project) => number> = {
@@ -86,6 +105,7 @@ export const useProjectView = defineStore('projectView', () => {
     'urgency-desc': (a, b) => urgency(b) - urgency(a),
     'urgency-asc': (a, b) => urgency(a) - urgency(b),
     'percent-complete': (a, b) => percentComplete(b) - percentComplete(a),
+    pace: (a, b) => paceRank(a) - paceRank(b),
   }
 
   const hasActiveTag = (project: Project) =>
@@ -122,6 +142,8 @@ export const useProjectView = defineStore('projectView', () => {
     activeTagIds,
     filterCount,
     visibleProjects,
+    workload,
+    paceOf,
     toggleTag,
     togglePriority,
     clearFilters,

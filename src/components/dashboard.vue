@@ -28,7 +28,6 @@ import { useTagList } from '@/stores/tagList'
 import { useTaskList } from '@/stores/taskList'
 import { localToday } from '@/types/calendar'
 import { isErrand } from '@/types/errand'
-import { forecast } from '@/types/forecast'
 import { unassignedTasks, type Project } from '@/types/project'
 import { createEmptyTag } from '@/types/tag'
 import type { TaskAction } from '@/types/operations'
@@ -75,10 +74,10 @@ const shownUnassigned = computed(() =>
   hideUnassignedDone.value ? unassigned.value.filter((t) => !t.completed) : unassigned.value,
 )
 
-// The workload forecast, for the strip above Upcoming and the pace badges on the tiles. Worked out
-// in the browser from what's loaded, never stored.
-const workload = computed(() => forecast(tasks.value, projects.value, settingsStore.settings, localToday()))
-const paceOf = (project: Project) => workload.value.projects.find((p) => p.projectId === project.id) ?? null
+// The workload forecast, for the strip above Upcoming and the pace badges on the tiles (shared
+// with the pace sort, so it's worked out once)
+const { workload } = storeToRefs(projectView)
+const paceOf = projectView.paceOf
 
 // Synced from the taskbar or from the button under Unassigned, which show the same progress
 const googleSync = useGoogleSync()
