@@ -67,8 +67,8 @@ const chipStyle = (item: CalendarItem) => ({ '--chip-fill': item.colour, '--chip
           v-for="item in items.slice(0, MAX_DOTS)"
           :key="`${item.source}:${item.id}`"
           class="dot"
-          :class="{ flag: item.source === 'project', overdue: overdue(item) }"
-          :style="{ background: item.colour }"
+          :class="{ flag: item.source === 'project', errand: item.errand, overdue: overdue(item) }"
+          :style="item.errand ? {} : { background: item.colour }"
         />
       </span>
     </button>
@@ -81,13 +81,15 @@ const chipStyle = (item: CalendarItem) => ({ '--chip-fill': item.colour, '--chip
           <RouterLink
             :to="item.link"
             class="item-chip"
-            :class="{ flag: item.source === 'project', overdue: overdue(item) }"
+            :class="{ flag: item.source === 'project', errand: item.errand, overdue: overdue(item) }"
             :style="chipStyle(item)"
-            :title="item.source === 'project' ? `${item.title}: delivery date` : item.title"
+            :title="item.source === 'project' ? `${item.title}: delivery date` : item.errand ? `${item.title}: errand` : item.title"
           >
             <span v-if="item.source === 'project'" aria-hidden="true">⚑ </span>
+            <span v-else-if="item.errand" aria-hidden="true">◦ </span>
             <span>{{ item.title }}</span>
             <span v-if="item.source === 'project'" class="sr-only">(delivery date)</span>
+            <span v-else-if="item.errand" class="sr-only">(errand)</span>
             <span v-if="overdue(item)" class="sr-only">(overdue)</span>
           </RouterLink>
         </li>
@@ -175,6 +177,14 @@ const chipStyle = (item: CalendarItem) => ({ '--chip-fill': item.colour, '--chip
   box-shadow: 0 0 0 2px var(--pam-coral);
 }
 
+/* An errand: an outlined pill with no fill, so it reads as personal and apart from project work,
+   whose pills are filled in their tag's colour */
+.item-chip.errand {
+  border: 1px dashed var(--pam-cream-muted);
+  background: transparent;
+  color: var(--pico-color);
+}
+
 .item-chip:focus-visible {
   outline: 2px solid var(--pam-cream);
   outline-offset: 2px;
@@ -248,6 +258,10 @@ const chipStyle = (item: CalendarItem) => ({ '--chip-fill': item.colour, '--chip
 .dot.flag {
   border-radius: 1px;
   transform: rotate(45deg) scale(0.85);
+}
+
+.dot.errand {
+  border-style: dashed;
 }
 
 .dot.overdue {

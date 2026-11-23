@@ -40,7 +40,9 @@ const isOverdue = (date: string | null) => date !== null && date < today
         <RouterLink :to="{ name: 'task', params: { id: task.id } }" class="task-name" :class="{ struck: task.completed }">
           {{ task.name }}<span v-if="task.completed" class="sr-only"> (completed)</span>
         </RouterLink>
-        <span class="tag" :class="`priority-${task.priority}`">{{ task.priority }}</span>
+        <!-- An errand's priority is never used, so it's called an errand instead -->
+        <span v-if="task.kind === 'errand'" class="tag errand-tag">errand</span>
+        <span v-else class="tag" :class="`priority-${task.priority}`">{{ task.priority }}</span>
         <span v-if="task.googleAccount" class="tag project-tag" title="Imported from Google Calendar">{{ task.googleAccount }}</span>
         <span v-if="!task.completed && isOverdue(task.dueDate)" class="tag overdue">overdue</span>
         <small v-if="task.dueDate">Due {{ task.dueDate }}</small>

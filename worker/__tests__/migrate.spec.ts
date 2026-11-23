@@ -79,6 +79,7 @@ describe('migrate', () => {
       '0012_task_tags.sql',
       '0013_history.sql',
       '0014_errands.sql',
+      '0015_telegram_pick_date.sql',
     ])
     expect((await call('GET', 'projects', undefined, await signUp())).body).toEqual([])
   })

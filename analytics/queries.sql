@@ -25,6 +25,11 @@
 -- Their ids still come before every logged change, though, so they are used for what the data
 -- was at a moment: which projects a task was in, or a project's name or delivery date then. That
 -- moment is found by id, not by time, since one save writes many rows in the same millisecond.
+--
+-- ERRANDS (README, Errands) are tasks with kind errand: personal to-dos in no project. The project
+-- metrics (queries 1, 2, 5 and 6) count project tasks only, by the kind a task had at the moment
+-- counted. Rows logged before errands existed (migration 0014) have no kind, and are project tasks,
+-- as every task was then. Query 10 is about errands alone.
 
 -- 1. Planned or added later (feature creep). Every time a task joined a project: how many hours
 -- after the project was made, whether that counts as planned, and how far into the project's
@@ -52,6 +57,10 @@ adds AS (
   FROM changes a
   WHERE a.table_name = 'project_tasks' AND a.op = 'insert'
     AND a.data ->> '$.task_id' NOT IN (SELECT task_id FROM google_tasks)
+    -- A project task when it joined (an errand can't be in a project, but say so rather than rely on it)
+    AND coalesce((SELECT t.data ->> '$.kind' FROM logged t
+                  WHERE t.table_name = 'tasks' AND t.row_key = a.data ->> '$.task_id' AND t.id < a.id
+                  ORDER BY t.id DESC LIMIT 1), 'task') = 'task'
 )
 SELECT
   adds.project_id,
@@ -76,8 +85,9 @@ CROSS JOIN settings
 LEFT JOIN created ON created.project_id = adds.project_id
 ORDER BY adds.project_id, adds.id;
 
--- 2. Task completion rate. Tasks ticked off, and reopened (unticked), in each local week (from
--- Monday): over all tasks, and for each project the task was in when it was ticked off or reopened.
+-- 2. Task completion rate. Project tasks ticked off, and reopened (unticked), in each local week
+-- (from Monday): over all of them, and for each project the task was in when it was ticked off or
+-- reopened. Errands are in query 10.
 WITH settings AS (SELECT 'you@example.com' AS email, '+8 hours' AS local_offset, 24 AS planned_within_hours, 10 AS archive_window_seconds, 0 AS include_google_tasks, 'the-task-or-project-id' AS audit_id),
 me AS (SELECT users.id AS user_id FROM users, settings WHERE users.email = settings.email),
 logged AS (SELECT history.* FROM history JOIN me USING (user_id)),
@@ -96,6 +106,7 @@ ticks AS (
   WHERE c.table_name = 'tasks' AND c.op = 'update'
     AND c.old_data ->> '$.completed' IS NOT c.data ->> '$.completed'
     AND c.row_key NOT IN (SELECT task_id FROM google_tasks)
+    AND coalesce(c.data ->> '$.kind', 'task') = 'task'
 ),
 -- Each tick with each project the task was in just before it: the link's latest row then is an
 -- insert or its baseline, not a delete
@@ -178,10 +189,10 @@ SELECT
 FROM archived, settings
 ORDER BY archived.id;
 
--- 5. Deadline extensions. Each time a task's due date or a project's delivery date moved later,
--- counted for each project, with the days added. A task's extension counts for every project it
--- was in at the time, or under no project. Setting a first date, clearing one, moving one earlier
--- and changing a start date aren't extensions.
+-- 5. Deadline extensions. Each time a project task's due date or a project's delivery date moved
+-- later, counted for each project, with the days added. A task's extension counts for every project
+-- it was in at the time, or under no project. Setting a first date, clearing one, moving one
+-- earlier and changing a start date aren't extensions, and nor is an errand's due date moving.
 WITH settings AS (SELECT 'you@example.com' AS email, '+8 hours' AS local_offset, 24 AS planned_within_hours, 10 AS archive_window_seconds, 0 AS include_google_tasks, 'the-task-or-project-id' AS audit_id),
 me AS (SELECT users.id AS user_id FROM users, settings WHERE users.email = settings.email),
 logged AS (SELECT history.* FROM history JOIN me USING (user_id)),
@@ -196,6 +207,7 @@ moves AS (
   FROM changes
   WHERE table_name = 'tasks' AND op = 'update' AND data ->> '$.due_date' > old_data ->> '$.due_date'
     AND row_key NOT IN (SELECT task_id FROM google_tasks)
+    AND coalesce(data ->> '$.kind', 'task') = 'task'
   UNION ALL
   SELECT id, 'delivery date', row_key, old_data ->> '$.delivery_date', data ->> '$.delivery_date'
   FROM changes
@@ -225,9 +237,10 @@ FROM by_project
 GROUP BY project_id, kind
 ORDER BY project_id IS NULL, project_name, kind;
 
--- 6. Deadlines met. Each task ticked off, on time if its local completion date is no later than its
--- due date, and each project completed (as in query 4) against its delivery date at that moment.
--- Items with no date are listed as no date and left out of on_time_percent.
+-- 6. Deadlines met. Each project task ticked off, on time if its local completion date is no later
+-- than its due date, and each project completed (as in query 4) against its delivery date at that
+-- moment. Items with no date are listed as no date and left out of on_time_percent. Errands aren't
+-- judged here; query 10 has them.
 WITH settings AS (SELECT 'you@example.com' AS email, '+8 hours' AS local_offset, 24 AS planned_within_hours, 10 AS archive_window_seconds, 0 AS include_google_tasks, 'the-task-or-project-id' AS audit_id),
 me AS (SELECT users.id AS user_id FROM users, settings WHERE users.email = settings.email),
 logged AS (SELECT history.* FROM history JOIN me USING (user_id)),
@@ -264,6 +277,7 @@ items AS (
     date(datetime(ticked.at, settings.local_offset)) AS done_on, ticked.data ->> '$.due_date' AS deadline
   FROM ticked, settings
   WHERE ticked.task_id NOT IN (SELECT task_id FROM google_tasks)
+    AND coalesce(ticked.data ->> '$.kind', 'task') = 'task'
   UNION ALL
   SELECT 'project', c.project_id,
     (SELECT p.data ->> '$.name' FROM logged p WHERE p.table_name = 'projects' AND p.row_key = c.project_id AND p.id < c.id
@@ -336,3 +350,36 @@ SELECT * FROM (
   FROM counted GROUP BY 1, 2, 3
 )
 ORDER BY days, local_hour, client;
+
+-- 10. Errands. How many were ticked off in each local week (from Monday) and over all time, how many
+-- of those had rolled over, and by how many days on average: from the day each was planned for
+-- when it was ticked off (its pinned_date then) to its local completion date, 0 when done on or
+-- before that day. Today, Tomorrow and Pick date in the bot, and a new planned day in the app, move
+-- that day on, so avg_days_since_first_planned also counts from the day it was first planned for.
+WITH settings AS (SELECT 'you@example.com' AS email, '+8 hours' AS local_offset, 24 AS planned_within_hours, 10 AS archive_window_seconds, 0 AS include_google_tasks, 'the-task-or-project-id' AS audit_id),
+me AS (SELECT users.id AS user_id FROM users, settings WHERE users.email = settings.email),
+logged AS (SELECT history.* FROM history JOIN me USING (user_id)),
+changes AS (SELECT * FROM logged WHERE op <> 'baseline'),
+done AS (
+  SELECT c.id, date(datetime(c.at, settings.local_offset)) AS done_on, c.data ->> '$.pinned_date' AS planned,
+    (SELECT f.data ->> '$.pinned_date' FROM logged f
+     WHERE f.table_name = 'tasks' AND f.row_key = c.row_key AND f.op IN ('insert', 'baseline')
+     ORDER BY f.id LIMIT 1) AS first_planned
+  FROM changes c, settings
+  WHERE c.table_name = 'tasks' AND c.op = 'update' AND c.data ->> '$.kind' = 'errand'
+    AND c.old_data ->> '$.completed' = 0 AND c.data ->> '$.completed' = 1
+),
+judged AS (
+  SELECT date(done_on, '-6 days', 'weekday 1') AS week,
+    max(0, julianday(done_on) - julianday(planned)) AS carried,
+    max(0, julianday(done_on) - julianday(coalesce(first_planned, planned))) AS since_first
+  FROM done
+)
+SELECT * FROM (
+  SELECT week, count(*) AS completed, sum(carried > 0) AS rolled_over, round(avg(carried), 1) AS avg_days_carried,
+    round(avg(since_first), 1) AS avg_days_since_first_planned
+  FROM judged GROUP BY week
+  UNION ALL
+  SELECT 'all time', count(*), sum(carried > 0), round(avg(carried), 1), round(avg(since_first), 1) FROM judged
+)
+ORDER BY week = 'all time', week;

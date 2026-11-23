@@ -15,9 +15,16 @@
 // the app's own planners (src/types/operations.ts) and its save (PamData.save), logged with the
 // source 'telegram'.
 //
+// Errands (src/types/errand.ts): /errand adds one for today, and /errands or the Errands button
+// lists today's with a Done button each, apart from the two project tasks. The brief sends each
+// carried-over errand as a message of its own, with Today, Tomorrow, Pick date and Drop. Pick date
+// asks for the date as YYYY-MM-DD and reads the chat's next message as it (telegram_links.
+// picking_task_id); a command instead cancels it.
+//
 // Each command or button press that does something is counted in usage_counts as from the client
 // 'telegram' (worker/usage.ts): Done, Not today, the priority, due date and estimate buttons, /add,
-// /desc, /stop, /brief and /quickwins. A press that changes nothing because the task was done or
+// /desc, /stop, /brief and /quickwins, and for errands /errand, Done, Today, Tomorrow, a picked date
+// and Drop (not the Pick date press itself, which only asks). A press that changes nothing because the task was done or
 // deleted, or that is refused, isn't counted; nor is a lookup that only shows something, nor the
 // scheduled brief.
 //
@@ -30,13 +37,23 @@
 import { forecast } from '../../src/types/forecast'
 import { MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH } from '../../src/types/limits'
 import { lateTasks, lookupProject, offTrackProjects, projectTasksById, quickWins } from '../../src/types/lookups'
-import { ActionRefused, planTaskAction, planTaskSave, type Changes, type Plan, type State } from '../../src/types/operations'
+import { isErrand } from '../../src/types/errand'
+import {
+  ActionRefused,
+  ErrandRefused,
+  planTaskAction,
+  planTaskSave,
+  type Changes,
+  type Plan,
+  type State,
+} from '../../src/types/operations'
 import { prioritise } from '../../src/types/priority'
 import type { Project } from '../../src/types/project'
 import { clampStartDate } from '../../src/types/rules'
 import type { UserSettings } from '../../src/types/settings'
 import type { UsageAction } from '../../src/types/usage'
 import { createEmptyTask, type Task } from '../../src/types/task'
+import { addDays } from '../../src/types/upcoming'
 import { BRIEF_STEP_MINUTES, MINUTES_PER_DAY, deepLink, isTimeZone, type TelegramPreferences } from '../../src/types/telegram'
 import { HttpError, type User } from '../auth'
 import { countLater } from '../usage'
@@ -56,6 +73,7 @@ import {
   linkOf,
   savePreferences,
   setLastAdded,
+  setPicking,
   statusOf,
   stopBrief,
   useLinkCode,
@@ -66,7 +84,16 @@ import {
   addUsage,
   alreadyDoneNote,
   badCodeMessage,
+  badDateMessage,
   briefMessage,
+  droppedLine,
+  errandAddedMessage,
+  errandsMessage,
+  errandUsage,
+  markErrand,
+  notAnErrandNote,
+  pickDateMessage,
+  plannedLine,
   decodePress,
   describedMessage,
   descriptionTooLong,
@@ -113,6 +140,8 @@ export interface PamData {
   // saveWithRules: plans the change against the stored tasks and projects, then writes it. Throws
   // what the plan throws, or an HttpError when the save refuses it (a clash or a blocking loop).
   save(db: D1Database, userId: string, plan: (state: State) => Plan): Promise<Changes>
+  // Deletes a task, logging it as the task delete route does
+  remove(db: D1Database, userId: string, taskId: string): Promise<void>
 }
 
 // The bot's settings, or null when any is missing and the bot is off
@@ -293,6 +322,14 @@ async function handleCommand(bot: Bot, link: Link, text: string | undefined, now
   const { config } = bot
   const send = (message: OutgoingMessage) => sendMessage(config.token, link.chatId, message)
   const command = parseCommand(text, config.username)
+  // While Pick date waits for a date, anything but a command is read as it, and a command cancels it
+  if (link.pickingTaskId !== null) {
+    if (!command && text !== undefined) {
+      await send(await pickedDate(bot, link, link.pickingTaskId, text, now))
+      return
+    }
+    if (command) await setPicking(bot.db, link.chatId, null)
+  }
   switch (command?.command) {
     case 'next':
       await send(nextMessage(config.origin, (await planning(bot, link, now)).priorities))
@@ -333,6 +370,12 @@ async function handleCommand(bot: Bot, link: Link, text: string | undefined, now
       await send(quickWinsMessage(config.origin, quickWins((await planning(bot, link, now)).priorities)))
       bot.count(link.userId, 'bot_quickwins')
       return
+    case 'errand':
+      await send(await addErrand(bot, link, command!.args, now))
+      return
+    case 'errands':
+      await send(errandsMessage(config.origin, (await planning(bot, link, now)).forecast().todayErrands))
+      return
     case 'help':
     case 'start':
       await send(helpMessage(config.origin))
@@ -366,6 +409,46 @@ async function addTask({ db, config, data, count }: Bot, link: Link, args: strin
   count(link.userId, 'task_create')
   await setLastAdded(db, link.chatId, task.id)
   return addedMessage(config.origin, task)
+}
+
+// /errand <name>: an errand planned for the chat's local today, with no estimate (so 30 minutes)
+async function addErrand({ db, config, data, count }: Bot, link: Link, args: string, now: Date): Promise<OutgoingMessage> {
+  const name = args.trim()
+  if (!name) return errandUsage
+  if (name.length > MAX_NAME_LENGTH) return nameTooLong(MAX_NAME_LENGTH)
+  const today = localDateTime(now, link.timeZone).date
+  const task: Task = { ...createEmptyTask(), name, kind: 'errand' }
+  try {
+    await data.save(db, link.userId, (state) => planTaskSave(state, { task, today }, 'telegram'))
+  } catch (e) {
+    if (e instanceof HttpError && e.status < 500) return { text: e.message }
+    if (e instanceof ErrandRefused) return { text: e.sentence.text }
+    throw e
+  }
+  count(link.userId, 'errand_create')
+  return errandAddedMessage(config.origin, task.id, name)
+}
+
+// A YYYY-MM-DD that is a real date (not 2026-02-30), or null
+function readDate(text: string): string | null {
+  const date = text.trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null
+  return addDays(date, 0) === date ? date : null
+}
+
+// The chat's reply to Pick date: a date today or later plans the errand for it. Anything else asks
+// again, and so does a date the save refuses (one after the errand is due), so the chat can send
+// another; the errand having gone or been done ends it.
+async function pickedDate(bot: Bot, link: Link, taskId: string, text: string, now: Date): Promise<OutgoingMessage> {
+  const today = localDateTime(now, link.timeZone).date
+  const date = readDate(text)
+  if (date === null || date < today) return badDateMessage(today)
+  const outcome = await changeTask(bot, link, taskId, planChange(date))
+  if (outcome.kind === 'refused') return outcome.reply
+  await setPicking(bot.db, link.chatId, null)
+  if (outcome.kind === 'unchanged') return outcome.reply
+  bot.count(link.userId, 'errand_reschedule')
+  return { text: plannedLine(outcome.task.name, date, today) }
 }
 
 // /desc <text>: replaces the description of the task the chat last added with /add
@@ -438,7 +521,7 @@ async function changeTask(
     return { kind: 'changed', task: changes.tasks.find((t) => t.id === taskId)! }
   } catch (e) {
     if (e instanceof Unchanged) return e.reply ? { kind: 'unchanged', reply: e.reply } : { kind: 'same', task: current! }
-    if (e instanceof ActionRefused) return { kind: 'refused', reply: { text: e.sentence.text } }
+    if (e instanceof ActionRefused || e instanceof ErrandRefused) return { kind: 'refused', reply: { text: e.sentence.text } }
     if (e instanceof HttpError && e.status < 500) return { kind: 'refused', reply: { text: e.message } }
     throw e
   }
@@ -448,6 +531,11 @@ const doneChange = (state: State, task: Task) => planTaskSave(state, { task: { .
 
 const notTodayChange = (today: string) => (state: State, task: Task) =>
   planTaskAction(state, task.id, { action: 'not_today', today }, 'telegram')
+
+// Plans an errand for `date`; null when it's already planned for it. A rolled-over errand planned
+// for an earlier day is changed to today, so it isn't asked about again until it next rolls over.
+const planChange = (date: string) => (state: State, task: Task) =>
+  task.pinnedDate === date ? null : planTaskAction(state, task.id, { action: 'plan', date }, 'telegram')
 
 // What a button under an /add reply sets. The due date is worked out from the chat's local today
 // when the button is pressed, and a start date it would pass moves back with it, as when a project
@@ -506,6 +594,38 @@ async function handleButton(bot: Bot, updateId: number, query: TelegramCallbackQ
       await send(project ? projectTasksMessage(config.origin, project) : projectGoneNote)
       return
     }
+    if (press.action === 'errands') {
+      const items = (await planning(bot, link, now)).forecast().todayErrands
+      await answer()
+      await send(errandsMessage(config.origin, items))
+      return
+    }
+    if (press.action === 'errand_done' || press.action === 'plan') {
+      const date = press.action === 'plan' ? (press.value === 'today' ? today : addDays(today, 1)) : null
+      const outcome = await changeTask(bot, link, press.taskId, date === null ? doneChange : planChange(date))
+      if (tookEffect(outcome)) bot.count(link.userId, date === null ? 'errand_complete' : 'errand_reschedule')
+      await answer()
+      if (outcome.kind === 'unchanged' || outcome.kind === 'refused') await send(outcome.reply)
+      else {
+        const line = date === null ? doneLine(outcome.task.name) : plannedLine(outcome.task.name, date, today)
+        await markErrandIn(bot, link, message, press.taskId, line)
+      }
+      return
+    }
+    if (press.action === 'pick' || press.action === 'drop') {
+      const { tasks } = await bot.data.load(db, link.userId)
+      const task = tasks.find((t) => t.id === press.taskId)
+      await answer()
+      if (!task) return send(goneNote)
+      if (!isErrand(task)) return send(notAnErrandNote(task.name))
+      if (press.action === 'pick') {
+        await setPicking(db, link.chatId, task.id)
+        return send(pickDateMessage(task.name, today))
+      }
+      await bot.data.remove(db, link.userId, task.id)
+      bot.count(link.userId, 'errand_drop')
+      return markErrandIn(bot, link, message, task.id, droppedLine(task.name))
+    }
     if (press.action === 'priority' || press.action === 'due' || press.action === 'estimate') {
       const outcome = await changeTask(bot, link, press.taskId, fieldChange(press, today))
       if (tookEffect(outcome)) bot.count(link.userId, PRESS_ACTIONS[press.action])
@@ -533,6 +653,14 @@ async function handleButton(bot: Bot, updateId: number, query: TelegramCallbackQ
     if (!answered) await answerCallbackQuery(config.token, query.id, "That didn't work. Try again, or use Pam.").catch(() => {})
     throw e
   }
+}
+
+// Notes what was done to an errand at the end of the message its button was under, and takes that
+// errand's buttons away. A message too old to edit gets nothing, as for Done under a project task.
+async function markErrandIn(bot: Bot, link: Link, message: NonNullable<TelegramCallbackQuery['message']>, taskId: string, line: string) {
+  if (message.date === 0 || message.text === undefined) return
+  const marked = markErrand({ text: message.text, buttons: message.reply_markup?.inline_keyboard ?? [] }, taskId, line)
+  await editMessage(bot, link, message, marked)
 }
 
 // Replaces the message a button was under. One too old for the bot to see (date 0) can't be

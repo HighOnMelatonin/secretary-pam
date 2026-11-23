@@ -27,11 +27,12 @@ import { useSettings } from '@/stores/settings'
 import { useTagList } from '@/stores/tagList'
 import { useTaskList } from '@/stores/taskList'
 import { localToday } from '@/types/calendar'
+import { isErrand } from '@/types/errand'
 import { forecast } from '@/types/forecast'
 import { unassignedTasks, type Project } from '@/types/project'
 import { createEmptyTag } from '@/types/tag'
 import type { TaskAction } from '@/types/operations'
-import type { Task } from '@/types/task'
+import { createEmptyTask, type Task } from '@/types/task'
 
 const projectList = useProjectList()
 const taskList = useTaskList()
@@ -44,8 +45,9 @@ const { visibleProjects } = storeToRefs(projectView)
 const { tasks } = storeToRefs(taskList)
 const { tags } = storeToRefs(tagList)
 // The tasks in no project, listed in their own section below the projects. The list can be
-// collapsed, and its completed tasks hidden, both of which this browser remembers.
-const unassigned = computed(() => unassignedTasks(tasks.value, projects.value))
+// collapsed, and its completed tasks hidden, both of which this browser remembers. Errands are in
+// no project either, but they're on the Today list instead.
+const unassigned = computed(() => unassignedTasks(tasks.value, projects.value).filter((t) => !isErrand(t)))
 const unassignedDone = computed(() => unassigned.value.filter((t) => t.completed).length)
 
 // A flag kept in localStorage; off when storage is blocked, and still works, just unremembered
@@ -107,10 +109,11 @@ function toggleAll() {
 }
 
 // Which form is open: none, a new/existing project, a new/existing task, or the tag list. The
-// optional fields carry a form's unsaved changes when it's reopened after a failed save.
+// optional fields carry a form's unsaved changes when it's reopened after a failed save; newTask is
+// what a new task starts out as, such as an errand from the Today list's More.
 type Editor =
   | { kind: 'project'; project?: Project; taskDueDates?: Record<string, string> }
-  | { kind: 'task'; task?: Task; projectIds?: string[]; deadlines?: Record<string, string> }
+  | { kind: 'task'; task?: Task; newTask?: Task; projectIds?: string[]; deadlines?: Record<string, string> }
   | { kind: 'tags' }
   | { kind: 'settings' }
   | null
@@ -128,6 +131,11 @@ function editorForRoute(): Editor {
       return project ? { kind: 'project', project } : null
     }
     case 'new-task':
+      // ?kind=errand&name=..., from the Today list's More
+      if (route.query.kind === 'errand') {
+        const name = typeof route.query.name === 'string' ? route.query.name : ''
+        return { kind: 'task', newTask: { ...createEmptyTask(), name, kind: 'errand' } }
+      }
       return { kind: 'task' }
     case 'edit-task': {
       const task = tasks.value.find((t) => t.id === route.params.id)
@@ -233,14 +241,37 @@ async function onSaveProject(project: Project, taskDueDates: Record<string, stri
   }
 }
 
+// today goes with every task save, for an errand saved with no planned day (src/types/errand.ts)
 async function onSaveTask(task: Task, projectIds: string[], deadlines: Record<string, string>) {
   error.value = null
   try {
-    await taskList.saveTask({ task, projectIds, deliveryDates: deadlines })
+    await taskList.saveTask({ task, projectIds, deliveryDates: deadlines, today: localToday() })
     await close()
   } catch (e) {
     error.value = `Couldn't save "${task.name}": ${messageOf(e)}`
     editor.value = { kind: 'task', task, projectIds, deadlines }
+  }
+}
+
+// Quick add on the Today list: an errand planned for today, with nothing but its name
+async function onQuickAdd(name: string) {
+  error.value = null
+  try {
+    await taskList.saveTask({ task: { ...createEmptyTask(), name, kind: 'errand' }, today: localToday() })
+  } catch (e) {
+    error.value = `Couldn't add "${name}": ${messageOf(e)}`
+  }
+}
+
+// Ticking an item of an errand's checklist on the Today list saves the whole list straight away,
+// as a patch of the checklist alone; the list keeps the old state if it fails
+async function onToggleItem(task: Task, index: number) {
+  error.value = null
+  const checklist = (task.checklist ?? []).map((item, i) => (i === index ? { ...item, done: !item.done } : item))
+  try {
+    await taskList.patchTask(task.id, { task: { checklist } })
+  } catch (e) {
+    error.value = `Couldn't save "${task.name}": ${messageOf(e)}`
   }
 }
 
@@ -326,6 +357,7 @@ async function onToggleTask(task: Task) {
     <TaskForm
       v-else-if="editor?.kind === 'task'"
       :task="editor.task"
+      :new-task="editor.newTask"
       :available-tasks="tasks"
       :projects="projects"
       :project-ids="editor.projectIds"
@@ -379,6 +411,9 @@ async function onToggleTask(task: Task) {
         @edit-task="open({ name: 'edit-task', params: { id: $event.id } })"
         @toggle-task="onToggleTask"
         @action="onTaskAction"
+        @toggle-item="onToggleItem"
+        @quick-add="onQuickAdd"
+        @new-errand="open({ name: 'new-task', query: { kind: 'errand', ...($event ? { name: $event } : {}) } })"
       />
 
       <article v-if="projects.length === 0" class="empty">

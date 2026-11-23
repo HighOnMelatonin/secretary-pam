@@ -4,6 +4,7 @@
 // and the tasks it is related to, each linking to its own page. Edit opens the task's form;
 // Delete removes the task, done or not, once confirmed.
 import { computed } from 'vue'
+import { errandDay, isErrand, recurrenceLabel } from '@/types/errand'
 import type { Project } from '@/types/project'
 import { relatedTasks, relationLabel, type Task } from '@/types/task'
 import { tagStyle, type Tag } from '@/types/tag'
@@ -25,6 +26,10 @@ const today = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD in local time
 const isOverdue = computed(
   () => !props.task.completed && props.task.dueDate !== null && props.task.dueDate < today,
 )
+
+// An errand's planned day, and how many days it has rolled over by (src/types/errand.ts)
+const errand = computed(() => isErrand(props.task))
+const rolled = computed(() => errandDay(props.task, today))
 
 const inProjects = computed(() => props.projects.filter((p) => p.taskIds.includes(props.task.id)))
 const related = computed(() => relatedTasks(props.task, props.tasks))
@@ -56,13 +61,18 @@ function confirmDelete() {
     <div class="meta">
       <span v-for="tag in taskTags" :key="tag.id" class="tag project-tag" :style="tagStyle(tag)">{{ tag.name }}</span>
       <span class="tag" :class="{ 'done-tag': task.completed }">{{ task.completed ? '✓ done' : 'to do' }}</span>
-      <span class="tag" :class="`priority-${task.priority}`">{{ task.priority }}</span>
+      <span v-if="errand" class="tag errand-tag">errand</span>
+      <span v-else class="tag" :class="`priority-${task.priority}`">{{ task.priority }}</span>
       <span v-if="task.googleAccount" class="tag project-tag" title="Imported from Google Calendar">{{ task.googleAccount }}</span>
       <span v-if="isOverdue" class="tag overdue">overdue</span>
+      <small v-if="errand && task.pinnedDate">
+        Planned {{ task.pinnedDate }}<template v-if="rolled && rolled.carriedDays > 0">, rolled over to today</template>
+      </small>
       <small>{{ task.dueDate ? `Due ${task.dueDate}` : 'No due date' }}</small>
+      <small v-if="task.recurrence">{{ recurrenceLabel(task.recurrence) }}</small>
     </div>
 
-    <TaskTimeline :task="task" />
+    <TaskTimeline v-if="!errand" :task="task" />
 
     <p v-if="task.googleAccount" class="source">
       <small>From Google Calendar. Syncing sets its name, due date and description from the event again.</small>
@@ -70,7 +80,17 @@ function confirmDelete() {
 
     <p class="description">{{ task.description || 'No description.' }}</p>
 
-    <div class="columns">
+    <section v-if="task.checklist?.length" class="checklist">
+      <h3 class="section-heading">Checklist</h3>
+      <ul class="plain-list">
+        <li v-for="(item, i) in task.checklist" :key="i" :class="{ struck: item.done }">
+          {{ item.done ? '✓' : '○' }} {{ item.text }}<span v-if="item.done" class="sr-only"> (done)</span>
+        </li>
+      </ul>
+    </section>
+
+    <!-- An errand is in no project and has no related tasks, so neither is listed -->
+    <div v-if="!errand" class="columns">
       <section>
         <h3 class="section-heading">Projects</h3>
         <ul v-if="inProjects.length" class="plain-list">

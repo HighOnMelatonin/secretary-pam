@@ -32,6 +32,12 @@
 // { project } (a bare Task or Project) is refused with 400. So is a task save that would make a
 // loop of blocking tasks, with the ids around it as `loop`.
 //
+// Errands (src/types/errand.ts) are tasks with kind 'errand'. A save that puts one in a project,
+// relates it to another task, leaves it with no planned day or plans it after its due date is
+// refused with 409 and the reason as a sentence ({ error, code, params, text }). A task save or
+// patch may carry today, the user's local date, which an errand saved with no planned day is
+// planned for. Completing a recurring errand makes the next one in the same batch.
+//
 // Saves and deletes of tasks and projects also log what they changed to task_events
 // (src/types/events.ts), in the same batch, so a refused or failed save logs nothing.
 //
@@ -62,11 +68,15 @@ import {
 import {
   PRIORITIES,
   RELATION_TYPES,
+  TASK_KINDS,
+  type ChecklistItem,
   type Priority,
   type RelationType,
   type Task,
+  type TaskKind,
   type TaskRelation,
 } from '../src/types/task'
+import { parseRecurrence, RECURRENCE_FORMATS } from '../src/types/errand'
 import type { Project, ReferenceLink } from '../src/types/project'
 import { ARCHIVE_TAG_ID, DEFAULT_TAG_COLOR, isHexColor, type Tag } from '../src/types/tag'
 import type { TaskEvent } from '../src/types/events'
@@ -74,6 +84,7 @@ import {
   ActionRefused,
   applyTaskPatch,
   BlockLoop,
+  ErrandRefused,
   PATCH_FIELDS,
   planProjectDelete,
   planProjectSave,
@@ -149,7 +160,16 @@ interface TaskRow {
   effort_minutes: number | null
   start_date: string | null
   pinned_date: string | null
+  kind: TaskKind
+  recurrence: string | null
+  next_occurrence_id: string | null
   account_email: string | null // from google_events, for imported tasks
+}
+
+interface ChecklistRow {
+  task_id: string
+  text: string
+  done: 0 | 1
 }
 
 interface RelationRow {
@@ -218,6 +238,12 @@ const oneOf = <T>(values: readonly T[], value: unknown): value is T =>
 const allDifferent = (values: unknown[]) => new Set(values).size === values.length
 const isRelation = (value: unknown): value is TaskRelation =>
   isObject(value) && isId(value.taskId) && oneOf(RELATION_TYPES, value.type)
+const isChecklistItem = (value: unknown): value is ChecklistItem =>
+  isObject(value) &&
+  isString(value.text) &&
+  value.text.trim() !== '' &&
+  value.text.length <= MAX_NAME_LENGTH &&
+  typeof value.done === 'boolean'
 const isLink = (value: unknown): value is ReferenceLink =>
   isObject(value) &&
   isString(value.label) &&
@@ -250,8 +276,22 @@ function checkCommon(
 // due date instead (planTasksImport), since the import dialog doesn't show start dates
 function parseTask(body: unknown, id: string, { startAfterDue = 'refuse' } = {}): Task {
   checkCommon(body, id)
-  const { dueDate, completed, relations, effortMinutes, startDate, pinnedDate, tagIds } = body
+  const { dueDate, completed, relations, effortMinutes, startDate, pinnedDate, tagIds, kind, recurrence, checklist } = body
   check(isDateOrNull(dueDate), 'dueDate must be null or a YYYY-MM-DD date')
+  // An errand's own fields. The rules between fields and other tasks (no projects, no relations, a
+  // planned day on or before the due date) are the planner's, in operations.ts.
+  check(isUnset(kind) || oneOf(TASK_KINDS, kind), `kind must be left out, null or one of ${TASK_KINDS.join(', ')}`)
+  const errand = kind === 'errand'
+  check(
+    isUnset(recurrence) || (isString(recurrence) && parseRecurrence(recurrence) !== null),
+    `recurrence must be left out, null, ${RECURRENCE_FORMATS}`,
+  )
+  check(isUnset(recurrence) || errand, 'recurrence is only for errands (kind errand)')
+  check(
+    isUnset(checklist) || (isList(checklist) && checklist.every(isChecklistItem)),
+    `checklist must be left out, null or a list of at most ${MAX_LIST_LENGTH} { text, done }, with text of 1 to ${MAX_NAME_LENGTH} characters`,
+  )
+  check(isUnset(checklist) || checklist.length === 0 || errand, 'checklist is only for errands (kind errand)')
   check(
     isUnset(tagIds) || (isList(tagIds) && tagIds.every(isId)),
     `tagIds must be left out, null or a list of at most ${MAX_LIST_LENGTH} tag ids`,
@@ -292,6 +332,10 @@ function parseTask(body: unknown, id: string, { startAfterDue = 'refuse' } = {})
     ...(isUnset(pinnedDate) ? {} : { pinnedDate }),
     // An empty list is left out, as a task with no tags has none
     ...(isUnset(tagIds) || tagIds.length === 0 ? {} : { tagIds }),
+    // A project task has no kind stored, as one saved before errands
+    ...(errand ? { kind } : {}),
+    ...(isUnset(recurrence) ? {} : { recurrence }),
+    ...(isUnset(checklist) || checklist.length === 0 ? {} : { checklist: checklist.map((i) => ({ text: i.text, done: i.done })) }),
   }
 }
 
@@ -330,7 +374,8 @@ function parseTaskSave(body: unknown, id: string): TaskSave {
 // What a task save or patch may carry besides the task: the projects it should be in, and the
 // delivery dates moved to fit it
 function parseMembership(body: Record<string, unknown>): Omit<TaskSave, 'task'> {
-  const { projectIds, deliveryDates } = body
+  const { projectIds, deliveryDates, today } = body
+  check(today === undefined || isDate(today), "today must be left out or a YYYY-MM-DD date: the user's local date")
   check(
     projectIds === undefined || (isList(projectIds) && projectIds.every(isId)),
     `projectIds must be a list of at most ${MAX_LIST_LENGTH} project ids`,
@@ -340,13 +385,13 @@ function parseMembership(body: Record<string, unknown>): Omit<TaskSave, 'task'> 
     deliveryDates === undefined || isDateMap(deliveryDates),
     'deliveryDates must map project ids to null or a YYYY-MM-DD date',
   )
-  return { projectIds, deliveryDates }
+  return { projectIds, deliveryDates, today }
 }
 
 // A partial task save: { task, projectIds?, deliveryDates? }, where task holds only the fields to
 // change (PATCH_FIELDS in operations.ts). Null clears the due date and the optional fields. The
 // patched task is checked as a whole when the save is planned, so the rules are those of a PUT.
-function parseTaskPatch(body: unknown, id: string): { patch: TaskPatch; projectIds?: string[]; deliveryDates?: Record<string, string | null> } {
+function parseTaskPatch(body: unknown, id: string): { patch: TaskPatch } & Omit<TaskSave, 'task'> {
   check(isObject(body) && isObject(body.task), 'Body must be { task, projectIds?, deliveryDates? }, with task holding the fields to change')
   const { task } = body
   const unknown = Object.keys(task).filter((key) => !(PATCH_FIELDS as readonly string[]).includes(key) && key !== 'id')
@@ -393,6 +438,9 @@ function parseTaskAction(body: unknown): TaskAction {
       return { action: body.action, today: body.today }
     case 'unpin':
       return { action: 'unpin' }
+    case 'plan':
+      check(isDate(body.date), 'date must be a YYYY-MM-DD date')
+      return { action: 'plan', date: body.date }
     case 'importance':
       check(body.direction === 'up' || body.direction === 'down', 'direction must be up or down')
       return { action: 'importance', direction: body.direction }
@@ -427,7 +475,7 @@ function parseTag(body: unknown, id: string): TagBody {
 // Tasks
 
 async function listTasks(db: D1Database, userId: string): Promise<Task[]> {
-  const [tasks, relations, taskTags] = (await db.batch([
+  const [tasks, relations, taskTags, checklists] = (await db.batch([
     db
       .prepare(
         `SELECT tasks.*, google_events.account_email FROM tasks
@@ -437,9 +485,11 @@ async function listTasks(db: D1Database, userId: string): Promise<Task[]> {
       .bind(userId),
     db.prepare('SELECT * FROM task_relations WHERE user_id = ?1 ORDER BY task_id, position').bind(userId),
     db.prepare('SELECT * FROM task_tags WHERE user_id = ?1 ORDER BY task_id, position').bind(userId),
-  ])) as [D1Result<TaskRow>, D1Result<RelationRow>, D1Result<TaskTagRow>]
+    db.prepare('SELECT * FROM task_checklist_items WHERE user_id = ?1 ORDER BY task_id, position').bind(userId),
+  ])) as [D1Result<TaskRow>, D1Result<RelationRow>, D1Result<TaskTagRow>, D1Result<ChecklistRow>]
   const relationsByTask = groupBy(relations.results, (r) => r.task_id)
   const tagsByTask = groupBy(taskTags.results, (t) => t.task_id)
+  const checklistByTask = groupBy(checklists.results, (c) => c.task_id)
 
   return tasks.results.map((row) => ({
     id: row.id,
@@ -453,9 +503,23 @@ async function listTasks(db: D1Database, userId: string): Promise<Task[]> {
     ...(row.start_date !== null ? { startDate: row.start_date } : {}),
     ...(row.pinned_date !== null ? { pinnedDate: row.pinned_date } : {}),
     ...(tagsByTask.has(row.id) ? { tagIds: tagsByTask.get(row.id)!.map((t) => t.tag_id) } : {}),
+    ...(row.kind === 'errand' ? { kind: row.kind } : {}),
+    ...(row.recurrence !== null ? { recurrence: row.recurrence } : {}),
+    ...(checklistByTask.has(row.id)
+      ? { checklist: checklistByTask.get(row.id)!.map((c) => ({ text: c.text, done: c.done === 1 })) }
+      : {}),
+    ...(row.next_occurrence_id !== null ? { nextOccurrenceId: row.next_occurrence_id } : {}),
     ...(row.account_email ? { googleAccount: row.account_email } : {}),
   }))
 }
+
+// A task as the API returns it: without nextOccurrenceId, which only the Worker reads
+function publicTask(task: Task): Task {
+  const { nextOccurrenceId: _, ...rest } = task
+  return rest
+}
+
+const publicChanges = (changes: Changes): Changes => ({ ...changes, tasks: changes.tasks.map(publicTask) })
 
 // A table holding a list: the rows of `owner`'s list are its `item`s, in `position` order, with a
 // `value` column for relations' type
@@ -544,12 +608,13 @@ function taskStatements(
     db
       .prepare(
         `INSERT INTO tasks (id, name, description, due_date, priority, completed, effort_minutes, start_date,
-           pinned_date, user_id, changed_by)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+           pinned_date, user_id, changed_by, kind, recurrence, next_occurrence_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
          ON CONFLICT (user_id, id) DO UPDATE SET name = excluded.name, description = excluded.description,
            due_date = excluded.due_date, priority = excluded.priority, completed = excluded.completed,
            effort_minutes = excluded.effort_minutes, start_date = excluded.start_date,
-           pinned_date = excluded.pinned_date, changed_by = excluded.changed_by, updated_at = ${NOW}`,
+           pinned_date = excluded.pinned_date, changed_by = excluded.changed_by, kind = excluded.kind,
+           recurrence = excluded.recurrence, next_occurrence_id = excluded.next_occurrence_id, updated_at = ${NOW}`,
       )
       .bind(
         task.id,
@@ -563,9 +628,41 @@ function taskStatements(
         task.pinnedDate ?? null,
         userId,
         source,
+        task.kind ?? 'task',
+        task.recurrence ?? null,
+        task.nextOccurrenceId ?? null,
       ),
     ...listStatements(db, TASK_RELATIONS, userId, task.id, relationRows(stored?.relations ?? []), relationRows(task.relations)),
     ...listStatements(db, TASK_TAGS, userId, task.id, ids(stored?.tagIds ?? []), ids(task.tagIds ?? [])),
+    ...checklistStatements(db, userId, task.id, stored?.checklist ?? [], task.checklist ?? []),
+  ]
+}
+
+// A checklist is kept by position, not by item, so it is written as the positions that changed and
+// the ones past its new end deleted. It isn't logged to history (migrations/0014_errands.sql), so
+// unlike the lists above, an item edited in place needs no care to look like the same row.
+function checklistStatements(
+  db: D1Database,
+  userId: string,
+  taskId: string,
+  before: ChecklistItem[],
+  after: ChecklistItem[],
+): D1PreparedStatement[] {
+  const changed = after
+    .map((item, position) => ({ ...item, position }))
+    .filter((item) => before[item.position]?.text !== item.text || before[item.position]?.done !== item.done)
+  return [
+    ...(before.length > after.length
+      ? [db.prepare('DELETE FROM task_checklist_items WHERE user_id = ?1 AND task_id = ?2 AND position >= ?3').bind(userId, taskId, after.length)]
+      : []),
+    ...changed.map((item) =>
+      db
+        .prepare(
+          `INSERT INTO task_checklist_items (user_id, task_id, position, text, done) VALUES (?1, ?2, ?3, ?4, ?5)
+           ON CONFLICT (user_id, task_id, position) DO UPDATE SET text = excluded.text, done = excluded.done`,
+        )
+        .bind(userId, taskId, item.position, item.text, item.done ? 1 : 0),
+    ),
   ]
 }
 
@@ -672,7 +769,7 @@ async function saveWithRules(
     throw new Conflict(message, result.clashes)
   }
   await writeChanges(db, userId, result.changes, result.events, { tasks, projects }, source)
-  return result.changes
+  return publicChanges(result.changes)
 }
 
 // e.g. "Write report" is due 2026-12-14, after "Thesis"'s delivery date (2026-12-10). The last
@@ -758,6 +855,7 @@ const pamData: PamData = {
     return { tasks, projects, settings }
   },
   save: (db, userId, plan) => saveWithRules(db, userId, plan, { tasks: [], projects: [] }, 'telegram'),
+  remove: (db, userId, taskId) => deleteLogged(db, userId, 'tasks', taskId, planTaskDelete, 'telegram'),
 }
 
 // Events
@@ -809,7 +907,7 @@ interface Resource {
 
 const RESOURCES: Record<string, Resource> = {
   tasks: {
-    list: listTasks,
+    list: async (db, userId) => (await listTasks(db, userId)).map(publicTask),
     save(db, userId, id, body, source) {
       const save = parseTaskSave(body, id)
       const saving = { tasks: [save.task], projects: [] }
@@ -954,14 +1052,14 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext, handled
       return json(await importTasks(env.DB, user.id, id, await readJson(request, MAX_IMPORT_BODY_BYTES), source))
     }
     if (isPatch) {
-      const { patch, projectIds, deliveryDates } = parseTaskPatch(await readJson(request), id!)
+      const { patch, projectIds, deliveryDates, today } = parseTaskPatch(await readJson(request), id!)
       const plan = (state: State) => {
         const stored = state.tasks.find((t) => t.id === id)
         if (!stored) throw new UnknownReference('task', id!)
         // Checked whole, as a PUT is; only the sync sets the Google account, so it's kept
         const task = parseTask(applyTaskPatch(stored, patch), id!)
         const saved = stored.googleAccount ? { ...task, googleAccount: stored.googleAccount } : task
-        return planTaskSave(state, { task: saved, projectIds, deliveryDates })
+        return planTaskSave(state, { task: saved, projectIds, deliveryDates, today })
       }
       return json(await saveWithRules(env.DB, user.id, plan, { tasks: [], projects: [] }, source))
     }
@@ -987,6 +1085,8 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext, handled
     if (e instanceof HttpError) return error(e.status, e.message)
     if (e instanceof UnknownReference) return error(e.kind === 'task' && (isAction || isPatch) ? 404 : 400, e.message)
     if (e instanceof ActionRefused) return json({ error: e.message, ...e.sentence }, 400)
+    // Like a clash: the save breaks a rule between the errand and other tasks or projects
+    if (e instanceof ErrandRefused) return json({ error: e.message, ...e.sentence }, 409)
     if (String(e).includes('FOREIGN KEY constraint failed')) {
       return error(400, 'References a task or tag that does not exist')
     }

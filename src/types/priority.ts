@@ -3,6 +3,7 @@
 // next. Pure functions over plain data only: no Vue, no browser APIs, no clock and relative
 // imports only, since worker/ imports this file too. `today` is always passed in, the result is
 // plain JSON, and nothing here is stored.
+import { isErrand } from './errand'
 import { isArchived, type Project } from './project'
 import type { Sentence } from './sentence'
 import { blockEdges, blockLoops } from './rules'
@@ -106,7 +107,9 @@ export const round4 = (value: number) => Math.round(value * 10_000) / 10_000
 // Whether a task is left out of prioritisation altogether: completed, only in archived projects,
 // or imported from Google Calendar and never given an estimate
 export function isExcluded(task: Task, projects: Project[]): boolean {
-  if (task.completed) return true
+  // Errands aren't ranked against project work: they never take a place in Suggested, and the
+  // forecast takes their hours out of their planned days before it plans scored tasks
+  if (task.completed || isErrand(task)) return true
   if (task.googleAccount !== undefined && task.effortMinutes === undefined) return true
   const inProjects = projects.filter((p) => p.taskIds.includes(task.id))
   return inProjects.length > 0 && inProjects.every(isArchived)

@@ -5,7 +5,21 @@
 // also blocked by a start date after the due date, an estimate that isn't a number of hours, and
 // relations that would make a loop of blocking tasks. An estimate bigger than the working time
 // left before the due date is pointed out, but doesn't block saving.
+//
+// A Task / Errand switch at the top makes it an errand (src/types/errand.ts): a personal to-do in
+// no project. That hides the projects, related tasks, priority and start date, none of which an
+// errand has, and shows its planned day, how it repeats and its checklist. An errand planned after
+// its due date, or repeating on no days, can't be saved.
 import { computed, ref, toRaw, watch } from 'vue'
+import {
+  formatRecurrence,
+  isErrand,
+  parseRecurrence,
+  MAX_EVERY_DAYS,
+  RECURRENCE_DAYS,
+  RECURRENCE_DAY_LABELS,
+  type RecurrenceDay,
+} from '@/types/errand'
 import {
   createEmptyTask,
   hoursFromMinutes,
@@ -15,6 +29,7 @@ import {
   relationLabel,
   type RelationType,
   type Task,
+  type TaskKind,
 } from '@/types/task'
 import { isPastDeadline, type Project } from '@/types/project'
 import { MAX_DESCRIPTION_LENGTH, MAX_EFFORT_MINUTES, MAX_NAME_LENGTH } from '@/types/limits'
@@ -27,6 +42,7 @@ import TagPicker from './tagPicker.vue'
 
 const props = defineProps<{
   task?: Task // task to edit; a new empty task is used when omitted
+  newTask?: Task // what a new task starts out as instead, such as an errand with a name
   // tasks that can be linked as relations; their relations, when given, are checked for blocking loops
   availableTasks?: (Pick<Task, 'id' | 'name'> & Partial<Pick<Task, 'completed' | 'relations'>>)[]
   projects?: Pick<Project, 'id' | 'name' | 'taskIds' | 'deliveryDate'>[] // projects the task can be assigned to
@@ -45,7 +61,8 @@ const emit = defineEmits<{
   delete: [task: Task] // only offered for an existing task, after confirming
 }>()
 
-const copyOf = (task?: Task): Task => (task ? structuredClone(toRaw(task)) : createEmptyTask())
+const copyOf = (task?: Task): Task =>
+  task ? structuredClone(toRaw(task)) : props.newTask ? structuredClone(toRaw(props.newTask)) : createEmptyTask()
 
 const assignedIdsOf = (task?: Task): string[] => {
   if (props.projectIds) return [...props.projectIds]
@@ -60,6 +77,20 @@ const deadlines = ref<Record<string, string>>({ ...props.deadlines })
 // The estimate as typed, in hours, so a half-typed number isn't lost; saved into effortMinutes
 const estimateOf = (task: Task) => (task.effortMinutes === undefined ? '' : String(hoursFromMinutes(task.effortMinutes)))
 const estimate = ref(estimateOf(draft.value))
+
+// How an errand repeats, as chosen in the form, and written into recurrence when it's saved
+type Repeat = 'none' | 'daily' | 'weekly' | 'every'
+const repeat = ref<Repeat>('none')
+const weeklyDays = ref<RecurrenceDay[]>([])
+const everyDays = ref('2')
+function loadRepeat(task: Task) {
+  const rule = task.recurrence === undefined ? null : parseRecurrence(task.recurrence)
+  repeat.value = !rule ? 'none' : rule.every === 'day' ? 'daily' : rule.every === 'week' ? 'weekly' : 'every'
+  weeklyDays.value = rule?.every === 'week' ? [...rule.days] : []
+  everyDays.value = rule?.every === 'days' ? String(rule.days) : '2'
+}
+loadRepeat(draft.value)
+
 watch(
   () => props.task,
   (task) => {
@@ -67,10 +98,63 @@ watch(
     projectIds.value = assignedIdsOf(task)
     deadlines.value = { ...props.deadlines }
     estimate.value = estimateOf(draft.value)
+    loadRepeat(draft.value)
   },
 )
 
 const isNew = computed(() => !props.task)
+
+// Task or errand
+const errand = computed(() => isErrand(draft.value))
+function setKind(kind: TaskKind) {
+  if (kind === 'errand') draft.value.kind = 'errand'
+  else delete draft.value.kind
+}
+const noun = computed(() => (errand.value ? 'errand' : 'task'))
+
+// An errand's planned day (pinnedDate), which a blank input leaves to the save: today
+function setPlannedDay(value: string) {
+  if (value) draft.value.pinnedDate = value
+  else delete draft.value.pinnedDate
+}
+const plannedAfterDue = computed(
+  () => errand.value && !!draft.value.pinnedDate && draft.value.dueDate !== null && draft.value.pinnedDate > draft.value.dueDate,
+)
+
+// The recurrence the choices make: undefined for none, null when they don't make one yet (weekly
+// with no days, or a number of days out of range)
+const recurrence = computed<string | undefined | null>(() => {
+  switch (repeat.value) {
+    case 'none':
+      return undefined
+    case 'daily':
+      return 'daily'
+    case 'weekly':
+      return weeklyDays.value.length ? formatRecurrence({ every: 'week', days: RECURRENCE_DAYS.filter((d) => weeklyDays.value.includes(d)) }) : null
+    case 'every': {
+      const days = Number(everyDays.value)
+      return Number.isInteger(days) && days >= 1 && days <= MAX_EVERY_DAYS ? `every:${days}d` : null
+    }
+  }
+})
+const recurrenceInvalid = computed(() => errand.value && recurrence.value === null)
+
+function toggleWeekday(day: RecurrenceDay) {
+  weeklyDays.value = weeklyDays.value.includes(day) ? weeklyDays.value.filter((d) => d !== day) : [...weeklyDays.value, day]
+}
+
+// The checklist: items are edited in place, and a new one is added with Add or Enter
+const newItem = ref('')
+const checklist = computed(() => draft.value.checklist ?? [])
+function addItem() {
+  const text = newItem.value.trim()
+  if (!text) return
+  draft.value.checklist = [...checklist.value, { text, done: false }]
+  newItem.value = ''
+}
+function removeItem(index: number) {
+  draft.value.checklist = checklist.value.filter((_, i) => i !== index)
+}
 
 // Tags: the same ones as projects, except Archive, which only means something for a project
 const taskTags = computed(() => (props.tags ?? []).filter((t) => t.id !== ARCHIVE_TAG_ID))
@@ -138,15 +222,13 @@ const relationLoop = computed(() => {
   return loop ? describeLoop(loop, nameOf) : null
 })
 
-// The picked project counts too, since saving assigns it
-const canSave = computed(
-  () =>
-    draft.value.name.trim() !== '' &&
-    clashes.value.length === 0 &&
-    !estimateInvalid.value &&
-    !startIsLate.value &&
-    relationLoop.value === null,
-)
+// The picked project counts too, since saving assigns it. An errand has no projects or relations,
+// so only its own rules count.
+const canSave = computed(() => {
+  if (draft.value.name.trim() === '' || estimateInvalid.value) return false
+  if (errand.value) return !plannedAfterDue.value && !recurrenceInvalid.value
+  return clashes.value.length === 0 && !startIsLate.value && relationLoop.value === null
+})
 
 function extendDeadline(project: AssignableProject) {
   deadlines.value[project.id] = draft.value.dueDate!
@@ -189,11 +271,35 @@ function removeRelation(index: number) {
   draft.value.relations.splice(index, 1)
 }
 
+// What an errand is saved as: in no project, with no relations, start date or priority of its own,
+// and with its recurrence and the checklist's filled-in items; a project task has none of those
+function asKind() {
+  if (!errand.value) {
+    delete draft.value.recurrence
+    delete draft.value.checklist
+    return
+  }
+  projectIds.value = []
+  deadlines.value = {}
+  draft.value.relations = []
+  draft.value.priority = 'medium'
+  delete draft.value.startDate
+  if (recurrence.value) draft.value.recurrence = recurrence.value
+  else delete draft.value.recurrence
+  addItem() // an item typed but not added yet is kept, not lost
+  const items = checklist.value.map((i) => ({ ...i, text: i.text.trim() })).filter((i) => i.text)
+  if (items.length) draft.value.checklist = items
+  else delete draft.value.checklist
+}
+
 function save() {
   if (!canSave.value) return
   // A project or related task picked but not yet added with Assign or Link is added now, not lost
-  assignProject()
-  addRelation()
+  if (!errand.value) {
+    assignProject()
+    addRelation()
+  }
+  asKind()
   draft.value.name = draft.value.name.trim()
   if (estimateMinutes.value === undefined) delete draft.value.effortMinutes
   else draft.value.effortMinutes = estimateMinutes.value
@@ -206,6 +312,7 @@ function save() {
     projectIds.value = []
     deadlines.value = {}
     estimate.value = ''
+    loadRepeat(draft.value)
   }
 }
 
@@ -220,6 +327,7 @@ function cancel() {
   projectIds.value = assignedIdsOf(props.task)
   deadlines.value = { ...props.deadlines }
   estimate.value = estimateOf(draft.value)
+  loadRepeat(draft.value)
   emit('cancel')
 }
 
@@ -238,7 +346,7 @@ function confirmDelete() {
 <template>
   <article class="task-container edit-form">
     <header class="heading-row form-header">
-      <h2>{{ isNew ? 'New task' : 'Edit task' }}</h2>
+      <h2>{{ isNew ? `New ${noun}` : `Edit ${noun}` }}</h2>
       <button type="button" class="secondary outline compact" @click="cancel">Cancel</button>
     </header>
 
@@ -250,12 +358,32 @@ function confirmDelete() {
         </small>
       </p>
 
+      <!-- Not role="group", which Pico stretches into a full-width bar of joined buttons -->
+      <div class="kind-switch" aria-label="Kind">
+        <button type="button" class="chip compact" :aria-pressed="!errand" @click="setKind('task')">Task</button>
+        <button type="button" class="chip compact" :aria-pressed="errand" @click="setKind('errand')">Errand</button>
+      </div>
+
       <label>
-        Task name
-        <input v-model="draft.name" placeholder="Task" required :maxlength="MAX_NAME_LENGTH" />
+        {{ errand ? 'Errand' : 'Task name' }}
+        <input v-model="draft.name" :placeholder="errand ? 'e.g. Groceries' : 'Task'" required :maxlength="MAX_NAME_LENGTH" />
       </label>
 
-      <div class="grid">
+      <div v-if="errand" class="grid">
+        <label>
+          Planned day
+          <input
+            type="date"
+            :value="draft.pinnedDate ?? ''"
+            :aria-invalid="plannedAfterDue || undefined"
+            @input="setPlannedDay(($event.target as HTMLInputElement).value)"
+          />
+          <small v-if="!draft.pinnedDate">Today, if left blank</small>
+        </label>
+        <span />
+      </div>
+
+      <div v-else class="grid">
         <label>
           Start date
           <input
@@ -290,13 +418,14 @@ function confirmDelete() {
             v-model="estimate"
             type="text"
             inputmode="decimal"
-            placeholder="e.g. 1.5"
+            :placeholder="errand ? 'e.g. 0.5 (30 min if blank)' : 'e.g. 1.5'"
             :aria-invalid="estimateInvalid || undefined"
           />
         </label>
       </div>
 
-      <p v-if="startIsLate" class="error" role="alert">The start date is after the due date. Move one of them.</p>
+      <p v-if="plannedAfterDue" class="error" role="alert">The planned day is after the due date. Move one of them.</p>
+      <p v-if="startIsLate && !errand" class="error" role="alert">The start date is after the due date. Move one of them.</p>
       <p v-if="estimateInvalid" class="error" role="alert">
         Enter the estimate in hours: more than 0 and at most {{ MAX_EFFORT_MINUTES / 60 }}.
       </p>
@@ -325,7 +454,61 @@ function confirmDelete() {
 
       <TagPicker v-model="tagIds" :tags="taskTags" :create-tag="createTag" />
 
-      <fieldset>
+      <template v-if="errand">
+        <fieldset>
+          <legend>Repeats</legend>
+          <select v-model="repeat" aria-label="How it repeats">
+            <option value="none">Doesn't repeat</option>
+            <option value="daily">Every day</option>
+            <option value="weekly">Every week, on…</option>
+            <option value="every">Every few days</option>
+          </select>
+          <div v-if="repeat === 'weekly'" class="weekdays">
+            <button
+              v-for="day in RECURRENCE_DAYS"
+              :key="day"
+              type="button"
+              class="chip compact"
+              :aria-pressed="weeklyDays.includes(day)"
+              @click="toggleWeekday(day)"
+            >
+              {{ RECURRENCE_DAY_LABELS[day] }}
+            </button>
+          </div>
+          <label v-if="repeat === 'every'" class="every">
+            Every
+            <input v-model="everyDays" type="number" min="1" :max="MAX_EVERY_DAYS" inputmode="numeric" />
+            days
+          </label>
+          <p v-if="recurrenceInvalid" class="error" role="alert">
+            {{ repeat === 'weekly' ? 'Pick at least one day.' : `Enter a whole number of days from 1 to ${MAX_EVERY_DAYS}.` }}
+          </p>
+          <small v-if="repeat !== 'none'">Completing it adds the next one, on the next day it repeats.</small>
+        </fieldset>
+
+        <fieldset>
+          <legend>Checklist</legend>
+          <ul v-if="checklist.length">
+            <li v-for="(item, i) in checklist" :key="i" class="checklist-item">
+              <input v-model="item.done" type="checkbox" :aria-label="`Done: ${item.text}`" />
+              <input v-model="item.text" :maxlength="MAX_NAME_LENGTH" aria-label="Checklist item" />
+              <button type="button" class="secondary outline" @click="removeItem(i)">Remove</button>
+            </li>
+          </ul>
+          <div role="group" class="picker-row">
+            <input
+              v-model="newItem"
+              :maxlength="MAX_NAME_LENGTH"
+              placeholder="Add an item…"
+              aria-label="New checklist item"
+              @keydown.enter.prevent="addItem"
+            />
+            <button type="button" :disabled="!newItem.trim()" @click="addItem">Add</button>
+          </div>
+        </fieldset>
+      </template>
+
+      <fieldset v-if="!errand">
         <legend>Projects</legend>
         <ul v-if="assignedProjects.length">
           <li v-for="project in assignedProjects" :key="project.id">
@@ -365,7 +548,7 @@ function confirmDelete() {
         </div>
       </fieldset>
 
-      <fieldset>
+      <fieldset v-if="!errand">
         <legend>Related tasks</legend>
         <ul v-if="draft.relations.length">
           <li v-for="(relation, i) in draft.relations" :key="relation.taskId">
@@ -411,6 +594,65 @@ function confirmDelete() {
 </template>
 
 <style scoped>
+/* Task and Errand, and an errand's weekdays: chips, the chosen ones filled cream, as the Upcoming
+   panel's view switch */
+.kind-switch,
+.weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+.weekdays {
+  margin-top: 0.5rem;
+}
+
+.kind-switch .chip[aria-pressed='true'],
+.weekdays .chip[aria-pressed='true'] {
+  border-color: var(--pam-cream);
+  background: var(--pam-cream);
+  color: var(--pam-green);
+}
+
+.every {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.every input {
+  width: 5rem;
+  margin: 0;
+}
+
+/* Its tick, its text, then Remove, on one line */
+.checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.checklist-item input[type='checkbox'] {
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.checklist-item input:not([type='checkbox']) {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.checklist-item button {
+  flex: none;
+  width: auto;
+  margin: 0;
+}
+
 /* Needs attention but doesn't block saving: a coral edge, as coral is for borders on cards */
 .capacity-warning {
   padding-left: 0.75rem;

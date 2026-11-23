@@ -195,7 +195,7 @@ describe('the next two weeks', () => {
 describe('totals and the brief', () => {
   it('adds up the work, the part from the 2-hour default and the part with no deadline', () => {
     const result = run([task('a'), task('b', { effortMinutes: hours(6) }), task('c', { dueDate: FRI, effortMinutes: 90 })])
-    expect(result.totals).toEqual({ hours: 9.5, unestimatedHours: 2, noDeadlineHours: 8 })
+    expect(result.totals).toEqual({ hours: 9.5, unestimatedHours: 2, noDeadlineHours: 8, errandHours: 0 })
   })
 
   it('sums up the day, the projects and the guesses in sentences, with their codes and values', () => {

@@ -75,6 +75,18 @@ beforeEach(async () => {
   log('2026-11-16T05:00:00.000Z', 'projects', 'q', 'insert', 'web-desktop', project('q', 'Hold', null))
   log('2026-11-17T05:00:00.000Z', 'project_tags', 'q:archive', 'insert', 'web-desktop', tag('q')) // by hand
 
+  // Errands, which only query 10 counts: their ticks, and a due date moved later, are left out of
+  // the project metrics. e is planned for Monday 9th, moved on to Wednesday 11th with its due date,
+  // then done on Thursday 12th; f is done the day it's planned for.
+  const e = task('e', 'Groceries', { due_date: '2026-11-12', kind: 'errand', pinned_date: '2026-11-09' })
+  const e2 = { ...e, due_date: '2026-11-13', pinned_date: '2026-11-11' }
+  const f = task('f', 'Post', { kind: 'errand', pinned_date: '2026-11-16' })
+  log('2026-11-09T01:00:00.000Z', 'tasks', 'e', 'insert', 'telegram', e)
+  log('2026-11-11T01:00:00.000Z', 'tasks', 'e', 'update', 'telegram', e2, e) // Today, in the bot
+  log('2026-11-12T02:00:00.000Z', 'tasks', 'e', 'update', 'web-mobile', { ...e2, completed: 1 }, e2) // Thu 10:00
+  log('2026-11-16T01:00:00.000Z', 'tasks', 'f', 'insert', 'web-mobile', f)
+  log('2026-11-16T03:00:00.000Z', 'tasks', 'f', 'update', 'web-mobile', { ...f, completed: 1 }, f) // Mon 11:00
+
   await env.DB.batch([
     env.DB.prepare("INSERT INTO users (id, email) VALUES ('u', 'me@example.com'), ('v', 'other@example.com')"),
     ...rows.map(([at, table, key, op, source, data, old]) =>
@@ -97,7 +109,7 @@ beforeEach(async () => {
   ])
 })
 
-// The rows of query `n` (1 to 9), as arrays of values
+// The rows of query `n` (1 to 10), as arrays of values
 async function run(n: number) {
   const sql = queries[n - 1]!.replace(SETTINGS_LINE, testSettings)
   const { results } = await env.DB.prepare(sql).all<Record<string, unknown>>()
@@ -105,8 +117,8 @@ async function run(n: number) {
 }
 
 describe('analytics/queries.sql', () => {
-  it('has nine queries, each starting with the same settings line', () => {
-    expect(queries).toHaveLength(9)
+  it('has ten queries, each starting with the same settings line', () => {
+    expect(queries).toHaveLength(10)
     const lines = queries.map((q) => SETTINGS_LINE.exec(q)?.[0])
     expect(lines.every((l) => l !== undefined && l === lines[0])).toBe(true)
     expect(lines[0]).toContain("'+8 hours' AS local_offset")
@@ -198,6 +210,15 @@ describe('analytics/queries.sql', () => {
       ['weekdays', 7, 'web-desktop', 1],
       ['weekdays', 9, 'web-mobile', 3],
       ['weekends', 10, 'telegram', 4],
+    ])
+  })
+
+  it('10. counts errands done in each local week, and the days they rolled over by', async () => {
+    expect(await run(10)).toEqual([
+      // e: done on the 12th, a day after the day it was moved on to, three after it was first planned
+      ['2026-11-09', 1, 1, 1, 3],
+      ['2026-11-16', 1, 0, 0, 0],
+      ['all time', 2, 1, 0.5, 1.5],
     ])
   })
 

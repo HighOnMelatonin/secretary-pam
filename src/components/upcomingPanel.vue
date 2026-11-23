@@ -1,22 +1,26 @@
 <script setup lang="ts">
-// The tasks coming up across every project, in one of two views, chosen with a switch that this
+// The tasks coming up across every project, in one of three views, chosen with a switch that this
 // browser remembers:
+// - Today (see types/today.ts and todayList.vue): the tasks pinned to today and today's errands,
+//   with quick add for an errand and a filter for what is in no project.
 // - By date (see types/upcoming.ts): overdue ones first, then the ones due in the next two weeks,
-//   each with its check mark, Edit button and projects.
+//   each with its check mark, Edit button and projects. Errands are never here.
 // - Suggested (see types/priority.ts and suggestedList.vue): every open task ranked into Overdue,
-//   Do nowww and Do next, with why and quick actions.
+//   Do nowww and Do next, with why and quick actions. Errands are never ranked, so never here.
 // A section at the top of the dashboard, above the projects. It can be collapsed to its first
 // PREVIEW_COUNT tasks, which this browser remembers. Once it has scrolled out of view, a counter
 // of the overdue tasks floats in the corner, and clicking it scrolls back up to it.
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import SuggestedList from './suggestedList.vue'
 import TaskRow from './taskRow.vue'
+import TodayList from './todayList.vue'
 import { localToday } from '@/types/calendar'
 import type { TaskAction } from '@/types/operations'
 import { prioritise } from '@/types/priority'
 import type { Project } from '@/types/project'
 import { DEFAULT_SETTINGS, type UserSettings } from '@/types/settings'
 import type { Task } from '@/types/task'
+import { inNoProject, todayItems } from '@/types/today'
 import { UPCOMING_DAYS, upcomingTasks, type UpcomingTask } from '@/types/upcoming'
 
 const props = defineProps<{
@@ -30,6 +34,9 @@ defineEmits<{
   editTask: [task: Task]
   toggleTask: [task: Task]
   action: [task: Task, action: TaskAction]
+  toggleItem: [task: Task, index: number] // an errand's checklist item, from Today
+  quickAdd: [name: string] // an errand for today, from Today
+  newErrand: [name: string] // the full errand form, from Today's More
 }>()
 
 const today = props.today ?? localToday()
@@ -37,12 +44,14 @@ const list = computed(() => upcomingTasks(props.tasks, props.projects, today))
 const overdueCount = computed(() => list.value.overdue.length)
 
 // Which view is shown
-type Mode = 'by-date' | 'suggested'
+const MODES = ['today', 'by-date', 'suggested'] as const
+type Mode = (typeof MODES)[number]
 const MODE_KEY = 'pam.upcomingMode'
 
 function loadMode(): Mode {
   try {
-    return localStorage.getItem(MODE_KEY) === 'suggested' ? 'suggested' : 'by-date'
+    const stored = localStorage.getItem(MODE_KEY)
+    return MODES.find((m) => m === stored) ?? 'by-date'
   } catch {
     return 'by-date' // storage blocked: start with the list by date
   }
@@ -55,6 +64,29 @@ watch(mode, () => {
   } catch {
     // Not remembered, but the switch still works
   }
+})
+
+// Today: what is pinned to it and today's errands, narrowed to what is in no project when the
+// filter is on, which this browser remembers
+const NO_PROJECT_KEY = 'pam.todayNoProject'
+function loadNoProject() {
+  try {
+    return localStorage.getItem(NO_PROJECT_KEY) === 'true'
+  } catch {
+    return false // storage blocked: show everything
+  }
+}
+const noProjectOnly = ref(loadNoProject())
+watch(noProjectOnly, () => {
+  try {
+    localStorage.setItem(NO_PROJECT_KEY, String(noProjectOnly.value))
+  } catch {
+    // Not remembered, but the filter still works
+  }
+})
+const todayList = computed(() => {
+  const all = todayItems(props.tasks, props.projects, today)
+  return noProjectOnly.value ? all.filter(inNoProject) : all
 })
 
 const priorities = computed(() => prioritise(props.tasks, props.projects, props.settings ?? DEFAULT_SETTINGS, today))
@@ -82,7 +114,11 @@ watch(collapsed, () => {
 })
 
 const total = computed(() =>
-  mode.value === 'suggested' ? suggestedCount.value : list.value.overdue.length + list.value.upcoming.length,
+  mode.value === 'today'
+    ? todayList.value.length
+    : mode.value === 'suggested'
+      ? suggestedCount.value
+      : list.value.overdue.length + list.value.upcoming.length,
 )
 // Collapsing only hides something when there are more tasks than the preview shows
 const canCollapse = computed(() => total.value > PREVIEW_COUNT)
@@ -131,6 +167,14 @@ function scrollToPanel() {
         <button
           type="button"
           class="chip compact"
+          :aria-pressed="mode === 'today'"
+          @click="mode = 'today'"
+        >
+          Today
+        </button>
+        <button
+          type="button"
+          class="chip compact"
           :aria-pressed="mode === 'by-date'"
           @click="mode = 'by-date'"
         >
@@ -157,7 +201,22 @@ function scrollToPanel() {
       </button>
     </div>
 
-    <div v-if="mode === 'suggested'" id="upcoming-tasks">
+    <div v-if="mode === 'today'" id="upcoming-tasks">
+      <TodayList
+        v-model:no-project-only="noProjectOnly"
+        :items="isCollapsed ? todayList.slice(0, PREVIEW_COUNT) : todayList"
+        @edit-task="$emit('editTask', $event)"
+        @toggle-task="$emit('toggleTask', $event)"
+        @toggle-item="(task, index) => $emit('toggleItem', task, index)"
+        @quick-add="$emit('quickAdd', $event)"
+        @more="$emit('newErrand', $event)"
+      />
+      <p v-if="isCollapsed" class="more">
+        <small>{{ total - PREVIEW_COUNT }} more hidden</small>
+      </p>
+    </div>
+
+    <div v-else-if="mode === 'suggested'" id="upcoming-tasks">
       <SuggestedList
         :priorities="priorities"
         :tasks="tasks"
@@ -219,7 +278,7 @@ function scrollToPanel() {
   margin-bottom: 1rem;
 }
 
-/* By date and Suggested, side by side, as chips. The chosen one is filled cream, like a primary
+/* Today, By date and Suggested, side by side, as chips. The chosen one is filled cream, like a primary
    button, rather than indigo, which is kept for areas of life */
 .mode-switch {
   display: flex;

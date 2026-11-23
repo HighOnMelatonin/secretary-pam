@@ -507,3 +507,84 @@ describe('TaskForm delete', () => {
     expect(mount(TaskForm).findAll('button').some((b) => b.text() === 'Delete')).toBe(false)
   })
 })
+
+describe('TaskForm for an errand', () => {
+  const kindButton = (wrapper: ReturnType<typeof mount>, text: string) =>
+    wrapper.findAll('.kind-switch button').find((b) => b.text() === text)!
+  const legends = (wrapper: ReturnType<typeof mount>) => wrapper.findAll('legend').map((l) => l.text())
+
+  it('hides the projects, related tasks, priority and start date, and shows its planned day, repeat and checklist', async () => {
+    const wrapper = mount(TaskForm, { props: { task, projects, availableTasks: otherTasks } })
+    expect(legends(wrapper)).toEqual(['Projects', 'Related tasks'])
+    await kindButton(wrapper, 'Errand').trigger('click')
+    expect(wrapper.find('h2').text()).toBe('Edit errand')
+    expect(legends(wrapper)).toEqual(['Repeats', 'Checklist'])
+    expect(wrapper.text()).toContain('Planned day')
+    expect(wrapper.text()).not.toContain('Start date')
+    expect(wrapper.findAll('select').some((s) => s.text().includes('urgent'))).toBe(false)
+  })
+
+  it('saves it in no project, with its recurrence and checklist, and at the default priority', async () => {
+    const wrapper = mount(TaskForm, { props: { task: { ...task, priority: 'urgent' }, projects, availableTasks: otherTasks } })
+    await kindButton(wrapper, 'Errand').trigger('click')
+    const dates = wrapper.findAll<HTMLInputElement>('input[type="date"]')
+    await dates[0]!.setValue('2026-11-20')
+    await wrapper.find('select[aria-label="How it repeats"]').setValue('weekly')
+    for (const day of ['Sat', 'Mon']) await wrapper.findAll('.weekdays button').find((b) => b.text() === day)!.trigger('click')
+    const item = wrapper.find('input[aria-label="New checklist item"]')
+    await item.setValue('Milk')
+    await item.trigger('keydown', { key: 'Enter' })
+    await item.setValue('Eggs') // typed but not added: kept on save
+    await wrapper.find('form').trigger('submit')
+
+    const [saving, projectIds] = saved(wrapper)!
+    expect(projectIds).toEqual([])
+    expect(saving).toMatchObject({
+      kind: 'errand',
+      priority: 'medium',
+      pinnedDate: '2026-11-20',
+      recurrence: 'weekly:MON,SAT',
+      relations: [],
+      checklist: [
+        { text: 'Milk', done: false },
+        { text: 'Eggs', done: false },
+      ],
+    })
+  })
+
+  it("won't save an errand planned after its due date, or repeating weekly on no day", async () => {
+    const wrapper = mount(TaskForm, { props: { newTask: { ...createEmptyTask(), name: 'Post', kind: 'errand' } } })
+    // Not button(wrapper, 'Add'), which would find the checklist's own Add first
+    const submit = (w: typeof wrapper) => w.find('button[type="submit"]')
+    expect(wrapper.find('h2').text()).toBe('New errand')
+    const dates = wrapper.findAll<HTMLInputElement>('input[type="date"]')
+    await dates[0]!.setValue('2026-11-21')
+    await dates[1]!.setValue('2026-11-20')
+    expect(wrapper.text()).toContain('The planned day is after the due date')
+    expect(submit(wrapper).attributes('disabled')).toBeDefined()
+    await dates[1]!.setValue('2026-11-21') // due the day it's planned for is fine
+    expect(submit(wrapper).attributes('disabled')).toBeUndefined()
+    await wrapper.find('select[aria-label="How it repeats"]').setValue('weekly')
+    expect(wrapper.text()).toContain('Pick at least one day.')
+    expect(submit(wrapper).attributes('disabled')).toBeDefined()
+  })
+
+  it('reads an errand back in, and drops its recurrence and checklist when it becomes a task again', async () => {
+    const shopping: Task = {
+      ...task,
+      kind: 'errand',
+      pinnedDate: '2026-11-16',
+      recurrence: 'every:3d',
+      checklist: [{ text: 'Milk', done: true }],
+    }
+    const wrapper = mount(TaskForm, { props: { task: shopping } })
+    expect((wrapper.find('select[aria-label="How it repeats"]').element as HTMLSelectElement).value).toBe('every')
+    expect((wrapper.find('.every input').element as HTMLInputElement).value).toBe('3')
+    await kindButton(wrapper, 'Task').trigger('click')
+    await wrapper.find('form').trigger('submit')
+    const [saving] = saved(wrapper)!
+    expect(saving.kind).toBeUndefined()
+    expect(saving.recurrence).toBeUndefined()
+    expect(saving.checklist).toBeUndefined()
+  })
+})

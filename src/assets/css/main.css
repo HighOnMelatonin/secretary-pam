@@ -407,6 +407,12 @@
   color: var(--pam-cream);
 }
 
+/* An errand (src/types/errand.ts): dashed, as its chip on the calendar is, for personal to-dos
+   that aren't project work */
+.tag.errand-tag {
+  border-style: dashed;
+}
+
 .tag.overdue {
   background: var(--pam-coral);
   border-color: var(--pam-coral);

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // The workload at a glance, above the upcoming tasks (see types/forecast.ts): the forecast's brief,
-// then a strip of the next STRIP_DAYS days, each with the hours planned against the hours there are.
+// then a strip of the next STRIP_DAYS days, each with the hours planned (tasks and errands) against
+// the hours there are.
 // A day is marked overbooked when more work is due by its end than there's time for from today.
 import { computed } from 'vue'
 import type { Forecast } from '@/types/forecast'
@@ -16,16 +17,19 @@ const hours = (value: number) => Math.round(value * 10) / 10
 const days = computed(() =>
   props.forecast.days.slice(0, STRIP_DAYS).map((day) => {
     const weekday = weekdayKeyOf(day.date)
+    const planned = day.plannedHours + day.errandHours
     return {
       ...day,
       label: weekday.charAt(0).toUpperCase() + weekday.slice(1),
       dayOfMonth: Number(day.date.slice(8)),
       // How full the day is, 0 to 100
-      fill: day.capacityHours === 0 ? 0 : Math.round((day.plannedHours / day.capacityHours) * 100),
+      fill: day.capacityHours === 0 ? 0 : Math.min(100, Math.round((planned / day.capacityHours) * 100)),
+      planned,
       description:
         day.capacityHours === 0
           ? `${day.date}: day off`
-          : `${day.date}: ${hours(day.plannedHours)} of ${hours(day.capacityHours)} hours planned` +
+          : `${day.date}: ${hours(planned)} of ${hours(day.capacityHours)} hours planned` +
+            (day.errandHours > 0 ? `, ${hours(day.errandHours)} of them errands` : '') +
             (day.overbooked ? ', overbooked' : ''),
     }
   }),
@@ -48,7 +52,7 @@ const days = computed(() =>
         <span class="bar" aria-hidden="true"><span class="planned" :style="{ width: `${day.fill}%` }" /></span>
         <small aria-hidden="true">
           <template v-if="day.capacityHours === 0">off</template>
-          <template v-else>{{ hours(day.plannedHours) }}/{{ hours(day.capacityHours) }} h</template>
+          <template v-else>{{ hours(day.planned) }}/{{ hours(day.capacityHours) }} h</template>
         </small>
         <small v-if="day.overbooked" class="over" aria-hidden="true">over</small>
       </li>

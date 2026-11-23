@@ -13,6 +13,7 @@ interface LinkRow {
   enabled: 0 | 1
   last_brief_date: string | null
   last_added_task_id: string | null
+  picking_task_id: string | null
   linked_at: string
 }
 
@@ -24,10 +25,12 @@ export interface Link {
   enabled: boolean
   lastBriefDate: string | null
   lastAddedTaskId: string | null
+  pickingTaskId: string | null // the errand Pick date is waiting for a date for (0015)
   linkedAt: string
 }
 
-const COLUMNS = 'user_id, chat_id, time_zone, brief_minutes, enabled, last_brief_date, last_added_task_id, linked_at'
+const COLUMNS =
+  'user_id, chat_id, time_zone, brief_minutes, enabled, last_brief_date, last_added_task_id, picking_task_id, linked_at'
 
 const toLink = (row: LinkRow): Link => ({
   userId: row.user_id,
@@ -37,6 +40,7 @@ const toLink = (row: LinkRow): Link => ({
   enabled: row.enabled === 1,
   lastBriefDate: row.last_brief_date,
   lastAddedTaskId: row.last_added_task_id,
+  pickingTaskId: row.picking_task_id,
   linkedAt: row.linked_at,
 })
 
@@ -136,4 +140,10 @@ export async function stopBrief(db: D1Database, chatId: number) {
 // Remembers the task the chat last added with /add, for /desc
 export async function setLastAdded(db: D1Database, chatId: number, taskId: string) {
   await db.prepare('UPDATE telegram_links SET last_added_task_id = ?2 WHERE chat_id = ?1').bind(chatId, taskId).run()
+}
+
+// Remembers the errand Pick date asked a date for, so the chat's next message is read as it; null
+// once it's read, or another command cancels it
+export async function setPicking(db: D1Database, chatId: number, taskId: string | null) {
+  await db.prepare('UPDATE telegram_links SET picking_task_id = ?2 WHERE chat_id = ?1').bind(chatId, taskId).run()
 }

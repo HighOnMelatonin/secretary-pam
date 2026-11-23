@@ -50,6 +50,12 @@ export const USAGE_ACTIONS = [
   'bot_stop',
   'bot_brief',
   'bot_quickwins',
+  // Errands (src/types/errand.ts), from the app and the bot. Completing or dropping a project task
+  // stays task_complete and task_delete.
+  'errand_create', // also the bot's /errand
+  'errand_complete', // also the bot's Done under an errand
+  'errand_reschedule', // the bot's Today, Tomorrow and Pick date, and a new planned day in the app
+  'errand_drop', // the bot's Drop, and deleting an errand in the app
 ] as const
 export type UsageAction = (typeof USAGE_ACTIONS)[number]
 

@@ -890,7 +890,7 @@ describe('capture', () => {
   it('any other text gets a one-line hint and never makes a task', async () => {
     const session = await linkedAccount()
     for (const text of ['Buy milk', '/unknown', 'add Buy milk', '/next@SomeOtherBot']) await webhook(textUpdate(text))
-    expect(sent()).toEqual(Array(4).fill([CHAT, 'To add a task, send /add and its name. /help lists everything else.']))
+    expect(sent()).toEqual(Array(4).fill([CHAT, 'To add a task, send /add and its name, or /errand for an errand. /help lists everything else.']))
     expect(await tasksOf(session)).toEqual([])
 
     // A message without text, such as a photo, gets nothing
@@ -1023,7 +1023,7 @@ describe('lookups', () => {
       [userId, CHAT, '/next@SomeOtherBot'],
     ])
     for (const row of stored) expect(row.at >= before && row.at <= new Date().toISOString()).toBe(true)
-    expect(sent().slice(0, 3)).toEqual(Array(3).fill([CHAT, 'To add a task, send /add and its name. /help lists everything else.']))
+    expect(sent().slice(0, 3)).toEqual(Array(3).fill([CHAT, 'To add a task, send /add and its name, or /errand for an errand. /help lists everything else.']))
 
     expect((await call('DELETE', 'telegram', undefined, session)).status).toBe(204)
     expect(await rows()).toHaveLength(3)
@@ -1039,7 +1039,7 @@ describe('lookups', () => {
     } finally {
       await env.DB.prepare('ALTER TABLE telegram_unrecognised_away RENAME TO telegram_unrecognised').run()
     }
-    expect(sent()).toEqual([[CHAT, 'To add a task, send /add and its name. /help lists everything else.']])
+    expect(sent()).toEqual([[CHAT, 'To add a task, send /add and its name, or /errand for an errand. /help lists everything else.']])
     expect(errors).toHaveBeenCalledWith('Storing unrecognised Telegram text failed:', expect.stringContaining('telegram_unrecognised'))
   })
 })
