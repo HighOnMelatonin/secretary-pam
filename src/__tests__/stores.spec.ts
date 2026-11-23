@@ -328,6 +328,26 @@ describe('projectView', () => {
     expect(ids(view)).toEqual(expected)
   })
 
+  it('sorts by pace, behind first and projects without a pace last', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 10, 23, 12)) // a Monday
+    try {
+      useTaskList().tasks = [task('big', { effortMinutes: 40 * 60 }), task('small', { effortMinutes: 8 * 60 })]
+      useProjectList().projects = [
+        project('on-pace', { deliveryDate: '2027-06-01', taskIds: ['small'] }),
+        project('behind', { deliveryDate: '2026-11-23', taskIds: ['big'] }),
+        project('no-work', { deliveryDate: '2026-11-22' }),
+      ]
+      const view = useProjectView()
+      expect(ids(view)).toEqual(['no-work', 'behind', 'on-pace'])
+      view.sort = 'pace'
+      expect(ids(view)).toEqual(['behind', 'on-pace', 'no-work'])
+      expect(view.paceOf(view.visibleProjects[0]!)?.pace).toBe('behind')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('filters by any of the chosen tags, including no tag', () => {
     const view = setUp()
     view.toggleTag('school')
