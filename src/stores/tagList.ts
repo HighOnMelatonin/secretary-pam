@@ -20,7 +20,7 @@ export const useTagList = defineStore('tagList', () => {
   // Stores the tag, then adds it or replaces the existing tag with the same id. Returns the tag
   // as stored.
   async function saveTag(tag: Tag): Promise<Tag> {
-    const saved = await api.save('tags', tag)
+    const saved = await api.save('tags', tag, tags.value.some((t) => t.id === tag.id) ? 'tag_edit' : 'tag_create')
     const index = tags.value.findIndex((t) => t.id === saved.id)
     if (index === -1) tags.value.push(saved)
     else tags.value[index] = saved
@@ -30,7 +30,7 @@ export const useTagList = defineStore('tagList', () => {
 
   // The API also removes the tag from its projects and tasks, so the loaded ones are updated to match
   async function deleteTag(id: string) {
-    await api.remove('tags', id)
+    await api.remove('tags', id, 'tag_delete')
     tags.value = tags.value.filter((t) => t.id !== id)
     for (const project of projectList.projects) {
       project.tagIds = project.tagIds.filter((tagId) => tagId !== id)

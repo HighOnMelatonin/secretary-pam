@@ -890,7 +890,7 @@ describe('capture', () => {
   it('any other text gets a one-line hint and never makes a task', async () => {
     const session = await linkedAccount()
     for (const text of ['Buy milk', '/unknown', 'add Buy milk', '/next@SomeOtherBot']) await webhook(textUpdate(text))
-    expect(sent()).toEqual(Array(4).fill([CHAT, 'To add a task, send /add and its name. /help lists everything else.']))
+    expect(sent()).toEqual(Array(4).fill([CHAT, 'To add a task, send /add and its name, or /errand for an errand. /help lists everything else.']))
     expect(await tasksOf(session)).toEqual([])
 
     // A message without text, such as a photo, gets nothing
@@ -1023,7 +1023,7 @@ describe('lookups', () => {
       [userId, CHAT, '/next@SomeOtherBot'],
     ])
     for (const row of stored) expect(row.at >= before && row.at <= new Date().toISOString()).toBe(true)
-    expect(sent().slice(0, 3)).toEqual(Array(3).fill([CHAT, 'To add a task, send /add and its name. /help lists everything else.']))
+    expect(sent().slice(0, 3)).toEqual(Array(3).fill([CHAT, 'To add a task, send /add and its name, or /errand for an errand. /help lists everything else.']))
 
     expect((await call('DELETE', 'telegram', undefined, session)).status).toBe(204)
     expect(await rows()).toHaveLength(3)
@@ -1039,7 +1039,93 @@ describe('lookups', () => {
     } finally {
       await env.DB.prepare('ALTER TABLE telegram_unrecognised_away RENAME TO telegram_unrecognised').run()
     }
-    expect(sent()).toEqual([[CHAT, 'To add a task, send /add and its name. /help lists everything else.']])
+    expect(sent()).toEqual([[CHAT, 'To add a task, send /add and its name, or /errand for an errand. /help lists everything else.']])
     expect(errors).toHaveBeenCalledWith('Storing unrecognised Telegram text failed:', expect.stringContaining('telegram_unrecognised'))
+  })
+})
+
+describe('history and usage', () => {
+  const tasksOf = async (session: string): Promise<Task[]> => (await call('GET', 'tasks', undefined, session)).body
+
+  // The webhook straight through the Worker's fetch, waiting for the counts it leaves running
+  async function webhookWaiting(update: unknown) {
+    const ctx = createExecutionContext()
+    const request = new Request('http://localhost/api/telegram/webhook', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Telegram-Bot-Api-Secret-Token': SECRET },
+      body: JSON.stringify(update),
+    })
+    const response = await worker.fetch(request as Request<unknown, IncomingRequestCfProperties>, env as unknown as Env, ctx)
+    await waitOnExecutionContext(ctx)
+    return response.status
+  }
+
+  // The bot's counts for the account; the routes the test used to set it up count as from the web
+  const botCounts = async () =>
+    (
+      await env.DB.prepare("SELECT action, count FROM usage_counts WHERE client = 'telegram' ORDER BY action").all<{ action: string; count: number }>()
+    ).results.map((r) => [r.action, r.count])
+
+  const sources = async (table: string) =>
+    (await env.DB.prepare('SELECT op, source FROM history WHERE table_name = ?1 ORDER BY id').bind(table).all()).results
+
+  it("logs the bot's changes to history as from telegram", async () => {
+    const session = await linkedAccount()
+    await webhookWaiting(textUpdate('/add Buy milk'))
+    const [task] = await tasksOf(session)
+    await webhookWaiting(pressUpdate(`p:high:${task!.id}`))
+    await webhookWaiting(pressUpdate(`d:${task!.id}`))
+    expect(await sources('tasks')).toEqual([
+      { op: 'insert', source: 'telegram' },
+      { op: 'update', source: 'telegram' },
+      { op: 'update', source: 'telegram' },
+    ])
+  })
+
+  it('counts the commands and buttons that do something, and not lookups or presses that change nothing', async () => {
+    const session = await linkedAccount()
+    await call('PUT', 'tasks/a', { task: { ...createEmptyTask(), id: 'a', name: 'Alpha' } }, session)
+
+    for (const text of ['/next', '/today', '/help', '/tasks', '/late', '/offtrack', 'hello']) await webhookWaiting(textUpdate(text))
+    await webhookWaiting(pressUpdate('next:2'))
+    expect(await botCounts()).toEqual([])
+
+    await webhookWaiting(textUpdate('/add Buy milk'))
+    const added = (await tasksOf(session)).find((t) => t.name === 'Buy milk')!
+    await webhookWaiting(textUpdate('/desc From the shop'))
+    await webhookWaiting(pressUpdate(`p:high:${added.id}`))
+    await webhookWaiting(pressUpdate(`due:today:${added.id}`))
+    await webhookWaiting(pressUpdate(`e:30:${added.id}`))
+    await webhookWaiting(pressUpdate('nt:a'))
+    await webhookWaiting(pressUpdate('d:a'))
+    await webhookWaiting(pressUpdate('d:a')) // already done: only a note
+    await webhookWaiting(pressUpdate('d:gone')) // no such task
+    await webhookWaiting(textUpdate('/add')) // no name: only how to use it
+    await webhookWaiting(textUpdate('/brief'))
+    await webhookWaiting(textUpdate('/quickwins'))
+    await webhookWaiting(textUpdate('/stop'))
+
+    expect(await botCounts()).toEqual([
+      ['bot_brief', 1],
+      ['bot_quickwins', 1],
+      ['bot_stop', 1],
+      ['quick_action_due', 1],
+      ['quick_action_estimate', 1],
+      ['quick_action_not_today', 1],
+      ['quick_action_priority', 1],
+      ['task_complete', 1],
+      ['task_create', 1],
+      ['task_edit', 1],
+    ])
+  })
+
+  it("doesn't count the scheduled brief", async () => {
+    await linkedAccount()
+    // Every quarter hour of a day, so the brief is sent at one of them
+    for (let minutes = 0; minutes < 24 * 60; minutes += 15) {
+      await worker.scheduled(createScheduledController({ scheduledTime: Date.now() + minutes * 60_000 }), env as unknown as Env)
+    }
+    expect(sent().length).toBeGreaterThan(0)
+    expect(await botCounts()).toEqual([])
   })
 })

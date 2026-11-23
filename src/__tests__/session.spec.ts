@@ -63,7 +63,7 @@ describe('session', () => {
     await session.check()
     await session.logOut()
 
-    expect(fetch).toHaveBeenCalledWith('/api/auth/logout', { method: 'POST' })
+    expect(fetch).toHaveBeenCalledWith('/api/auth/logout', { method: 'POST', headers: { 'X-Pam-Client': 'web-desktop' } })
     expect(session.account).toBeNull()
     expect(load).toHaveBeenCalledWith('/login')
   })

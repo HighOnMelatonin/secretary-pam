@@ -172,7 +172,7 @@ describe('ProjectExport', () => {
     expect(wrapper.find('.export-dialog article').exists()).toBe(false)
   })
 
-  it("doesn't change the stores or write to the API", async () => {
+  it("doesn't change the stores or write to the API, apart from counting each export", async () => {
     stubClipboard(async () => {})
     vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} }))
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
@@ -190,7 +190,9 @@ describe('ProjectExport', () => {
     }
     await flushPromises()
 
-    expect(api.requests).toEqual([])
+    // One count per copy and per download, in each of the four formats
+    expect(api.requests).toEqual(Array(8).fill('POST /api/usage'))
+    expect(api.actions).toEqual(Array(8).fill('POST /api/usage export'))
     expect(snapshot()).toEqual(before)
   })
 })

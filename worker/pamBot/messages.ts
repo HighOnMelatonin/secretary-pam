@@ -2,7 +2,8 @@
 // unit-tested (worker/__tests__/telegramMessages.spec.ts). Everything is plain text. Rankings,
 // reasons and the brief are the shared functions' own sentences (src/types/priority.ts and
 // forecast.ts), never worded here.
-import { PACE_LABELS, type Forecast, type PlanItem } from '../../src/types/forecast'
+import { carriedLabel } from '../../src/types/errand'
+import { PACE_LABELS, type ErrandItem, type Forecast, type PlanItem } from '../../src/types/forecast'
 import {
   TASK_GROUP_LABELS,
   visibleTasks,
@@ -34,6 +35,13 @@ export type ButtonPress =
   | { action: 'estimate'; taskId: string; value: EstimateChoice }
   // A project's tasks, from the buttons under a /tasks reply that matched several projects
   | { action: 'project'; projectId: string }
+  // Errands: today's list (the Errands button), Done under one, and the buttons under a carried-over
+  // one in the brief, which plan it for today or tomorrow, ask for a date, or drop (delete) it
+  | { action: 'errands' }
+  | { action: 'errand_done'; taskId: string }
+  | { action: 'plan'; taskId: string; value: PlanChoice }
+  | { action: 'pick'; taskId: string }
+  | { action: 'drop'; taskId: string }
 
 export const PRIORITY_CHOICES = ['low', 'high', 'urgent'] as const
 export type PriorityChoice = (typeof PRIORITY_CHOICES)[number]
@@ -41,16 +49,38 @@ export const DUE_CHOICES = ['today', 'tomorrow', 'week'] as const // "week" is t
 export type DueChoice = (typeof DUE_CHOICES)[number]
 export const ESTIMATE_CHOICES = [30, 60, 240] as const // minutes
 export type EstimateChoice = (typeof ESTIMATE_CHOICES)[number]
+export const PLAN_CHOICES = ['today', 'tomorrow'] as const
+export type PlanChoice = (typeof PLAN_CHOICES)[number]
 
-const PREFIXES = { done: 'd:', not_today: 'nt:', next: 'next:', priority: 'p:', due: 'due:', estimate: 'e:', project: 'tp:' } as const
+const PREFIXES = {
+  done: 'd:',
+  not_today: 'nt:',
+  next: 'next:',
+  priority: 'p:',
+  due: 'due:',
+  estimate: 'e:',
+  project: 'tp:',
+  errands: 'er:',
+  errand_done: 'ed:',
+  plan: 'pl:',
+  pick: 'pk:',
+  drop: 'dr:',
+} as const
+// The Errands button's data: a prefix needs something after it
+const ERRANDS_DATA = `${PREFIXES.errands}today`
 
 // The choice comes before the task id, so an id with ":" in it still reads back
 export function encodePress(press: ButtonPress): string {
   switch (press.action) {
     case 'next':
       return `${PREFIXES.next}${press.offset}`
+    case 'errands':
+      return ERRANDS_DATA
     case 'done':
     case 'not_today':
+    case 'errand_done':
+    case 'pick':
+    case 'drop':
       return `${PREFIXES[press.action]}${press.taskId}`
     case 'project':
       return `${PREFIXES.project}${press.projectId}`
@@ -63,11 +93,15 @@ const includes = <T>(list: readonly T[], value: unknown): value is T => list.inc
 
 // The press a button's callback data stands for, or null for data the bot didn't make
 export function decodePress(data: string | undefined): ButtonPress | null {
-  const match = /^(d|nt|next|p|due|e|tp):(.+)$/s.exec(data ?? '')
+  const match = /^(d|nt|next|p|due|e|tp|er|ed|pl|pk|dr):(.+)$/s.exec(data ?? '')
   if (!match || !fits(data!)) return null
   const [, prefix, value] = match as unknown as [string, string, string]
   if (prefix === 'd') return { action: 'done', taskId: value }
   if (prefix === 'nt') return { action: 'not_today', taskId: value }
+  if (prefix === 'er') return data === ERRANDS_DATA ? { action: 'errands' } : null
+  if (prefix === 'ed') return { action: 'errand_done', taskId: value }
+  if (prefix === 'pk') return { action: 'pick', taskId: value }
+  if (prefix === 'dr') return { action: 'drop', taskId: value }
   if (prefix === 'tp') return { action: 'project', projectId: value }
   if (prefix === 'next') return /^(0|[1-9]\d{0,5})$/.test(value) ? { action: 'next', offset: Number(value) } : null
 
@@ -76,6 +110,7 @@ export function decodePress(data: string | undefined): ButtonPress | null {
   const [, choice, taskId] = field as unknown as [string, string, string]
   if (prefix === 'p') return includes(PRIORITY_CHOICES, choice) ? { action: 'priority', taskId, value: choice } : null
   if (prefix === 'due') return includes(DUE_CHOICES, choice) ? { action: 'due', taskId, value: choice } : null
+  if (prefix === 'pl') return includes(PLAN_CHOICES, choice) ? { action: 'plan', taskId, value: choice } : null
   const minutes = Number(choice)
   return String(minutes) === choice && includes(ESTIMATE_CHOICES, minutes) ? { action: 'estimate', taskId, value: minutes } : null
 }
@@ -142,6 +177,8 @@ export function helpMessage(origin: string): OutgoingMessage {
       '/late: the tasks projected to finish after their deadline',
       '/offtrack: the projects that are tight, behind or never finish',
       '/quickwins: the tasks of an hour or less',
+      '/errand <name>: add an errand for today, such as /errand Buy milk',
+      "/errands: today's errands, with Done buttons",
       '/help: this list',
       'The buttons under a task mark it done, or move it to tomorrow (Not today). Next shows the two after.',
     ].join('\n'),
@@ -216,14 +253,29 @@ function notShownLine(priorities: Priorities, shown: ScoredTask[]): string | nul
   return parts.length ? `Plus ${parts.join(' and ')}.` : null
 }
 
+// The Errands button, in the last row beside Open Pam, when there are errands today: it lists
+// them apart from the two project tasks, so they never crowd those out
+function withErrandsButton(message: OutgoingMessage, forecast: Forecast): OutgoingMessage {
+  if (forecast.todayErrands.length === 0) return message
+  const button: InlineButton = { text: `Errands (${forecast.todayErrands.length})`, callback_data: ERRANDS_DATA }
+  const rows = message.buttons ?? []
+  if (rows.length === 0) return { ...message, buttons: [[button]] }
+  return { ...message, buttons: [...rows.slice(0, -1), [button, ...rows[rows.length - 1]!]] }
+}
+
 // The morning brief: the forecast's brief, how many urgent tasks it leaves out, then the top two
-// tasks with their buttons. A single line when there's nothing to start.
+// tasks with their buttons. A single line when there's nothing to start. With an Errands button
+// when there are errands today; each carried-over errand follows as a message of its own
+// (carriedErrandMessage).
 export function briefMessage(origin: string, priorities: Priorities, forecast: Forecast): OutgoingMessage {
   const tasks = visibleTasks(priorities)
-  if (tasks.length === 0) return nothingToStart(priorities)
+  if (tasks.length === 0) return withErrandsButton(nothingToStart(priorities), forecast)
   const { shown, lines, buttons } = taskList(origin, tasks, 0)
   const notShown = notShownLine(priorities, shown)
-  return { text: [forecast.brief.text, ...(notShown ? [notShown] : []), 'Start with:', ...lines].join('\n'), buttons }
+  return withErrandsButton(
+    { text: [forecast.brief.text, ...(notShown ? [notShown] : []), 'Start with:', ...lines].join('\n'), buttons },
+    forecast,
+  )
 }
 
 // The next tasks to do, two at a time from `offset` (for /next, after a Done or Not today, and for
@@ -244,7 +296,82 @@ const planLine = (n: number, item: PlanItem) =>
 // work happens
 export function todayMessage(origin: string, forecast: Forecast): OutgoingMessage {
   const lines = [forecast.brief.parts[0]!.text, ...forecast.todayPlan.map((item, i) => planLine(i + 1, item))]
-  return { text: lines.join('\n'), buttons: [[openPam(origin)]] }
+  return withErrandsButton({ text: lines.join('\n'), buttons: [[openPam(origin)]] }, forecast)
+}
+
+// Errands
+
+// e.g. "Groceries (30 m), planned 2 days ago"
+const errandLine = (item: ErrandItem) => {
+  const carried = carriedLabel(item.carriedDays)
+  return `${item.name} (${estimateText(Math.round(item.hours * 60))})${carried ? `, ${carried}` : ''}`
+}
+
+// One errand carried over from an earlier day, in the brief, with buttons to plan it for today or
+// tomorrow, pick another day, or drop it. Only the link when its id is too long for the buttons.
+export function carriedErrandMessage(origin: string, item: ErrandItem): OutgoingMessage {
+  const button = (text: string, press: ButtonPress): InlineButton => ({ text, callback_data: encodePress(press) })
+  const row = [
+    button('Today', { action: 'plan', taskId: item.taskId, value: 'today' }),
+    button('Tomorrow', { action: 'plan', taskId: item.taskId, value: 'tomorrow' }),
+    button('Pick date', { action: 'pick', taskId: item.taskId }),
+    button('Drop', { action: 'drop', taskId: item.taskId }),
+  ]
+  const fitting = row.every((b) => 'callback_data' in b && fits(b.callback_data))
+  return {
+    text: `Carried over: ${errandLine(item)}`,
+    buttons: fitting ? [row] : [[{ text: 'Open in Pam', url: taskUrl(origin, item.taskId) }]],
+  }
+}
+
+// The Errands button and /errands: today's errands, rolled-over ones included, each with a Done
+// button, apart from the project tasks. At most MAX_ERRANDS_SHOWN, then "And N more in Pam."
+export const MAX_ERRANDS_SHOWN = 10
+
+export function errandsMessage(origin: string, items: ErrandItem[]): OutgoingMessage {
+  if (items.length === 0) return { text: 'No errands today. Add one with /errand and its name.', buttons: [[openPam(origin)]] }
+  const shown = items.slice(0, MAX_ERRANDS_SHOWN)
+  const lines = shown.map((item, i) => `${i + 1}. ${errandLine(item)}`)
+  if (items.length > shown.length) lines.push(`And ${items.length - shown.length} more in Pam.`)
+  const rows = shown.flatMap((item, i): InlineButton[][] => {
+    const done = encodePress({ action: 'errand_done', taskId: item.taskId })
+    return fits(done) ? [[{ text: `${i + 1} Done`, callback_data: done }]] : []
+  })
+  return { text: ["Today's errands:", ...lines].join('\n'), buttons: [...rows, [openPam(origin)]] }
+}
+
+export const errandUsage: OutgoingMessage = { text: "Send /errand and the errand's name, such as /errand Buy milk." }
+export const errandAddedMessage = (origin: string, taskId: string, name: string): OutgoingMessage => ({
+  text: `Added an errand for today: ${name}`,
+  buttons: [[{ text: 'Open in Pam', url: taskUrl(origin, taskId) }]],
+})
+export const notAnErrandNote = (name: string): OutgoingMessage => ({ text: `"${name}" is a project task, not an errand.` })
+
+// Pick date: the date format is said every time, since the reply is read as nothing else
+export const PICK_DATE_EXAMPLE = 'YYYY-MM-DD'
+export const pickDateMessage = (name: string, today: string): OutgoingMessage => ({
+  text: `Which day for "${name}"? Send the date as ${PICK_DATE_EXAMPLE}, e.g. ${today}. Any command cancels.`,
+})
+export const badDateMessage = (today: string): OutgoingMessage => ({
+  text: `That isn't a date I can read. Send it as ${PICK_DATE_EXAMPLE}, e.g. ${today}, today or later. Any command cancels.`,
+})
+
+export const plannedLine = (name: string, date: string, today: string) =>
+  `Planned: ${name}, ${date === today ? 'today' : dateText(date)}`
+export const droppedLine = (name: string) => `Dropped: ${name}`
+
+// A message with the buttons for one task taken away and `note` added at the end, as markTask does
+// for the project task buttons
+export function markErrand(message: OutgoingMessage, taskId: string, note: string): OutgoingMessage {
+  const own = new Set([
+    encodePress({ action: 'errand_done', taskId }),
+    encodePress({ action: 'pick', taskId }),
+    encodePress({ action: 'drop', taskId }),
+    ...PLAN_CHOICES.map((value) => encodePress({ action: 'plan', taskId, value })),
+  ])
+  const buttons = (message.buttons ?? []).filter((row) => !row.some((b) => 'callback_data' in b && own.has(b.callback_data)))
+  const text = `${message.text}\n${note}`
+  return { text: text.length <= MAX_MESSAGE_LENGTH ? text : message.text, buttons }
 }
 
 // The longest text a message can have (https://core.telegram.org/bots/api#sendmessage)
@@ -317,7 +444,9 @@ export const descriptionTooLong = (max: number): OutgoingMessage => ({
 export const describedMessage = (name: string): OutgoingMessage => ({ text: `Saved the description of "${name}".` })
 
 // The one line for any other text, which never makes a task
-export const hintMessage: OutgoingMessage = { text: 'To add a task, send /add and its name. /help lists everything else.' }
+export const hintMessage: OutgoingMessage = {
+  text: 'To add a task, send /add and its name, or /errand for an errand. /help lists everything else.',
+}
 
 // Lookups: /tasks, /late, /offtrack and /quickwins. What they list comes from src/types/lookups.ts;
 // these only word it. Each ends with an Open Pam button to the page that shows the same thing.

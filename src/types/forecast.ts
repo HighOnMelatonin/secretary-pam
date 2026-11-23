@@ -1,6 +1,8 @@
 // The workload forecast (docs/priority-algorithm.md, Stage 4): the open tasks played forward day
 // by day from today, each day's capacity filled in Suggested order, to say when each task and
 // project should finish, how loaded the next two weeks are, what today holds, and a short brief.
+// Errands (src/types/errand.ts) aren't ranked: each takes its hours out of the day it's planned for
+// first (today's, once it has rolled over), and the scored tasks fill what is left.
 // Pure functions over plain data only: no Vue, no browser APIs, no clock and relative imports
 // only, since worker/ imports this file too. `today` is always passed in, the result is plain
 // JSON, and nothing here is stored.
@@ -9,6 +11,7 @@ import { isArchived, type Project } from './project'
 import { blockEdges } from './rules'
 import { joinSentences, type Sentence } from './sentence'
 import { capacityBetween, capacityOn, workingDaysBetween, type UserSettings } from './settings'
+import { errandDays, errandHours } from './errand'
 import type { Task } from './task'
 import { addDays } from './upcoming'
 
@@ -51,7 +54,8 @@ export interface ProjectForecast {
 export interface DayLoad {
   date: string
   capacityHours: number
-  plannedHours: number // what the plan works on that day, never more than its capacity
+  plannedHours: number // the tasks the plan works on that day; with errandHours, never more than its capacity
+  errandHours: number // the errands planned for that day, which may be more than its capacity
   dueHours: number // the work whose effective deadline is that day (today's includes overdue work)
   // More work is due by the end of the day than there are working hours from today through it
   overbooked: boolean
@@ -64,16 +68,26 @@ export interface PlanItem {
   finishes: boolean // the plan finishes it today
 }
 
+// An errand on today's list, planned for today or rolled over to it
+export interface ErrandItem {
+  taskId: string
+  name: string
+  hours: number // its estimate, or the 30-minute default
+  carriedDays: number // how many days it has rolled over by
+}
+
 export interface Forecast {
   today: string
   tasks: TaskForecast[] // in Suggested order, hidden tasks included
   projects: ProjectForecast[] // the live projects, in the order given
   days: DayLoad[] // FORECAST_DAYS days from today
   todayPlan: PlanItem[]
+  todayErrands: ErrandItem[] // in errandDays order
   totals: {
     hours: number // all the open work
     unestimatedHours: number // the part that comes from the 2-hour default
     noDeadlineHours: number // the part with no effective deadline
+    errandHours: number // the open errands, which the hours above leave out
   }
   allDone: string | null // when the last open task is projected to be done
   brief: { parts: Sentence[]; text: string }
@@ -115,10 +129,15 @@ export function forecast(
   const finish = new Map<string, string>()
   const planned = new Map<string, number>() // hours worked, by date
   const todayHours = new Map<string, number>() // hours worked today, by task, in the order started
+  // Each day's errand hours, which come out of its capacity before any task is planned
+  const errands = errandDays(tasks, today)
+  const errandsOn = new Map<string, number>()
+  for (const e of errands) errandsOn.set(e.planned, (errandsOn.get(e.planned) ?? 0) + errandHours(e.task))
+
   let open = scored.filter((t) => left.get(t.taskId)! > EPSILON).length
   for (let i = 0; open > 0 && i < MAX_FORECAST_DAYS; i++) {
     const day = addDays(today, i)
-    let room = capacityOn(capacity, day) / 60
+    let room = Math.max(0, capacityOn(capacity, day) / 60 - (errandsOn.get(day) ?? 0))
     for (let progress = true; progress && room > EPSILON; ) {
       progress = false
       for (const t of scored) {
@@ -183,7 +202,7 @@ export function forecast(
     })
 
   // The next FORECAST_DAYS days: what's planned, what's due, and whether more is due by the end
-  // of each than there's time for from today
+  // of each than there's time for from today. A day's errands count as due on it.
   const dueOn = (date: string, first: boolean) =>
     scored
       .filter((t) => t.effectiveDeadline !== null && (t.effectiveDeadline === date || (first && t.effectiveDeadline < date)))
@@ -192,11 +211,13 @@ export function forecast(
   const days: DayLoad[] = Array.from({ length: FORECAST_DAYS }, (_, i) => {
     const date = addDays(today, i)
     const due = dueOn(date, i === 0)
-    dueSoFar += due
+    const errandHoursOn = errandsOn.get(date) ?? 0
+    dueSoFar += due + errandHoursOn
     return {
       date,
       capacityHours: round4(capacityOn(capacity, date) / 60),
       plannedHours: round4(planned.get(date) ?? 0),
+      errandHours: round4(errandHoursOn),
       dueHours: round4(due),
       overbooked: round4(dueSoFar) > round4(capacityBetween(capacity, today, date) / 60),
     }
@@ -211,17 +232,22 @@ export function forecast(
     finishes: finish.get(taskId) === today,
   }))
 
+  const todayErrands: ErrandItem[] = errands
+    .filter((e) => e.planned === today)
+    .map((e) => ({ taskId: e.task.id, name: e.task.name, hours: round4(errandHours(e.task)), carriedDays: e.carriedDays }))
+
   const sum = (list: typeof scored) => round4(list.reduce((total, t) => total + t.factors.effortHours, 0))
   const totals = {
     hours: sum(scored),
     unestimatedHours: sum(scored.filter((t) => t.flags.unestimated)),
     noDeadlineHours: sum(scored.filter((t) => t.effectiveDeadline === null)),
+    errandHours: round4(errands.reduce((total, e) => total + errandHours(e.task), 0)),
   }
   const finishes = taskForecasts.map((t) => t.finish)
   const allDone =
     finishes.length === 0 || finishes.includes(null) ? null : finishes.reduce((a, b) => (b! > a! ? b : a))!
 
-  const result = { today, tasks: taskForecasts, projects: projectForecasts, days, todayPlan, totals, allDone }
+  const result = { today, tasks: taskForecasts, projects: projectForecasts, days, todayPlan, todayErrands, totals, allDone }
   return { ...result, brief: briefOf(result) }
 }
 
@@ -255,14 +281,23 @@ function briefOf(f: Omit<Forecast, 'brief'>): Forecast['brief'] {
 
   const day = f.days[0]!
   const planned = f.todayPlan.reduce((total, item) => total + item.hours, 0)
-  if (day.capacityHours === 0) say('today_off', {}, 'Today is a day off.')
-  else if (f.todayPlan.length === 0) say('today_free', { capacityHours: day.capacityHours }, 'Nothing is planned for today.')
-  else {
+  // Errand hours are said apart from project work, e.g. "Today: 2 tasks, 3 h of 6 h, and 1.5 h of
+  // errands.", and only when there are some, so a day without errands reads as it always has
+  const errands = day.errandHours
+  const andErrands = errands > 0 ? `, and ${hoursText(errands)} of errands` : ''
+  if (day.capacityHours === 0 && errands === 0) say('today_off', {}, 'Today is a day off.')
+  else if (day.capacityHours === 0) {
+    say('today_off_errands', { errandHours: errands }, `Today is a day off, with ${hoursText(errands)} of errands.`)
+  } else if (f.todayPlan.length === 0 && errands === 0) {
+    say('today_free', { capacityHours: day.capacityHours }, 'Nothing is planned for today.')
+  } else if (f.todayPlan.length === 0) {
+    say('today_errands', { errandHours: errands, capacityHours: day.capacityHours }, `Today: ${hoursText(errands)} of errands.`)
+  } else {
     const count = f.todayPlan.length
     say(
       'today_plan',
-      { tasks: count, hours: round4(planned), capacityHours: day.capacityHours },
-      `Today: ${count} ${count === 1 ? 'task' : 'tasks'}, ${hoursText(planned)} of ${hoursText(day.capacityHours)}.`,
+      { tasks: count, hours: round4(planned), capacityHours: day.capacityHours, ...(errands > 0 ? { errandHours: errands } : {}) },
+      `Today: ${count} ${count === 1 ? 'task' : 'tasks'}, ${hoursText(planned)} of ${hoursText(day.capacityHours)}${andErrands}.`,
     )
   }
 

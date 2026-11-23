@@ -1,7 +1,9 @@
-// What the calendar shows: tasks on their due dates and projects on their delivery dates, as
+// What the calendar shows: tasks on their due dates, errands on the days they're planned for
+// (today, once one has rolled over) and projects on their delivery dates, as
 // CalendarItems from one adapter per source. A Google Calendar adapter can be added beside the
 // two here, so items are always asked for by date range, the one way Google can be queried.
 // Every date is a local YYYY-MM-DD, as elsewhere in the app.
+import { errandDay, isErrand } from './errand'
 import { isArchived, type Project } from './project'
 import { ARCHIVE_TAG_ID, isHexColor, NO_TAG, type Tag } from './tag'
 import type { Task } from './task'
@@ -20,6 +22,7 @@ export interface CalendarItem {
   colour: string // #rrggbb fill, from tagColour
   link: string // the app path of its page, e.g. /tasks/abc
   tagIds: string[] // what the tag filter matches against; none for an untagged item
+  errand?: boolean // an errand, on its planned day, shown unlike a task; left out otherwise
 }
 
 // Loading and error state for each source, so one that fails leaves the others on the calendar
@@ -164,7 +167,7 @@ const colourOf = (project: Project | undefined, tags: Tag[]) =>
 
 // A task on its due date, coloured by the first tag of the first live project it is in
 export function taskToItems(task: Task, { projects, tags }: AdapterContext): CalendarItem[] {
-  if (!task.dueDate || !isShownTask(task, projects)) return []
+  if (isErrand(task) || !task.dueDate || !isShownTask(task, projects)) return []
   return [
     {
       id: task.id,
@@ -175,6 +178,27 @@ export function taskToItems(task: Task, { projects, tags }: AdapterContext): Cal
       colour: colourOf(liveProjectsOf(task, projects)[0], tags),
       link: `/tasks/${encodeURIComponent(task.id)}`,
       tagIds: taskTagIds(task, projects),
+    },
+  ]
+}
+
+// An unfinished errand on the day it's planned for, or today once that has passed, as the Today
+// list counts it. It's in no project, so it has no tag colour: the neutral one, which the chip's
+// own style sets apart from tasks.
+export function errandToItems(task: Task, today: string): CalendarItem[] {
+  const day = errandDay(task, today)
+  if (!day) return []
+  return [
+    {
+      id: task.id,
+      source: 'task',
+      title: task.name,
+      date: day.planned,
+      editable: false,
+      colour: NEUTRAL_COLOUR,
+      link: `/tasks/${encodeURIComponent(task.id)}`,
+      tagIds: task.tagIds ?? [],
+      errand: true,
     },
   ]
 }
@@ -196,17 +220,23 @@ export function projectToItems(project: Project, { tags }: AdapterContext): Cale
   ]
 }
 
-// Every item on a date from `from` to `to` (inclusive), sorted by date then as within a day
-export function calendarItems(tasks: Task[], projects: Project[], from: string, to: string, tags: Tag[] = []) {
+// Every item on a date from `from` to `to` (inclusive), sorted by date then as within a day.
+// `today` places rolled-over errands.
+export function calendarItems(tasks: Task[], projects: Project[], from: string, to: string, tags: Tag[] = [], today = localToday()) {
   const context = { projects, tags }
-  return [...tasks.flatMap((t) => taskToItems(t, context)), ...projects.flatMap((p) => projectToItems(p, context))]
+  return [
+    ...tasks.flatMap((t) => taskToItems(t, context)),
+    ...tasks.flatMap((t) => errandToItems(t, today)),
+    ...projects.flatMap((p) => projectToItems(p, context)),
+  ]
     .filter((item) => item.date <= to && finalDateOf(item) >= from)
     .sort((a, b) => a.date.localeCompare(b.date) || withinDay(a, b))
 }
 
-// The unfinished tasks with no due date, for the tray below the grid
+// The unfinished tasks with no due date, for the tray below the grid. Errands always have a day on
+// the grid, their planned one.
 export const undatedTasks = (tasks: Task[], projects: Project[]) =>
-  tasks.filter((t) => !t.dueDate && isShownTask(t, projects))
+  tasks.filter((t) => !isErrand(t) && !t.dueDate && isShownTask(t, projects))
 
 // Whether the tag filter lets something through: anything when no tag is chosen, otherwise
 // anything with one of the chosen tags, and untagged things when "No tag" is chosen

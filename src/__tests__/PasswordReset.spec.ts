@@ -46,7 +46,7 @@ describe('ForgotPassword', () => {
 
     expect(fetch).toHaveBeenCalledWith('/api/auth/forgot', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Pam-Client': 'web-desktop' },
       body: JSON.stringify({ email: 'me@example.com' }),
     })
     expect(wrapper.find('[role="status"]').text()).toContain("If there's an account for me@example.com")
@@ -83,7 +83,7 @@ describe('ResetPassword', () => {
     // The token still goes with the request after leaving the address bar
     expect(fetch).toHaveBeenCalledWith('/api/auth/reset', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Pam-Client': 'web-desktop' },
       body: JSON.stringify({ token: TOKEN, password: 'a new password' }),
     })
     expect(load).toHaveBeenCalledWith('/login?reset=done')

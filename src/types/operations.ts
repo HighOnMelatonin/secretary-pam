@@ -15,7 +15,8 @@ import {
 } from './rules'
 import { ARCHIVE_TAG_ID } from './tag'
 import type { Sentence } from './sentence'
-import { stepPriority, type Task } from './task'
+import { isErrand, nextErrand } from './errand'
+import { stepPriority, type ChecklistItem, type Task, type TaskKind } from './task'
 import { addDays } from './upcoming'
 
 export interface State {
@@ -36,6 +37,9 @@ export interface TaskSave {
   task: Task
   projectIds?: string[] // the projects the task should be in; omitted leaves membership as is
   deliveryDates?: Record<string, string | null> // project id to its new delivery date
+  // The user's local date, which only the client knows: an errand saved with no planned day is
+  // planned for it
+  today?: string
 }
 
 export interface ProjectSave {
@@ -68,16 +72,67 @@ export class BlockLoop extends Error {
   }
 }
 
-// `source` is who the events say made the change: the app unless the Telegram bot says otherwise
-export function planTaskSave(state: State, { task, projectIds, deliveryDates = {} }: TaskSave, source: EventSource = 'app'): Plan {
+// Why an errand can't be saved as it is: an errand is in no project, has no relations, always has a
+// planned day, and isn't planned after it's due. Thrown, with the reason as a code and its values
+// and in words for the user, much as a clash is reported.
+export type ErrandRefusalCode = 'errand_in_project' | 'errand_related' | 'errand_unplanned' | 'errand_planned_after_due'
+
+export class ErrandRefused extends Error {
+  readonly sentence: Sentence
+
+  constructor(code: ErrandRefusalCode, params: Sentence['params'], text: string) {
+    super(text)
+    this.name = 'ErrandRefused'
+    this.sentence = { code, params, text }
+  }
+}
+
+// `source` is who the events say made the change: the app unless the Telegram bot says otherwise.
+//
+// Completing a recurring errand also makes the next one (nextErrand in errand.ts), in the same
+// save. The completed one remembers it as nextOccurrenceId, so reopening and completing it again
+// makes no second one, and reopening it leaves the next one in place. `newId` makes the next one's
+// id, and is only passed by tests.
+export function planTaskSave(
+  state: State,
+  { task, projectIds, deliveryDates = {}, today }: TaskSave,
+  source: EventSource = 'app',
+  newId: () => string = () => crypto.randomUUID(),
+): Plan {
   checkKnown('project', state.projects, [...(projectIds ?? []), ...Object.keys(deliveryDates)])
-  const moved = projectIds ? applyMembership(state.projects, task.id, projectIds) : []
+  const stored = state.tasks.find((t) => t.id === task.id)
+  let saved = withErrandDefaults(task, stored, today)
+  const next = repeats(saved, stored) ? nextErrand(saved, newId()) : null
+  if (next) saved = { ...saved, nextOccurrenceId: next.id }
+  const moved = projectIds ? applyMembership(state.projects, saved.id, projectIds) : []
   const after = {
-    tasks: upsert(state.tasks, task),
+    tasks: next ? [...upsert(state.tasks, saved), next] : upsert(state.tasks, saved),
     projects: withDates(replaceAll(state.projects, moved), 'deliveryDate', deliveryDates),
   }
-  return finish(state, after, { tasks: [task], projects: [] }, source)
+  return finish(state, after, { tasks: next ? [saved, next] : [saved], projects: [] }, source)
 }
+
+// The task as it is saved. nextOccurrenceId is never sent, so the stored one is kept, and only an
+// errand has one. An errand with no planned day is planned for `today`, and its priority stays at
+// the default, since nothing ranks errands. A project task has no recurrence or checklist.
+function withErrandDefaults(task: Task, stored: Task | undefined, today: string | undefined): Task {
+  const saved: Task = { ...task }
+  delete saved.nextOccurrenceId
+  if (!isErrand(task)) {
+    delete saved.kind
+    delete saved.recurrence
+    delete saved.checklist
+    return saved
+  }
+  if (stored && isErrand(stored) && stored.nextOccurrenceId !== undefined) saved.nextOccurrenceId = stored.nextOccurrenceId
+  if (saved.pinnedDate === undefined && today !== undefined) saved.pinnedDate = today
+  saved.priority = 'medium'
+  return saved
+}
+
+// Whether this save completes a recurring errand that hasn't made its next one yet
+const repeats = (task: Task, stored: Task | undefined) =>
+  isErrand(task) && task.completed && !stored?.completed && task.recurrence !== undefined && task.nextOccurrenceId === undefined
 
 export function planProjectSave(state: State, { project, dueDates = {} }: ProjectSave): Plan {
   checkKnown('task', state.tasks, Object.keys(dueDates))
@@ -118,11 +173,12 @@ export type TaskAction =
   | { action: 'not_today'; today: string } // start it tomorrow
   | { action: 'importance'; direction: 'up' | 'down' } // its priority one level up or down
   | { action: 'estimate'; effortMinutes: number | null } // a new estimate, or none
+  | { action: 'plan'; date: string } // plan an errand for another day (Today, Tomorrow, Pick date)
 
-export const TASK_ACTIONS = ['do_today', 'unpin', 'not_today', 'importance', 'estimate'] as const
+export const TASK_ACTIONS = ['do_today', 'unpin', 'not_today', 'importance', 'estimate', 'plan'] as const
 
 // Why a quick action can't be done to the task as it is
-export type RefusalCode = 'due_today' | 'overdue' | 'priority_at_top' | 'priority_at_bottom'
+export type RefusalCode = 'due_today' | 'overdue' | 'priority_at_top' | 'priority_at_bottom' | 'not_an_errand'
 
 // A quick action that can't be done to the task as it is: why as a code with its values, and in
 // words for the user (the message), like every other sentence the API returns
@@ -176,6 +232,12 @@ function applyAction(task: Task, action: TaskAction): Task {
     }
     case 'estimate':
       return action.effortMinutes === null ? without(task, 'effortMinutes') : { ...task, effortMinutes: action.effortMinutes }
+    case 'plan':
+      // A project task is pinned to today with Do today, and only ever to today
+      if (!isErrand(task)) {
+        throw new ActionRefused('not_an_errand', { taskId: task.id, task: task.name }, `"${task.name}" is a project task, not an errand`)
+      }
+      return { ...task, pinnedDate: action.date }
   }
 }
 
@@ -193,6 +255,9 @@ export const PATCH_FIELDS = [
   'startDate',
   'pinnedDate',
   'tagIds',
+  'kind',
+  'recurrence',
+  'checklist',
 ] as const
 
 export type TaskPatch = Partial<
@@ -201,6 +266,9 @@ export type TaskPatch = Partial<
     startDate: string | null
     pinnedDate: string | null
     tagIds: string[] | null
+    kind: TaskKind
+    recurrence: string | null
+    checklist: ChecklistItem[] | null
   }
 >
 
@@ -208,9 +276,10 @@ export interface TaskPatchSave {
   task: TaskPatch
   projectIds?: string[]
   deliveryDates?: Record<string, string | null>
+  today?: string // as in TaskSave
 }
 
-const OPTIONAL_FIELDS = ['effortMinutes', 'startDate', 'pinnedDate', 'tagIds'] as const
+const OPTIONAL_FIELDS = ['effortMinutes', 'startDate', 'pinnedDate', 'tagIds', 'recurrence', 'checklist'] as const
 
 // The task with the patch's fields in place of its own
 export function applyTaskPatch(task: Task, patch: TaskPatch): Task {
@@ -219,15 +288,16 @@ export function applyTaskPatch(task: Task, patch: TaskPatch): Task {
     if (!(field in patch)) continue
     const value = patch[field]
     if (value === null && (OPTIONAL_FIELDS as readonly string[]).includes(field)) delete patched[field as (typeof OPTIONAL_FIELDS)[number]]
+    else if (field === 'kind' && value === 'task') delete patched.kind // a project task has no kind stored
     else Object.assign(patched, { [field]: value })
   }
   return patched
 }
 
-export function planTaskPatch(state: State, taskId: string, { task, projectIds, deliveryDates }: TaskPatchSave): Plan {
+export function planTaskPatch(state: State, taskId: string, { task, projectIds, deliveryDates, today }: TaskPatchSave): Plan {
   checkKnown('task', state.tasks, [taskId])
   const stored = state.tasks.find((t) => t.id === taskId)!
-  return planTaskSave(state, { task: applyTaskPatch(stored, task), projectIds, deliveryDates })
+  return planTaskSave(state, { task: applyTaskPatch(stored, task), projectIds, deliveryDates, today })
 }
 
 // What deleting a task or project logs. A deleted task also leaves its projects, as the delete
@@ -248,6 +318,7 @@ export function planProjectDelete(state: State, id: string): TaskEvent[] {
 // way, since every step keeps the original object for an entity it leaves alone. Archiving isn't
 // an event, so the events come from the change before it.
 function finish(before: State, after: State, saved: Changes, source: EventSource = 'app'): Plan {
+  checkErrands(after, [...saved.tasks.map((t) => t.id), ...saved.projects.flatMap((p) => p.taskIds), ...relatedIds(saved.tasks)])
   const loop = findBlockCycle(after.tasks, before.tasks)
   if (loop) throw new BlockLoop(loop)
   const clashes = touchedClashes(before, after)
@@ -279,6 +350,49 @@ function touchedClashes(before: State, after: State): Clash[] {
       dueDates.get(c.taskId) !== c.dueDate ||
       deliveryDates.get(c.projectId) !== c.deliveryDate,
   )
+}
+
+// The tasks the saved tasks relate to, so that relating a task to an errand is refused too
+const relatedIds = (tasks: Task[]) => tasks.flatMap((t) => t.relations.map((r) => r.taskId))
+
+// Refuses (by throwing ErrandRefused) an errand among `touched`, the tasks this change saved, put
+// in a project or related to, that breaks a rule: it is in a project, it and another task are
+// related, it has no planned day, or it is planned after it's due. Only touched errands are
+// checked, so a stored errand is never in the way of saving something else.
+function checkErrands(after: State, touched: string[]) {
+  const byId = new Map(after.tasks.map((t) => [t.id, t]))
+  for (const id of new Set(touched)) {
+    const task = byId.get(id)
+    if (!task || !isErrand(task)) continue
+    const params = { taskId: task.id, task: task.name }
+    const project = after.projects.find((p) => p.taskIds.includes(id))
+    if (project) {
+      throw new ErrandRefused(
+        'errand_in_project',
+        { ...params, projectId: project.id, project: project.name },
+        `"${task.name}" is an errand, so it can't be in a project ("${project.name}")`,
+      )
+    }
+    const related = task.relations[0]?.taskId ?? after.tasks.find((t) => t.relations.some((r) => r.taskId === id))?.id
+    if (related !== undefined) {
+      const other = byId.get(related)?.name ?? related
+      throw new ErrandRefused(
+        'errand_related',
+        { ...params, relatedTaskId: related, related: other },
+        `"${task.name}" is an errand, so it can't be related to another task ("${other}")`,
+      )
+    }
+    if (task.pinnedDate === undefined) {
+      throw new ErrandRefused('errand_unplanned', params, `"${task.name}" is an errand, so it needs a planned day`)
+    }
+    if (task.dueDate !== null && task.pinnedDate > task.dueDate) {
+      throw new ErrandRefused(
+        'errand_planned_after_due',
+        { ...params, pinnedDate: task.pinnedDate, dueDate: task.dueDate },
+        `"${task.name}" is planned for ${task.pinnedDate}, after it's due (${task.dueDate})`,
+      )
+    }
+  }
 }
 
 function checkKnown(kind: 'task' | 'project', items: { id: string }[], ids: string[]) {

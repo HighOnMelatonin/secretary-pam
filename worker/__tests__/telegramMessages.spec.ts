@@ -41,6 +41,15 @@ import {
   visibleTasks,
 } from '../pamBot/messages'
 import { briefDue, dueDateFor, localDateTime } from '../pamBot/schedule'
+import {
+  carriedErrandMessage,
+  decodePress as decodeErrandPress,
+  encodePress as encodeErrandPress,
+  errandsMessage,
+  markErrand,
+  MAX_ERRANDS_SHOWN,
+  type ButtonPress as ErrandPress,
+} from '../pamBot/messages'
 
 const ORIGIN = 'https://pam.example'
 
@@ -357,7 +366,7 @@ describe('markTask', () => {
 
 describe('help and notes', () => {
   it('list the commands, and say what changed', () => {
-    expect(helpMessage(ORIGIN).text.split('\n').slice(0, 12)).toEqual([
+    expect(helpMessage(ORIGIN).text.split('\n').slice(0, 14)).toEqual([
       "Pam's commands:",
       '/next: the next two tasks to do',
       "/today: today's plan",
@@ -369,6 +378,8 @@ describe('help and notes', () => {
       '/late: the tasks projected to finish after their deadline',
       '/offtrack: the projects that are tight, behind or never finish',
       '/quickwins: the tasks of an hour or less',
+      '/errand <name>: add an errand for today, such as /errand Buy milk',
+      "/errands: today's errands, with Done buttons",
       '/help: this list',
     ])
     expect(stoppedMessage(ORIGIN).text).toBe("The morning brief is off. To turn it back on, use Pam's settings: https://pam.example/settings")
@@ -590,5 +601,48 @@ describe('the lookups', () => {
         buttons: dashboard,
       })
     })
+  })
+})
+
+describe('errand buttons and messages', () => {
+  it('write and read each errand press, and refuse what the bot never made', () => {
+    const presses: ErrandPress[] = [
+      { action: 'errands' },
+      { action: 'errand_done', taskId: 'a:b' },
+      { action: 'plan', taskId: 'e', value: 'today' },
+      { action: 'plan', taskId: 'e', value: 'tomorrow' },
+      { action: 'pick', taskId: 'e' },
+      { action: 'drop', taskId: 'e' },
+    ]
+    expect(presses.map(encodeErrandPress)).toEqual(['er:today', 'ed:a:b', 'pl:today:e', 'pl:tomorrow:e', 'pk:e', 'dr:e'])
+    for (const press of presses) expect(decodeErrandPress(encodeErrandPress(press))).toEqual(press)
+    expect(decodeErrandPress('er:later')).toBeNull()
+    expect(decodeErrandPress('pl:someday:e')).toBeNull()
+  })
+
+  it('offers only the link under a carried-over errand whose id is too long for the buttons', () => {
+    const item = { taskId: 'x'.repeat(60), name: 'Long', hours: 0.5, carriedDays: 1 }
+    expect(carriedErrandMessage('https://pam.example', item)).toEqual({
+      text: 'Carried over: Long (30 m), planned yesterday',
+      buttons: [[{ text: 'Open in Pam', url: `https://pam.example/tasks/${'x'.repeat(60)}` }]],
+    })
+  })
+
+  it('lists at most MAX_ERRANDS_SHOWN errands, and says when there are none', () => {
+    const items = Array.from({ length: MAX_ERRANDS_SHOWN + 2 }, (_, i) => ({ taskId: `e${i}`, name: `E${i}`, hours: 1, carriedDays: 0 }))
+    const message = errandsMessage('https://pam.example', items)
+    expect(message.text.split('\n')).toHaveLength(MAX_ERRANDS_SHOWN + 2)
+    expect(message.text).toContain('And 2 more in Pam.')
+    expect(message.buttons).toHaveLength(MAX_ERRANDS_SHOWN + 1)
+    expect(errandsMessage('https://pam.example', []).text).toBe('No errands today. Add one with /errand and its name.')
+  })
+
+  it("take only that errand's buttons away when it's done", () => {
+    const marked = markErrand(
+      { text: 'List', buttons: [[{ text: '1 Done', callback_data: 'ed:a' }], [{ text: '2 Done', callback_data: 'ed:b' }]] },
+      'a',
+      'Done: A',
+    )
+    expect(marked).toEqual({ text: 'List\nDone: A', buttons: [[{ text: '2 Done', callback_data: 'ed:b' }]] })
   })
 })

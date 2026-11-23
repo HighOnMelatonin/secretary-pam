@@ -92,7 +92,7 @@ const range = computed(() => {
   return { from: weeks.value[0]![0]!.date, to: lastWeek[lastWeek.length - 1]!.date }
 })
 const items = computed(() =>
-  calendarItems(props.tasks, props.projects, range.value.from, range.value.to, props.tags).filter((item) =>
+  calendarItems(props.tasks, props.projects, range.value.from, range.value.to, props.tags, today).filter((item) =>
     matchesTags(item.tagIds, selectedTags.value),
   ),
 )

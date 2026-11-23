@@ -25,10 +25,46 @@ describe('api client', () => {
     vi.unstubAllGlobals()
   })
 
+  it('says which layout sent every request, and names the action when given one', async () => {
+    const fetch = stubFetch(new Response(null, { status: 204 }))
+    await api.remove('tasks', 't', 'task_delete')
+    await api.remove('tasks', 't')
+    await api.reportUsage('export')
+    expect(fetch.mock.calls).toEqual([
+      ['/api/tasks/t', { method: 'DELETE', headers: { 'X-Pam-Client': 'web-desktop', 'X-Pam-Action': 'task_delete' } }],
+      ['/api/tasks/t', { method: 'DELETE', headers: { 'X-Pam-Client': 'web-desktop' } }],
+      [
+        '/api/usage',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Pam-Client': 'web-desktop', 'X-Pam-Action': 'export' },
+          body: JSON.stringify({ action: 'export' }),
+        },
+      ],
+    ])
+  })
+
+  it('names the actions of the routes that are always the same action', async () => {
+    // A new reply each time, since a reply's body can be read only once
+    const fetch = vi.fn(async () => Response.json([]))
+    vi.stubGlobal('fetch', fetch)
+    await api.google.sync()
+    await api.google.sync('auto')
+    await api.settings.save({} as never)
+    await api.telegram.linkCode('Asia/Singapore')
+    const actions = fetch.mock.calls.map((c) => (c as unknown as [string, RequestInit])[1].headers)
+    expect(actions).toMatchObject([
+      { 'X-Pam-Action': 'google_sync' },
+      { 'X-Pam-Action': 'auto' },
+      { 'X-Pam-Action': 'settings_save' },
+      { 'X-Pam-Action': 'telegram_link' },
+    ])
+  })
+
   it('lists a resource with a GET to /api/<resource>', async () => {
     const fetch = stubFetch(Response.json([{ id: 'a' }]))
     expect(await api.list('tasks')).toEqual([{ id: 'a' }])
-    expect(fetch).toHaveBeenCalledWith('/api/tasks', undefined)
+    expect(fetch).toHaveBeenCalledWith('/api/tasks', { headers: { 'X-Pam-Client': 'web-desktop' } })
   })
 
   it('saves with a JSON PUT to /api/<resource>/<id>, encoding the id', async () => {
@@ -38,7 +74,7 @@ describe('api client', () => {
     expect(await api.save('tasks', task)).toEqual(task)
     expect(fetch).toHaveBeenCalledWith('/api/tasks/a%2Fb%20c', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Pam-Client': 'web-desktop' },
       body: JSON.stringify(task),
     })
   })
@@ -46,7 +82,7 @@ describe('api client', () => {
   it('removes with a DELETE to /api/<resource>/<id>, accepting an empty 204 reply', async () => {
     const fetch = stubFetch(new Response(null, { status: 204 }))
     expect(await api.remove('tags', 'a/b')).toBeUndefined()
-    expect(fetch).toHaveBeenCalledWith('/api/tags/a%2Fb', { method: 'DELETE' })
+    expect(fetch).toHaveBeenCalledWith('/api/tags/a%2Fb', { method: 'DELETE', headers: { 'X-Pam-Client': 'web-desktop' } })
   })
 
   it("throws the API's error message when a request fails", async () => {
@@ -67,7 +103,7 @@ describe('api client', () => {
     expect(await api.saveTask(input)).toEqual(changes)
     expect(fetch).toHaveBeenCalledWith('/api/tasks/a%2Fb%20c', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Pam-Client': 'web-desktop' },
       body: JSON.stringify(input),
     })
   })
@@ -80,7 +116,7 @@ describe('api client', () => {
     expect(await api.saveProject(input)).toEqual(changes)
     expect(fetch).toHaveBeenCalledWith('/api/projects/p%2Fq', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Pam-Client': 'web-desktop' },
       body: JSON.stringify(input),
     })
   })

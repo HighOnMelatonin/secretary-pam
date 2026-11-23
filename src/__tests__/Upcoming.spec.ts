@@ -259,6 +259,7 @@ describe('UpcomingPanel Suggested', () => {
   it('starts by date, and switches to the ranked categories, which this browser remembers', async () => {
     const byDate = mountPanel()
     expect(byDate.findAll('.mode-switch button').map((b) => [b.text(), b.attributes('aria-pressed')])).toEqual([
+      ['Today', 'false'],
       ['By date', 'true'],
       ['Suggested', 'false'],
     ])
@@ -375,5 +376,80 @@ describe('UpcomingPanel Suggested', () => {
       ['Soon', { action: 'estimate', effortMinutes: null }],
     ])
     expect(row(wrapper, 'Someday').find('form').exists()).toBe(false)
+  })
+})
+
+describe('UpcomingPanel Today', () => {
+  // A Monday
+  const today = '2026-11-16'
+  const thesis = project('Thesis', { taskIds: ['Pinned'] })
+  const tasks = [
+    task('Pinned', { pinnedDate: today }),
+    task('Pinned yesterday', { pinnedDate: '2026-11-15' }),
+    task('Loose pin', { pinnedDate: today }),
+    task('Due today', { dueDate: today }),
+    task('Groceries', {
+      kind: 'errand',
+      pinnedDate: '2026-11-14',
+      checklist: [
+        { text: 'Milk', done: true },
+        { text: 'Eggs', done: false },
+      ],
+    }),
+    task('Post office', { kind: 'errand', pinnedDate: today, dueDate: today }),
+    task('Tomorrow errand', { kind: 'errand', pinnedDate: '2026-11-17' }),
+    task('Done errand', { kind: 'errand', pinnedDate: today, completed: true }),
+  ]
+  const mountPanel = () =>
+    mount(UpcomingPanel, { props: { tasks, projects: [thesis], today }, global: { plugins: [memoryRouter()] } })
+  const todayView = async () => {
+    const wrapper = mountPanel()
+    await wrapper.findAll('.mode-switch button').find((b) => b.text() === 'Today')!.trigger('click')
+    return wrapper
+  }
+  const names = (wrapper: ReturnType<typeof mount>) => wrapper.findAll('.task-name').map((n) => n.text())
+
+  afterEach(() => localStorage.clear())
+
+  it("lists today's pinned tasks, then today's errands with rolled-over ones, and keeps errands out of By date", async () => {
+    expect(names(mountPanel())).not.toContain('Post office')
+    const wrapper = await todayView()
+    expect(names(wrapper)).toEqual(['Loose pin', 'Pinned', 'Groceries', 'Post office'])
+    const groceries = wrapper.findAll('li.task').find((li) => li.find('.task-name').text() === 'Groceries')!
+    expect(groceries.find('.carried').text()).toBe('planned 2 days ago')
+    expect(groceries.find('.errand-tag').exists()).toBe(true)
+    expect(groceries.findAll('.checklist label').map((l) => [l.text(), (l.find('input').element as HTMLInputElement).checked])).toEqual([
+      ['Milk', true],
+      ['Eggs', false],
+    ])
+    expect(localStorage.getItem('pam.upcomingMode')).toBe('today')
+  })
+
+  it('narrows to what is in no project, which this browser remembers', async () => {
+    const wrapper = await todayView()
+    await wrapper.find('.filter input').setValue(true)
+    expect(names(wrapper)).toEqual(['Loose pin', 'Groceries', 'Post office'])
+    expect(localStorage.getItem('pam.todayNoProject')).toBe('true')
+    expect(names(mountPanel())).toEqual(['Loose pin', 'Groceries', 'Post office'])
+  })
+
+  it('adds an errand from its name with Enter, opens the full form with More, and ticks checklist items', async () => {
+    const wrapper = await todayView()
+    const input = wrapper.find('.quick-add input')
+    await input.setValue('  Buy milk ')
+    await wrapper.find('.quick-add').trigger('submit')
+    expect(wrapper.emitted('quickAdd')).toEqual([['Buy milk']])
+    expect((input.element as HTMLInputElement).value).toBe('')
+    // A blank name adds nothing
+    await wrapper.find('.quick-add').trigger('submit')
+    expect(wrapper.emitted('quickAdd')).toHaveLength(1)
+
+    await input.setValue('Pay rent')
+    await wrapper.findAll('.quick-add button').find((b) => b.text() === 'More')!.trigger('click')
+    expect(wrapper.emitted('newErrand')).toEqual([['Pay rent']])
+
+    await wrapper.findAll('.checklist input')[1]!.trigger('change')
+    const [ticked, index] = (wrapper.emitted('toggleItem') as [Task, number][])[0]!
+    expect([ticked.name, index]).toEqual(['Groceries', 1])
   })
 })

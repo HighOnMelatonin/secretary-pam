@@ -23,7 +23,8 @@ export const useProjectList = defineStore('projectList', () => {
 
   // Like taskList.saveTask, for a project
   async function saveProject(input: ProjectSave) {
-    applyChanges(await api.saveProject(input))
+    const exists = projects.value.some((p) => p.id === input.project.id)
+    applyChanges(await api.saveProject(input, exists ? 'project_edit' : 'project_create'))
   }
 
   return { projects, liveProjects, archivedProjects, load, saveProject }

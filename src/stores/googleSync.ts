@@ -23,14 +23,20 @@ export const useGoogleSync = defineStore('googleSync', () => {
   // Google sends the browser back to /?google=connected, which googleSync.vue syncs from
   const connect = () => browser.load(api.google.connectPath)
 
-  // With no account connected, goes to Google to connect one instead. A sync can add, change
-  // and delete tasks, and so change projects too, so both are loaded again after it.
-  async function sync() {
+  // The Sync Google Calendar buttons. With no account connected, goes to Google to connect one
+  // instead. A sync can add, change and delete tasks, and so change projects too, so both are
+  // loaded again after it.
+  const sync = () => run('google_sync')
+
+  // Back from connecting an account, which the app syncs by itself, so it isn't counted as an action
+  const syncAfterConnecting = () => run('auto')
+
+  async function run(action: api.RequestAction) {
     if (syncing.value) return
     syncing.value = true
     error.value = null
     try {
-      const reply = await api.google.sync()
+      const reply = await api.google.sync(action)
       if (reply.length === 0) return connect()
       results.value = reply
       if (accounts.value) accounts.value = await api.google.accounts() // for the new sync times
@@ -68,7 +74,7 @@ export const useGoogleSync = defineStore('googleSync', () => {
     }
   }
 
-  return { syncing, results, error, accounts, connect, sync, loadAccounts, disconnect }
+  return { syncing, results, error, accounts, connect, sync, syncAfterConnecting, loadAccounts, disconnect }
 })
 
 // Lets Vite hot-swap this store when the file changes, instead of keeping the old one

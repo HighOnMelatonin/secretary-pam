@@ -22,6 +22,16 @@ const INVERSE: Record<RelationType, RelationType> = {
   related_to: 'related_to',
 }
 
+// A project task, or an errand: a small personal to-do in no project (src/types/errand.ts)
+export const TASK_KINDS = ['task', 'errand'] as const
+export type TaskKind = (typeof TASK_KINDS)[number]
+
+// One step of an errand, e.g. one thing to buy, ticked off on its own
+export interface ChecklistItem {
+  text: string
+  done: boolean
+}
+
 export interface Task {
   id: string
   name: string
@@ -36,6 +46,15 @@ export interface Task {
   startDate?: string // ISO 8601 date work can start from; never after dueDate
   pinnedDate?: string // ISO 8601 date the task was pinned to with "Do today"
   tagIds?: string[] // ids of existing Tag objects, shared with projects; left out when it has none
+  // Errands (src/types/errand.ts). Each is left out when it isn't set, so a task saved without
+  // them is a project task, as every task was before errands. For an errand, pinnedDate is the day
+  // it's planned for and dueDate its deadline.
+  kind?: TaskKind // left out for 'task'
+  recurrence?: string // an errand's repeat: daily, weekly:MON,SAT or every:Nd
+  checklist?: ChecklistItem[] // an errand's steps; left out when it has none
+  // The errand made when this recurring one was completed, so completing it again after reopening
+  // makes no second one. Only the Worker sets and reads it; it is left out of saves and responses.
+  nextOccurrenceId?: string
   // Email of the Google account whose calendar the task was imported from. Only the Worker's sync
   // sets it; it is left out of saves, and is absent on tasks made in Pam.
   googleAccount?: string

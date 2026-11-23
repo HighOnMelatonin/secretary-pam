@@ -30,13 +30,15 @@ const bySoonest = (a: UpcomingTask, b: UpcomingTask) =>
 
 // Unfinished tasks with a due date up to UPCOMING_DAYS from `today` (YYYY-MM-DD), split into
 // overdue and upcoming. Tasks with no due date are left out, and so are tasks whose only
-// projects are archived, since those are done with.
+// projects are archived, since those are done with, and errands, which are on the Today list
+// instead (src/types/errand.ts). Errands are told apart by kind here rather than with isErrand, as
+// errand.ts imports addDays from this file.
 export function upcomingTasks(tasks: Task[], projects: Project[], today: string): Upcoming {
   const until = addDays(today, UPCOMING_DAYS)
   const result: Upcoming = { overdue: [], upcoming: [] }
 
   for (const task of tasks) {
-    if (task.completed || task.dueDate === null || task.dueDate > until) continue
+    if (task.completed || task.kind === 'errand' || task.dueDate === null || task.dueDate > until) continue
     const inProjects = projects.filter((p) => p.taskIds.includes(task.id))
     const live = inProjects.filter((p) => !isArchived(p))
     if (inProjects.length > 0 && live.length === 0) continue

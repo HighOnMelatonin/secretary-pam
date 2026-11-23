@@ -588,3 +588,31 @@ describe('event mapping', () => {
     )
   })
 })
+
+describe('history', () => {
+  const logged = async () =>
+    (await env.DB.prepare('SELECT table_name, row_key, op, source FROM history WHERE source <> ?1 ORDER BY id').bind('web-desktop').all())
+      .results.filter((r) => r.table_name !== 'tags')
+
+  it("logs a sync's tasks made, changed and deleted as from google, with the deleted tasks' projects", async () => {
+    google.calendars.set('primary', { events: [allDay('a', inDays(3)), allDay('b', inDays(4))] })
+    await connect()
+    await sync()
+    const [a, b] = byName(await listTasks())
+    // Put in a project from the app, so the sync's delete takes it out
+    const headers = { 'X-Pam-Client': 'web-desktop' }
+    const project = { id: 'p', name: 'P', description: '', deliveryDate: null, taskIds: [b!.id], priority: 'medium', links: [], tagIds: [] }
+    expect((await helpers.call('PUT', 'projects/p', { project }, session, headers)).status).toBe(200)
+
+    google.calendars.set('primary', { events: [allDay('a', inDays(3), { summary: 'Renamed' })] })
+    await sync()
+
+    expect(await logged()).toEqual([
+      { table_name: 'tasks', row_key: a!.id, op: 'insert', source: 'google' },
+      { table_name: 'tasks', row_key: b!.id, op: 'insert', source: 'google' },
+      { table_name: 'tasks', row_key: a!.id, op: 'update', source: 'google' },
+      { table_name: 'project_tasks', row_key: `p:${b!.id}`, op: 'delete', source: 'google' },
+      { table_name: 'tasks', row_key: b!.id, op: 'delete', source: 'google' },
+    ])
+  })
+})

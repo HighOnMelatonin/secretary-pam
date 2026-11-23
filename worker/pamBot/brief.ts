@@ -4,12 +4,16 @@
 //
 // last_brief_date is claimed before sending, in one statement, so two runs at once can't both send
 // the day's brief. If sending fails, it's put back, so the next run tries again.
+//
+// After the brief, each errand carried over from an earlier day comes as a message of its own, with
+// Today, Tomorrow, Pick date and Drop (carriedErrandMessage). Those are sent once the brief has gone,
+// and one failing is only logged, so the brief isn't sent again for it.
 import { forecast } from '../../src/types/forecast'
 import { prioritise } from '../../src/types/priority'
 import { capacityOn } from '../../src/types/settings'
 import { sendMessage } from './botApi'
 import { enabledLinks, type Link } from './links'
-import { briefMessage } from './messages'
+import { briefMessage, carriedErrandMessage } from './messages'
 import { briefDue, localDateTime } from './schedule'
 import type { BotConfig, PamData } from './index'
 
@@ -41,7 +45,8 @@ async function sendBriefIfDue(db: D1Database, config: BotConfig, data: PamData, 
   if (claimed.meta.changes === 0) return
 
   const priorities = prioritise(tasks, projects, settings, local.date)
-  const message = briefMessage(config.origin, priorities, forecast(tasks, projects, settings, local.date, priorities))
+  const planned = forecast(tasks, projects, settings, local.date, priorities)
+  const message = briefMessage(config.origin, priorities, planned)
   try {
     await sendMessage(config.token, link.chatId, message)
   } catch (e) {
@@ -50,5 +55,12 @@ async function sendBriefIfDue(db: D1Database, config: BotConfig, data: PamData, 
       .bind(link.userId, local.date, link.lastBriefDate)
       .run()
     throw e
+  }
+  for (const item of planned.todayErrands.filter((e) => e.carriedDays > 0)) {
+    try {
+      await sendMessage(config.token, link.chatId, carriedErrandMessage(config.origin, item))
+    } catch (e) {
+      console.error('Sending a carried-over errand failed:', String(e))
+    }
   }
 }
